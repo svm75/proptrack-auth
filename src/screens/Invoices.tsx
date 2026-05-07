@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import * as XLSX from 'xlsx'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
@@ -94,6 +95,49 @@ export default function Invoices() {
     setFormOpen(true)
   }
 
+  function exportExcel() {
+    const fmtD = (iso: string | undefined) => {
+      if (!iso) return ''
+      const d = new Date(iso)
+      return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`
+    }
+    const fmtN = (n: number | undefined) => n != null ? Number(n.toFixed(2)) : ''
+
+    const rows = filtered.map(inv => ({
+      'Internal ID':  inv.cr9b5_internalid,
+      'Type':         (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Outgoing' : 'Incoming',
+      'Property':     propName(inv),
+      'Contact':      contactName(inv),
+      'Date':         fmtD(inv.cr9b5_date),
+      'Description':  inv.cr9b5_description ?? '',
+      'Booking Ref':  inv.cr9b5_bookingreference ?? '',
+      'Check-in':     fmtD(inv.cr9b5_checkin),
+      'Check-out':    fmtD(inv.cr9b5_checkout),
+      'Nights':       inv.cr9b5_nights ?? '',
+      'Adults':       inv.cr9b5_adults ?? '',
+      'Children':     inv.cr9b5_children ?? '',
+      'Babies':       inv.cr9b5_babies ?? '',
+      'Base Amount':  fmtN(inv.cr9b5_baseamount),
+      'Tax Rate':     inv.cr9b5_taxrate ?? '',
+      'Tax Amount':   fmtN(inv.cr9b5_taxamount),
+      'Total Gross':  fmtN(inv.cr9b5_totalgross),
+    }))
+
+    const ws = XLSX.utils.json_to_sheet(rows)
+    // Auto-width for each column
+    const colWidths = Object.keys(rows[0] ?? {}).map(k => ({
+      wch: Math.max(k.length, ...rows.map(r => String((r as Record<string,unknown>)[k] ?? '').length)) + 2
+    }))
+    ws['!cols'] = colWidths
+
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
+
+    const from = filterFrom || (filtered.length ? filtered.reduce((m, i) => i.cr9b5_date && i.cr9b5_date < m ? i.cr9b5_date : m, filtered[0].cr9b5_date ?? '').slice(0,10).replace(/-/g,'') : 'all')
+    const to   = filterTo   || (filtered.length ? filtered.reduce((m, i) => i.cr9b5_date && i.cr9b5_date > m ? i.cr9b5_date : m, filtered[0].cr9b5_date ?? '').slice(0,10).replace(/-/g,'') : 'all')
+    XLSX.writeFile(wb, `invoices_${from}to${to}.xlsx`)
+  }
+
   function openEdit(inv: Cr9b5_pt_invoices) {
     setEditInvoice(inv)
     setFormOpen(true)
@@ -124,12 +168,21 @@ export default function Invoices() {
       <div className="px-6 py-4 border-b border-gray-200 bg-white space-y-3">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-gray-900">Invoices</h1>
-          <button
-            onClick={openNew}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            + New Invoice
-          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={exportExcel}
+              disabled={filtered.length === 0}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
+            >
+              ↓ Export Excel
+            </button>
+            <button
+              onClick={openNew}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              + New Invoice
+            </button>
+          </div>
         </div>
 
         {/* Filters */}
