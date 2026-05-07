@@ -1,0 +1,40 @@
+{
+  "version": "1.0",
+  "appId": null,
+  "appDisplayName": "PropTrack",
+  "region": "prod",
+  "environmentId": "eb1f4d43-28d9-ee86-9fa8-a547502b285c",
+  "description": " ",
+  "buildPath": "./dist",
+  "buildEntryPoint": "index.html",
+  "localAppUrl": "http://localhost:3000",
+  "logoPath": "Default",
+  "connectionReferences": {},
+  "databaseReferences": {
+    "default.cds": {
+      "dataSources": {
+        "properties": {
+          "entitySetName": "cr9b5_pt_properties",
+          "logicalName": "cr9b5_pt_property"
+        },
+        "contacts": {
+          "entitySetName": "cr9b5_pt_contacts",
+          "logicalName": "cr9b5_pt_contact"
+        },
+        "references": {
+          "entitySetName": "cr9b5_pt_references",
+          "logicalName": "cr9b5_pt_reference"
+        },
+        "attachments": {
+          "entitySetName": "cr9b5_pt_attachments",
+          "logicalName": "cr9b5_pt_attachment"
+        },
+        "invoices": {
+          "entitySetName": "cr9b5_pt_invoices",
+          "logicalName": "cr9b5_pt_invoice"
+        }
+      },
+      "environmentVariableName": ""
+    }
+  }
+}
