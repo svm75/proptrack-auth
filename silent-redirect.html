@@ -4,9 +4,17 @@
 <body>
 <script src="https://alcdn.msauth.net/browser/3.27.0/js/msal-browser.min.js"></script>
 <script>
-  new msal.PublicClientApplication({
-    auth: { clientId: '', authority: 'https://login.microsoftonline.com/common' }
-  }).initialize().then(function(instance) { instance.handleRedirectPromise(); });
+  var instance = new msal.PublicClientApplication({
+    auth: {
+      clientId: 'b4999078-2e84-48b6-ae7f-dd79b0bf2052',
+      authority: 'https://login.microsoftonline.com/2c5f95bf-ce68-4dbc-8f54-7d83a6608019'
+    }
+  });
+  instance.initialize().then(function() {
+    instance.handleRedirectPromise().then(function() {
+      window.close();
+    });
+  });
 </script>
 </body>
 </html>
