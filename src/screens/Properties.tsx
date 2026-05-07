@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_attachmentsService } from '../generated/services/Cr9b5_pt_attachmentsService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
@@ -6,6 +6,7 @@ import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoice
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
+import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath } from '../services/googledrive'
 
 // Property reference type value
 const PROP_REF_TYPE = 233100000
@@ -23,11 +24,13 @@ const EMPTY_FORM: PropForm = { id: null, name: '', shortid: '', address: '', not
 interface AttachForm {
   typeRefId: string
   fileName: string
-  gdriveId: string
-  gdriveUrl: string
+  file: File | null
+  uploading: boolean
+  driveId: string
+  driveUrl: string
 }
 
-const EMPTY_ATTACH: AttachForm = { typeRefId: '', fileName: '', gdriveId: '', gdriveUrl: '' }
+const EMPTY_ATTACH: AttachForm = { typeRefId: '', fileName: '', file: null, uploading: false, driveId: '', driveUrl: '' }
 
 export default function Properties() {
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
@@ -48,6 +51,7 @@ export default function Properties() {
   const [attachSaving, setAttachSaving] = useState(false)
   const [attachError, setAttachError] = useState<string | null>(null)
   const [attachLoading, setAttachLoading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   async function load() {
     setLoading(true)
@@ -161,11 +165,27 @@ export default function Properties() {
     setAttachLoading(false)
   }
 
+  async function handleFileSelect(file: File, propId: string) {
+    const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
+    if (!prop) return
+    setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
+    setAttachError(null)
+    try {
+      const folderId = await getOrCreateFolder(propertyFolderPath(prop.cr9b5_name, prop.cr9b5_shortid))
+      const { id, webViewLink } = await uploadFile(file, folderId)
+      setAttachForm(f => ({ ...f, uploading: false, driveId: id, driveUrl: webViewLink }))
+    } catch (e: unknown) {
+      setAttachForm(f => ({ ...f, uploading: false, file: null }))
+      setAttachError(e instanceof Error ? e.message : 'Upload failed.')
+    }
+  }
+
   async function addAttachment(propId: string) {
     if (!attachForm.fileName.trim()) {
-      setAttachError('File name is required.')
+      setAttachError('Choose a file first.')
       return
     }
+    if (attachForm.uploading) return
     setAttachSaving(true)
     setAttachError(null)
     try {
@@ -175,14 +195,13 @@ export default function Properties() {
         cr9b5_uploadedon: new Date().toISOString(),
         'cr9b5_PropertyId@odata.bind': `/cr9b5_pt_properties(${propId})`,
       }
-      if (attachForm.typeRefId) {
-        payload['cr9b5_AttachType@odata.bind'] = `/cr9b5_pt_references(${attachForm.typeRefId})`
-      }
-      if (attachForm.gdriveId.trim()) payload.cr9b5_googledriveid = attachForm.gdriveId.trim()
-      if (attachForm.gdriveUrl.trim()) payload.cr9b5_googledriveurl = attachForm.gdriveUrl.trim()
+      if (attachForm.typeRefId) payload['cr9b5_AttachType@odata.bind'] = `/cr9b5_pt_references(${attachForm.typeRefId})`
+      if (attachForm.driveId)  payload.cr9b5_googledriveid  = attachForm.driveId
+      if (attachForm.driveUrl) payload.cr9b5_googledriveurl = attachForm.driveUrl
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await Cr9b5_pt_attachmentsService.create(payload as any)
       setAttachForm(EMPTY_ATTACH)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       await openAttachments(propId)
     } catch (e: unknown) {
       setAttachError(e instanceof Error ? e.message : 'Failed to add attachment.')
@@ -191,9 +210,12 @@ export default function Properties() {
     }
   }
 
-  async function deleteAttachment(attachId: string, propId: string) {
+  async function deleteAttachment(a: Cr9b5_pt_attachments, propId: string) {
     if (!confirm('Delete this attachment?')) return
-    await Cr9b5_pt_attachmentsService.delete(attachId)
+    if (a.cr9b5_googledriveid) {
+      try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore if already gone */ }
+    }
+    await Cr9b5_pt_attachmentsService.delete(a.cr9b5_pt_attachmentid)
     await openAttachments(propId)
   }
 
@@ -318,35 +340,30 @@ export default function Properties() {
               ))}
             </select>
 
-            <input
-              type="text"
-              value={attachForm.fileName}
-              onChange={e => setAttachForm(f => ({ ...f, fileName: e.target.value }))}
-              placeholder="File name *"
-              className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-
-            <input
-              type="text"
-              value={attachForm.gdriveId}
-              onChange={e => setAttachForm(f => ({ ...f, gdriveId: e.target.value }))}
-              placeholder="Google Drive ID (optional)"
-              className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
-
-            <input
-              type="url"
-              value={attachForm.gdriveUrl}
-              onChange={e => setAttachForm(f => ({ ...f, gdriveUrl: e.target.value }))}
-              placeholder="Google Drive URL (optional)"
-              className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            />
+            <div className="relative">
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="hidden"
+                onChange={e => {
+                  const f = e.target.files?.[0]
+                  if (f && selectedPropId) handleFileSelect(f, selectedPropId)
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full border border-dashed border-gray-300 rounded-lg px-2.5 py-2 text-sm text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors text-left"
+              >
+                {attachForm.uploading ? '⏳ Uploading…' : attachForm.driveId ? `✓ ${attachForm.fileName}` : '📎 Choose file…'}
+              </button>
+            </div>
 
             {attachError && <p className="text-xs text-red-600">{attachError}</p>}
 
             <button
-              onClick={() => addAttachment(selectedPropId)}
-              disabled={attachSaving}
+              onClick={() => addAttachment(selectedPropId!)}
+              disabled={attachSaving || attachForm.uploading || !attachForm.driveId}
               className="w-full py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
             >
               {attachSaving ? 'Adding…' : '+ Add'}
@@ -381,7 +398,7 @@ export default function Properties() {
                       )}
                     </div>
                     <button
-                      onClick={() => deleteAttachment(a.cr9b5_pt_attachmentid, selectedPropId)}
+                      onClick={() => deleteAttachment(a, selectedPropId!)}
                       className="text-red-400 hover:text-red-600 text-xs shrink-0 mt-0.5"
                     >
                       ✕

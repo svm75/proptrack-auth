@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_attachmentsService } from '../generated/services/Cr9b5_pt_attachmentsService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
@@ -8,6 +8,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
+import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath } from '../services/googledrive'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -146,11 +147,13 @@ const EMPTY_NEW_CONTACT: NewContactState = {
 interface AttachState {
   typeRefId: string
   fileName: string
-  gdriveId: string
-  gdriveUrl: string
+  file: File | null
+  uploading: boolean
+  driveId: string
+  driveUrl: string
 }
 
-const EMPTY_ATTACH: AttachState = { typeRefId: '', fileName: '', gdriveId: '', gdriveUrl: '' }
+const EMPTY_ATTACH: AttachState = { typeRefId: '', fileName: '', file: null, uploading: false, driveId: '', driveUrl: '' }
 
 // ---------- component ----------
 
@@ -179,6 +182,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   const [attachSaving, setAttachSaving] = useState(false)
   const [attachError, setAttachError] = useState<string | null>(null)
   const [attachLoading, setAttachLoading] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // After a new invoice is created we hold the record here so attachments can be added before Done
   const [createdInvoice, setCreatedInvoice] = useState<Cr9b5_pt_invoices | null>(null)
@@ -386,11 +390,31 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     setAttachLoading(false)
   }
 
+  async function handleFileSelect(file: File) {
+    if (!activeInvoice) return
+    const prop = properties.find(p => p.cr9b5_pt_propertyid === form.propertyId)
+    const internalId = activeInvoice.cr9b5_internalid
+    setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
+    setAttachError(null)
+    try {
+      const path = prop
+        ? invoiceFolderPath(prop.cr9b5_name, prop.cr9b5_shortid, internalId)
+        : ['PropTrack', 'Invoices', internalId.replace(/\//g, '-')]
+      const folderId = await getOrCreateFolder(path)
+      const { id, webViewLink } = await uploadFile(file, folderId)
+      setAttachForm(f => ({ ...f, uploading: false, driveId: id, driveUrl: webViewLink }))
+    } catch (e: unknown) {
+      setAttachForm(f => ({ ...f, uploading: false, file: null }))
+      setAttachError(e instanceof Error ? e.message : 'Upload failed.')
+    }
+  }
+
   async function addAttachment() {
     if (!activeInvoice || !attachForm.fileName.trim()) {
-      setAttachError('File name is required.')
+      setAttachError('Choose a file first.')
       return
     }
+    if (attachForm.uploading) return
     setAttachSaving(true)
     setAttachError(null)
     try {
@@ -402,12 +426,13 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         'cr9b5_InvoiceId@odata.bind': `/cr9b5_pt_invoices(${activeInvoice.cr9b5_pt_invoiceid})`,
       }
       if (attachForm.typeRefId) p['cr9b5_AttachType@odata.bind'] = `/cr9b5_pt_references(${attachForm.typeRefId})`
-      if (attachForm.gdriveId.trim()) p.cr9b5_googledriveid = attachForm.gdriveId.trim()
-      if (attachForm.gdriveUrl.trim()) p.cr9b5_googledriveurl = attachForm.gdriveUrl.trim()
+      if (attachForm.driveId)  p.cr9b5_googledriveid  = attachForm.driveId
+      if (attachForm.driveUrl) p.cr9b5_googledriveurl = attachForm.driveUrl
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await Cr9b5_pt_attachmentsService.create(p as any)
       if (!res.success) throw (res.error as Error) ?? new Error('Failed to add attachment.')
       setAttachForm(EMPTY_ATTACH)
+      if (fileInputRef.current) fileInputRef.current.value = ''
       await loadAttachments(activeInvoice.cr9b5_pt_invoiceid, form.type)
     } catch (e: unknown) {
       setAttachError(e instanceof Error ? e.message : 'Failed to add attachment.')
@@ -416,9 +441,12 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     }
   }
 
-  async function deleteAttachment(attachId: string) {
+  async function deleteAttachment(a: Cr9b5_pt_attachments) {
     if (!activeInvoice || !confirm('Delete this attachment?')) return
-    await Cr9b5_pt_attachmentsService.delete(attachId)
+    if (a.cr9b5_googledriveid) {
+      try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore if already gone */ }
+    }
+    await Cr9b5_pt_attachmentsService.delete(a.cr9b5_pt_attachmentid)
     await loadAttachments(activeInvoice.cr9b5_pt_invoiceid, form.type)
   }
 
@@ -759,6 +787,8 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
               <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Attachments</p>
               {!readOnly && (
                 <div className="space-y-2 bg-gray-50 rounded-xl p-3 border border-gray-200">
+                  <input ref={fileInputRef} type="file" className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }} />
                   <div className="grid grid-cols-2 gap-2">
                     <select
                       value={attachForm.typeRefId}
@@ -770,26 +800,17 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                         <option key={r.cr9b5_pt_referenceid} value={r.cr9b5_pt_referenceid}>{r.cr9b5_value}</option>
                       ))}
                     </select>
-                    <input
-                      type="text"
-                      value={attachForm.fileName}
-                      onChange={e => setAttachForm(f => ({ ...f, fileName: e.target.value }))}
-                      placeholder="File name *"
-                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="text" value={attachForm.gdriveId}
-                      onChange={e => setAttachForm(f => ({ ...f, gdriveId: e.target.value }))}
-                      placeholder="Drive ID (optional)"
-                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-                    <input type="url" value={attachForm.gdriveUrl}
-                      onChange={e => setAttachForm(f => ({ ...f, gdriveUrl: e.target.value }))}
-                      placeholder="Drive URL (optional)"
-                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="border border-dashed border-gray-300 rounded-lg px-2.5 py-1.5 text-sm text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors text-left truncate"
+                    >
+                      {attachForm.uploading ? '⏳ Uploading…' : attachForm.driveId ? `✓ ${attachForm.fileName}` : '📎 Choose file…'}
+                    </button>
                   </div>
                   {attachError && <p className="text-xs text-red-600">{attachError}</p>}
-                  <button onClick={addAttachment} disabled={attachSaving}
+                  <button onClick={addAttachment}
+                    disabled={attachSaving || attachForm.uploading || !attachForm.driveId}
                     className="w-full py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50">
                     {attachSaving ? 'Adding…' : '+ Add Attachment'}
                   </button>
@@ -812,7 +833,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                         {a.cr9b5_attachtypename && <span className="text-xs text-gray-400">{a.cr9b5_attachtypename}</span>}
                       </div>
                       {!readOnly && (
-                        <button onClick={() => deleteAttachment(a.cr9b5_pt_attachmentid)}
+                        <button onClick={() => deleteAttachment(a)}
                           className="text-red-400 hover:text-red-600 text-xs shrink-0">✕</button>
                       )}
                     </li>
