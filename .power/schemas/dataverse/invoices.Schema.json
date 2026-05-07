@@ -68,6 +68,22 @@
           "x-ms-dataverse-type": "IntegerType",
           "x-ms-schema-name": "cr9b5_Children"
         },
+        "cr9b5_contact": {
+          "type": "string",
+          "title": "Contact",
+          "x-ms-dataverse-attribute": "cr9b5_contact",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "cr9b5_Contact"
+        },
+        "cr9b5_contactname": {
+          "type": "string",
+          "title": "cr9b5_contactname",
+          "x-ms-dataverse-attribute": "cr9b5_contactname",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "cr9b5_ContactName",
+          "x-ms-read-only": true,
+          "maxLength": 850
+        },
         "cr9b5_date": {
           "type": "string",
           "title": "Date",
@@ -113,6 +129,22 @@
           "x-ms-dataverse-attribute": "cr9b5_nights",
           "x-ms-dataverse-type": "IntegerType",
           "x-ms-schema-name": "cr9b5_Nights"
+        },
+        "cr9b5_property": {
+          "type": "string",
+          "title": "Property",
+          "x-ms-dataverse-attribute": "cr9b5_property",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "cr9b5_Property"
+        },
+        "cr9b5_propertyname": {
+          "type": "string",
+          "title": "cr9b5_propertyname",
+          "x-ms-dataverse-attribute": "cr9b5_propertyname",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "cr9b5_PropertyName",
+          "x-ms-read-only": true,
+          "maxLength": 850
         },
         "cr9b5_pt_invoiceid": {
           "type": "string",

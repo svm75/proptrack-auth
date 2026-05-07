@@ -26,12 +26,14 @@ export interface Cr9b5_pt_invoicesBase {
   cr9b5_checkin?: string;
   cr9b5_checkout?: string;
   cr9b5_children?: number;
+  "cr9b5_Contact@odata.bind"?: string;
   cr9b5_date?: string;
   cr9b5_days?: number;
   cr9b5_description?: string;
   cr9b5_globalsequence?: number;
   cr9b5_internalid: string;
   cr9b5_nights?: number;
+  "cr9b5_Property@odata.bind"?: string;
   cr9b5_pt_invoiceid: string;
   cr9b5_taxamount?: number;
   cr9b5_taxismanual?: boolean;
@@ -52,6 +54,8 @@ export interface Cr9b5_pt_invoicesBase {
 
 export interface Cr9b5_pt_invoices extends Cr9b5_pt_invoicesBase {
   cr9b5_baseamount_base?: number;
+  cr9b5_contactname?: string;
+  cr9b5_propertyname?: string;
   cr9b5_taxamount_base?: number;
   cr9b5_taxismanualname?: string;
   cr9b5_totalgross_base?: number;
@@ -74,6 +78,10 @@ export interface Cr9b5_pt_invoices extends Cr9b5_pt_invoicesBase {
   statuscodename?: string;
   transactioncurrencyidname?: string;
   versionnumber?: number;
+  cr9b5_contact?: object;
+  _cr9b5_contact_value?: string;
+  cr9b5_property?: object;
+  _cr9b5_property_value?: string;
   createdby?: object;
   _createdby_value?: string;
   createdonbehalfby?: object;

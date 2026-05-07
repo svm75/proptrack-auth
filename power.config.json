@@ -35,8 +35,7 @@
         },
         "invoices": {
           "entitySetName": "cr9b5_pt_invoices",
-          "logicalName": "cr9b5_pt_invoice",
-          "isHidden": false
+          "logicalName": "cr9b5_pt_invoice"
         }
       },
       "actions": null

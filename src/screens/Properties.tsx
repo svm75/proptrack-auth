@@ -53,14 +53,14 @@ export default function Properties() {
     setLoading(true)
     const [propsRes, invRes] = await Promise.all([
       Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
-      Cr9b5_pt_invoicesService.getAll({ select: ['cr9b5_pt_invoiceid', '_cr9b5_propertyidinvoice_value'] }),
+      Cr9b5_pt_invoicesService.getAll({ select: ['cr9b5_pt_invoiceid', '_cr9b5_property_value'] }),
     ])
     const allProps = propsRes.data ?? []
     const allInv = (invRes.data ?? []) as unknown as Array<Record<string, unknown>>
 
     const counts: Record<string, number> = {}
     for (const inv of allInv) {
-      const pid = inv['_cr9b5_propertyidinvoice_value'] as string | undefined
+      const pid = inv['_cr9b5_property_value'] as string | undefined
       if (pid) counts[pid] = (counts[pid] ?? 0) + 1
     }
     setProperties(allProps)
