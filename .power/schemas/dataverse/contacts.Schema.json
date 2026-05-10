@@ -46,6 +46,37 @@
           "required": true,
           "x-ms-keyType": "primary"
         },
+        "cr9b5_regularsupplier": {
+          "type": "string",
+          "title": "Regular Supplier",
+          "x-ms-dataverse-attribute": "cr9b5_regularsupplier",
+          "x-ms-dataverse-type": "BooleanType",
+          "x-ms-schema-name": "cr9b5_regularsupplier",
+          "enum": [
+            "No",
+            "Yes"
+          ],
+          "x-ms-enum-values": [
+            0,
+            1
+          ],
+          "Color": [
+            null,
+            null
+          ],
+          "x-ms-optionsetmetadataid": "59d0b928-bb4b-f111-bec6-7ced8d5fdc2e",
+          "x-ms-isGlobal": false,
+          "x-ms-optionsetdisplayname": "Regular Supplier",
+          "x-ms-optionSetType": "Boolean"
+        },
+        "cr9b5_regularsuppliername": {
+          "type": "string",
+          "title": "cr9b5_regularsuppliername",
+          "x-ms-dataverse-attribute": "cr9b5_regularsuppliername",
+          "x-ms-dataverse-type": "VirtualType",
+          "x-ms-schema-name": "cr9b5_regularsupplierName",
+          "x-ms-read-only": true
+        },
         "cr9b5_role": {
           "type": "string",
           "title": "Role",

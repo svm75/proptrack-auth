@@ -20,8 +20,7 @@
         },
         "contacts": {
           "entitySetName": "cr9b5_pt_contacts",
-          "logicalName": "cr9b5_pt_contact",
-          "isHidden": false
+          "logicalName": "cr9b5_pt_contact"
         },
         "references": {
           "entitySetName": "cr9b5_pt_references",

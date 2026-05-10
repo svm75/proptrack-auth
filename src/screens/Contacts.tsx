@@ -14,10 +14,11 @@ interface ContactForm {
   taxid: string
   defaultdesc: string
   role: Cr9b5_pt_contactscr9b5_role
+  regularSupplier: boolean
 }
 
 function emptyForm(role: Cr9b5_pt_contactscr9b5_role): ContactForm {
-  return { id: null, name: '', email: '', taxid: '', defaultdesc: '', role }
+  return { id: null, name: '', email: '', taxid: '', defaultdesc: '', role, regularSupplier: false }
 }
 
 export default function Contacts() {
@@ -32,7 +33,7 @@ export default function Contacts() {
 
   async function load() {
     setLoading(true)
-    const res = await Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'] })
+    const res = await Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 })
     setContacts(res.data ?? [])
     setLoading(false)
   }
@@ -56,6 +57,7 @@ export default function Contacts() {
       taxid: c.cr9b5_taxid ?? '',
       defaultdesc: c.cr9b5_defaultdescription ?? '',
       role: c.cr9b5_role ?? roleForTab,
+      regularSupplier: c.cr9b5_regularsupplier ?? false,
     })
     setFormError(null)
     setFormOpen(true)
@@ -73,16 +75,20 @@ export default function Contacts() {
     }
     setSaving(true)
     setFormError(null)
-    const payload = {
+    const payload: Record<string, unknown> = {
       cr9b5_name: form.name.trim(),
       cr9b5_role: form.role,
       cr9b5_email: form.email.trim() || undefined,
       cr9b5_taxid: form.taxid.trim() || undefined,
       cr9b5_defaultdescription: form.defaultdesc.trim() || undefined,
     }
+    if (form.role === ROLE_SUPPLIER) {
+      payload.cr9b5_regularsupplier = form.regularSupplier
+    }
     try {
       if (form.id) {
-        await Cr9b5_pt_contactsService.update(form.id, payload)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await Cr9b5_pt_contactsService.update(form.id, payload as any)
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Cr9b5_pt_contactsService.create(payload as any)
@@ -150,6 +156,7 @@ export default function Contacts() {
                 <th className="px-4 py-2.5 font-medium">Email</th>
                 <th className="px-4 py-2.5 font-medium">Tax ID</th>
                 <th className="px-4 py-2.5 font-medium">Default Description</th>
+                {tab === 'suppliers' && <th className="px-4 py-2.5 font-medium">Regular</th>}
                 <th className="px-4 py-2.5 w-20"></th>
               </tr>
             </thead>
@@ -169,6 +176,13 @@ export default function Contacts() {
                   <td className="px-4 py-3 text-gray-500 max-w-xs truncate">
                     {c.cr9b5_defaultdescription ?? <span className="text-gray-300">—</span>}
                   </td>
+                  {tab === 'suppliers' && (
+                    <td className="px-4 py-3">
+                      {c.cr9b5_regularsupplier && (
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700">Regular</span>
+                      )}
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <div className="flex gap-2 justify-end">
                       <button
@@ -244,6 +258,25 @@ export default function Contacts() {
                   placeholder="Pre-fills the Description field on new invoices for this contact"
                 />
               </div>
+
+              {form.role === ROLE_SUPPLIER && (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setForm(f => ({ ...f, regularSupplier: !f.regularSupplier }))}
+                    className={[
+                      'relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-teal-500',
+                      form.regularSupplier ? 'bg-teal-600' : 'bg-gray-200',
+                    ].join(' ')}
+                  >
+                    <span className={[
+                      'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                      form.regularSupplier ? 'translate-x-6' : 'translate-x-1',
+                    ].join(' ')} />
+                  </button>
+                  <label className="text-sm font-medium text-gray-700">Regular Supplier</label>
+                </div>
+              )}
             </div>
 
             {formError && <p className="mt-3 text-sm text-red-600">{formError}</p>}

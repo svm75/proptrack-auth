@@ -8,7 +8,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
-import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath } from '../services/googledrive'
+import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -183,6 +183,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   const [attachError, setAttachError] = useState<string | null>(null)
   const [attachLoading, setAttachLoading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [gdConnected, setGdConnected] = useState(isAuthorized())
 
   // After a new invoice is created we hold the record here so attachments can be added before Done
   const [createdInvoice, setCreatedInvoice] = useState<Cr9b5_pt_invoices | null>(null)
@@ -352,7 +353,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       if (!result.success) throw (result.error as Error) ?? new Error('Failed to create contact.')
 
       // Reload contact list and select the new one
-      const refreshed = await Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'] })
+      const refreshed = await Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 })
       const newList = refreshed.data ?? []
       setContacts(newList)
 
@@ -789,6 +790,22 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                 <div className="space-y-2 bg-gray-50 rounded-xl p-3 border border-gray-200">
                   <input ref={fileInputRef} type="file" className="hidden"
                     onChange={e => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }} />
+                  {!gdConnected ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        try {
+                          await authorizeWithPopup()
+                          setGdConnected(true)
+                        } catch (e) {
+                          setAttachError(e instanceof Error ? e.message : 'Google Drive sign-in failed.')
+                        }
+                      }}
+                      className="w-full border border-dashed border-indigo-300 rounded-lg px-2.5 py-2 text-sm text-indigo-600 hover:border-indigo-500 hover:bg-indigo-50 transition-colors text-left"
+                    >
+                      🔗 Connect Google Drive to attach files
+                    </button>
+                  ) : (
                   <div className="grid grid-cols-2 gap-2">
                     <select
                       value={attachForm.typeRefId}
@@ -808,12 +825,15 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                       {attachForm.uploading ? '⏳ Uploading…' : attachForm.driveId ? `✓ ${attachForm.fileName}` : '📎 Choose file…'}
                     </button>
                   </div>
+                  )}
                   {attachError && <p className="text-xs text-red-600">{attachError}</p>}
-                  <button onClick={addAttachment}
-                    disabled={attachSaving || attachForm.uploading || !attachForm.driveId}
-                    className="w-full py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50">
-                    {attachSaving ? 'Adding…' : '+ Add Attachment'}
-                  </button>
+                  {gdConnected && (
+                    <button onClick={addAttachment}
+                      disabled={attachSaving || attachForm.uploading || !attachForm.driveId}
+                      className="w-full py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                      {attachSaving ? 'Adding…' : '+ Add Attachment'}
+                    </button>
+                  )}
                 </div>
               )}
               {attachLoading ? (

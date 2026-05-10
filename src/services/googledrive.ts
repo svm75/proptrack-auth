@@ -7,6 +7,39 @@ const KEY_TOKEN   = 'gd_access_token'
 const KEY_EXPIRY  = 'gd_token_expiry'
 const KEY_REFRESH = 'gd_refresh_token'
 
+// ---------- raw XHR (bypasses any fetch interceptor the Power Apps runtime installs) ----------
+
+interface XhrResponse {
+  ok: boolean
+  status: number
+  json(): Promise<unknown>
+}
+
+function xhrRequest(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body?: string | URLSearchParams | FormData | null,
+): Promise<XhrResponse> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(method, url)
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v)
+    xhr.onload = () => {
+      let parsed: unknown
+      try { parsed = JSON.parse(xhr.responseText) } catch { parsed = xhr.responseText }
+      resolve({
+        ok: xhr.status >= 200 && xhr.status < 300,
+        status: xhr.status,
+        json: () => Promise.resolve(parsed),
+      })
+    }
+    xhr.onerror  = () => reject(new Error('Network error'))
+    xhr.ontimeout = () => reject(new Error('Request timed out'))
+    xhr.send(body ?? null)
+  })
+}
+
 // ---------- token storage ----------
 
 function saveToken(data: { access_token: string; expires_in: number; refresh_token?: string }) {
@@ -25,18 +58,19 @@ async function refreshAccessToken(): Promise<string | null> {
   const rt = sessionStorage.getItem(KEY_REFRESH)
   if (!rt) return null
   try {
-    const res = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({
+    const res = await xhrRequest(
+      'https://oauth2.googleapis.com/token',
+      'POST',
+      { 'Content-Type': 'application/x-www-form-urlencoded' },
+      new URLSearchParams({
         client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
         refresh_token: rt, grant_type: 'refresh_token',
       }),
-    })
+    )
     if (!res.ok) return null
-    const data = await res.json()
+    const data = await res.json() as { access_token: string; expires_in: number }
     saveToken(data)
-    return data.access_token as string
+    return data.access_token
   } catch {
     return null
   }
@@ -44,14 +78,19 @@ async function refreshAccessToken(): Promise<string | null> {
 
 // ---------- OAuth popup ----------
 
-export async function authorize(): Promise<string> {
-  const cached = cachedToken()
-  if (cached) return cached
+/** True when a non-expired access token is already in sessionStorage. */
+export function isAuthorized(): boolean {
+  return cachedToken() !== null
+}
 
-  const refreshed = await refreshAccessToken()
-  if (refreshed) return refreshed
-
-  // Open OAuth popup
+/**
+ * Opens the Google consent popup synchronously then exchanges the code.
+ * MUST be called directly from a user-gesture handler (e.g. button onClick)
+ * so that window.open is not blocked by the browser. The popup is opened
+ * before the first await, which keeps it within the user-gesture context.
+ */
+export async function authorizeWithPopup(): Promise<string> {
+  // window.open runs synchronously here — still inside the user-gesture tick.
   const params = new URLSearchParams({
     client_id: CLIENT_ID,
     redirect_uri: REDIRECT_URI,
@@ -66,11 +105,9 @@ export async function authorize(): Promise<string> {
     'width=500,height=650,left=200,top=80',
   )
 
+  // Everything after this point is async — popup is already open.
   const code = await new Promise<string>((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      cleanup()
-      reject(new Error('Google sign-in timed out.'))
-    }, 300_000)
+    const timeout = setTimeout(() => { cleanup(); reject(new Error('Google sign-in timed out.')) }, 300_000)
 
     function handler(ev: MessageEvent) {
       if (ev.data?.type !== 'gd_oauth_code') return
@@ -91,46 +128,65 @@ export async function authorize(): Promise<string> {
     window.addEventListener('message', handler)
   })
 
-  // Exchange code → token
-  const res = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      code, client_id: CLIENT_ID, client_secret: CLIENT_SECRET,
-      redirect_uri: REDIRECT_URI, grant_type: 'authorization_code',
+  const res = await xhrRequest(
+    'https://oauth2.googleapis.com/token',
+    'POST',
+    { 'Content-Type': 'application/x-www-form-urlencoded' },
+    new URLSearchParams({
+      code,
+      client_id: CLIENT_ID,
+      client_secret: CLIENT_SECRET,
+      redirect_uri: REDIRECT_URI,
+      grant_type: 'authorization_code',
     }),
-  })
+  )
   if (!res.ok) {
-    const err = await res.json()
+    const err = await res.json() as { error_description?: string }
     throw new Error(err.error_description ?? 'Token exchange failed.')
   }
-  const data = await res.json()
+  const data = await res.json() as { access_token: string; expires_in: number; refresh_token?: string }
   saveToken(data)
-  return data.access_token as string
+  return data.access_token
+}
+
+/**
+ * Returns a valid access token using only silent methods (cache + refresh token).
+ * Never opens a popup. Throws if no token is available.
+ */
+export async function authorize(): Promise<string> {
+  const cached = cachedToken()
+  if (cached) return cached
+
+  const refreshed = await refreshAccessToken()
+  if (refreshed) return refreshed
+
+  throw new Error('Not authenticated with Google Drive. Please connect first.')
 }
 
 // ---------- folder helpers ----------
 
 async function findFolder(name: string, parentId: string, token: string): Promise<string | null> {
   const q = `name='${name.replace(/'/g, "\\'")}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-  const res = await fetch(
+  const res = await xhrRequest(
     `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id)`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    'GET',
+    { Authorization: `Bearer ${token}` },
   )
   if (!res.ok) throw new Error('Drive folder search failed.')
-  const data = await res.json()
-  return (data.files as { id: string }[])?.[0]?.id ?? null
+  const data = await res.json() as { files: { id: string }[] }
+  return data.files?.[0]?.id ?? null
 }
 
 async function createFolder(name: string, parentId: string, token: string): Promise<string> {
-  const res = await fetch('https://www.googleapis.com/drive/v3/files', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }),
-  })
+  const res = await xhrRequest(
+    'https://www.googleapis.com/drive/v3/files',
+    'POST',
+    { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [parentId] }),
+  )
   if (!res.ok) throw new Error('Drive folder creation failed.')
-  const data = await res.json()
-  return data.id as string
+  const data = await res.json() as { id: string }
+  return data.id
 }
 
 /** Traverse/create the full path and return the leaf folder ID. */
@@ -152,24 +208,49 @@ export async function uploadFile(
   folderId: string,
 ): Promise<{ id: string; webViewLink: string }> {
   const token = await authorize()
+
+  // Multipart upload via XHR with manually constructed body
+  const boundary = `boundary_${Date.now().toString(36)}`
   const metadata = JSON.stringify({ name: file.name, parents: [folderId] })
-  const body = new FormData()
-  body.append('metadata', new Blob([metadata], { type: 'application/json' }))
-  body.append('file', file)
-  const res = await fetch(
+
+  const fileBuffer = await file.arrayBuffer()
+
+  // Build multipart body as a Blob so binary file data is preserved
+  const metaPart = [
+    `--${boundary}\r\n`,
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+    metadata, '\r\n',
+  ].join('')
+  const filePart = `--${boundary}\r\nContent-Type: ${file.type || 'application/octet-stream'}\r\n\r\n`
+  const closing  = `\r\n--${boundary}--`
+
+  const body = new Blob([
+    new TextEncoder().encode(metaPart),
+    new TextEncoder().encode(filePart),
+    fileBuffer,
+    new TextEncoder().encode(closing),
+  ])
+
+  const res = await xhrRequest(
     'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink',
-    { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body },
+    'POST',
+    {
+      Authorization: `Bearer ${token}`,
+      'Content-Type': `multipart/related; boundary=${boundary}`,
+    },
+    body as unknown as FormData,  // XHR accepts Blob as body
   )
   if (!res.ok) throw new Error('Drive upload failed.')
-  return res.json()
+  return res.json() as Promise<{ id: string; webViewLink: string }>
 }
 
 export async function deleteFile(fileId: string): Promise<void> {
   const token = await authorize()
-  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, {
-    method: 'DELETE',
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  const res = await xhrRequest(
+    `https://www.googleapis.com/drive/v3/files/${fileId}`,
+    'DELETE',
+    { Authorization: `Bearer ${token}` },
+  )
   if (!res.ok && res.status !== 404) throw new Error('Drive delete failed.')
 }
 

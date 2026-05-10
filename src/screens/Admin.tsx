@@ -39,8 +39,8 @@ export default function Admin() {
   async function load() {
     setLoading(true)
     const [refsResult, attachResult] = await Promise.all([
-      Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc'] }),
-      Cr9b5_pt_attachmentsService.getAll(),
+      Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_attachmentsService.getAll({ maxPageSize: 5000 }),
     ])
     const allRefs = refsResult.data ?? []
     const allAttach = attachResult.data ?? []

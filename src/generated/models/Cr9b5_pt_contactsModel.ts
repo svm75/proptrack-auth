@@ -23,6 +23,7 @@ export interface Cr9b5_pt_contactsBase {
   cr9b5_email?: string;
   cr9b5_name: string;
   cr9b5_pt_contactid: string;
+  cr9b5_regularsupplier?: boolean;
   cr9b5_role?: Cr9b5_pt_contactscr9b5_role;
   cr9b5_taxid?: string;
   importsequencenumber?: number;
@@ -36,6 +37,7 @@ export interface Cr9b5_pt_contactsBase {
 }
 
 export interface Cr9b5_pt_contacts extends Cr9b5_pt_contactsBase {
+  cr9b5_regularsuppliername?: string;
   cr9b5_rolename?: string;
   createdbyname?: string;
   createdbyyominame: string;

@@ -7,6 +7,7 @@ import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesMod
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import InvoiceForm from './InvoiceForm'
+import InvoiceImport from './InvoiceImport'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -38,13 +39,14 @@ export default function Invoices() {
   const [formOpen, setFormOpen] = useState(false)
   const [editInvoice, setEditInvoice] = useState<Cr9b5_pt_invoices | null>(null)
   const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   async function load() {
     setLoading(true)
     const [invRes, propRes, conRes] = await Promise.all([
-      Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'] }),
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
-      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'] }),
+      Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'], maxPageSize: 5000 }),
+      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
     ])
     setInvoices(invRes.data ?? [])
     setProperties(propRes.data ?? [])
@@ -175,6 +177,12 @@ export default function Invoices() {
               className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
             >
               ↓ Export Excel
+            </button>
+            <button
+              onClick={() => setImportOpen(true)}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              ↑ Import from Excel
             </button>
             <button
               onClick={openNew}
@@ -386,6 +394,14 @@ export default function Invoices() {
           readOnly
           onSaved={() => {}}
           onClose={() => setViewInvoice(null)}
+        />
+      )}
+
+      {/* Excel import screen */}
+      {importOpen && (
+        <InvoiceImport
+          onClose={() => setImportOpen(false)}
+          onImported={() => load()}
         />
       )}
     </div>
