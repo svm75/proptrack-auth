@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
 import type { Cr9b5_pt_contacts, Cr9b5_pt_contactscr9b5_role } from '../generated/models/Cr9b5_pt_contactsModel'
+import { logActivity } from '../services/activitylog'
 
 const ROLE_CLIENT: Cr9b5_pt_contactscr9b5_role = 233100001
 const ROLE_SUPPLIER: Cr9b5_pt_contactscr9b5_role = 233100000
@@ -89,9 +90,11 @@ export default function Contacts() {
       if (form.id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Cr9b5_pt_contactsService.update(form.id, payload as any)
+        logActivity('Updated', 'Contact', form.name.trim())
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Cr9b5_pt_contactsService.create(payload as any)
+        logActivity('Created', 'Contact', form.name.trim())
       }
       closeForm()
       await load()
@@ -105,6 +108,7 @@ export default function Contacts() {
   async function del(c: Cr9b5_pt_contacts) {
     if (!confirm(`Delete "${c.cr9b5_name}"?`)) return
     await Cr9b5_pt_contactsService.delete(c.cr9b5_pt_contactid)
+    logActivity('Deleted', 'Contact', c.cr9b5_name)
     await load()
   }
 

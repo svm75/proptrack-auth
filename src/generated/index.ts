@@ -5,6 +5,7 @@
 
 // Models
 export * as CommonModels from './models/CommonModels';
+export * as Cr9b5_pt_activitylogsModel from './models/Cr9b5_pt_activitylogsModel';
 export * as Cr9b5_pt_attachmentsModel from './models/Cr9b5_pt_attachmentsModel';
 export * as Cr9b5_pt_contactsModel from './models/Cr9b5_pt_contactsModel';
 export * as Cr9b5_pt_invoicesModel from './models/Cr9b5_pt_invoicesModel';
@@ -12,6 +13,7 @@ export * as Cr9b5_pt_propertiesModel from './models/Cr9b5_pt_propertiesModel';
 export * as Cr9b5_pt_referencesModel from './models/Cr9b5_pt_referencesModel';
 
 // Services
+export * from './services/Cr9b5_pt_activitylogsService';
 export * from './services/Cr9b5_pt_attachmentsService';
 export * from './services/Cr9b5_pt_contactsService';
 export * from './services/Cr9b5_pt_invoicesService';

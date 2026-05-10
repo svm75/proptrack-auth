@@ -9,6 +9,7 @@ import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsMod
 import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
+import { logActivity } from '../services/activitylog'
 import { fmtEur } from '../utils/formatters'
 
 const TYPE_INCOMING = 233100000
@@ -305,6 +306,22 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         payload.cr9b5_babies   = form.babies   !== '' ? parseInt(form.babies)   : undefined
       }
 
+      // Detect changed fields for update logging
+      const changedFields: string[] = []
+      if (isEdit && invoice) {
+        const orig = invoiceToFormState(invoice)
+        const fieldLabels: Array<[keyof InvoiceFormState, string]> = [
+          ['type', 'Type'], ['propertyId', 'Property'], ['contactId', 'Contact'],
+          ['date', 'Date'], ['description', 'Description'], ['baseAmount', 'Base Amount'],
+          ['taxRate', 'Tax Rate'], ['taxAmount', 'Tax Amount'], ['bookingRef', 'Booking Ref'],
+          ['checkIn', 'Check-in'], ['checkOut', 'Check-out'],
+          ['adults', 'Adults'], ['children', 'Children'], ['babies', 'Babies'],
+        ]
+        for (const [key, label] of fieldLabels) {
+          if (String(orig[key]) !== String(form[key])) changedFields.push(label)
+        }
+      }
+
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const result = isEdit && invoice
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -318,10 +335,13 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       }
 
       if (isEdit) {
+        logActivity('Updated', 'Invoice', internalId,
+          changedFields.length ? `Fields changed: ${changedFields.join(', ')}` : undefined)
         onSaved()
       } else {
         // New invoice created — stay open so user can optionally add attachments
         const created = result.data!
+        logActivity('Created', 'Invoice', internalId)
         setCreatedInvoice(created)
         await loadAttachments(created.cr9b5_pt_invoiceid, form.type)
       }
@@ -433,6 +453,8 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const res = await Cr9b5_pt_attachmentsService.create(p as any)
       if (!res.success) throw (res.error as Error) ?? new Error('Failed to add attachment.')
+      logActivity('Created', 'Attachment', attachForm.fileName.trim(),
+        `Uploaded to: ${activeInvoice.cr9b5_internalid}`)
       setAttachForm(EMPTY_ATTACH)
       if (fileInputRef.current) fileInputRef.current.value = ''
       await loadAttachments(activeInvoice.cr9b5_pt_invoiceid, form.type)
@@ -449,6 +471,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore if already gone */ }
     }
     await Cr9b5_pt_attachmentsService.delete(a.cr9b5_pt_attachmentid)
+    logActivity('Deleted', 'Attachment', a.cr9b5_filename)
     await loadAttachments(activeInvoice.cr9b5_pt_invoiceid, form.type)
   }
 

@@ -35,6 +35,10 @@
         "invoices": {
           "entitySetName": "cr9b5_pt_invoices",
           "logicalName": "cr9b5_pt_invoice"
+        },
+        "activitylogs": {
+          "entitySetName": "cr9b5_pt_activitylogs",
+          "logicalName": "cr9b5_pt_activitylog"
         }
       },
       "actions": null

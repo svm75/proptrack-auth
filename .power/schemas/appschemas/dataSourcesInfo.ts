@@ -5,6 +5,13 @@
  */
 
 export const dataSourcesInfo = {
+  "cr9b5_pt_activitylogs": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "cr9b5_pt_activitylogid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "cr9b5_pt_attachments": {
     "tableId": "",
     "version": "",

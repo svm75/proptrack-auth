@@ -10,6 +10,7 @@ import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_reference
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
+import { logActivity } from '../services/activitylog'
 import InvoiceForm from './InvoiceForm'
 import { fmtEur } from '../utils/formatters'
 
@@ -147,9 +148,11 @@ export default function Properties() {
     try {
       if (form.id) {
         await Cr9b5_pt_propertiesService.update(form.id, payload)
+        logActivity('Updated', 'Property', form.name.trim())
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Cr9b5_pt_propertiesService.create(payload as any)
+        logActivity('Created', 'Property', form.name.trim())
       }
       closeForm()
       await load()
@@ -168,6 +171,7 @@ export default function Properties() {
     }
     if (!confirm(`Delete property "${p.cr9b5_name}"?`)) return
     await Cr9b5_pt_propertiesService.delete(p.cr9b5_pt_propertyid)
+    logActivity('Deleted', 'Property', p.cr9b5_name)
     if (selectedPropId === p.cr9b5_pt_propertyid) setSelectedPropId(null)
     await load()
   }
@@ -297,6 +301,9 @@ export default function Properties() {
       if (attachForm.driveUrl) payload.cr9b5_googledriveurl = attachForm.driveUrl
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await Cr9b5_pt_attachmentsService.create(payload as any)
+      const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
+      logActivity('Created', 'Attachment', attachForm.fileName.trim(),
+        `Uploaded to: ${prop?.cr9b5_name ?? propId}`)
       setAttachForm(EMPTY_ATTACH)
       if (fileInputRef.current) fileInputRef.current.value = ''
       await openAttachments(propId)
@@ -313,6 +320,7 @@ export default function Properties() {
       try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore */ }
     }
     await Cr9b5_pt_attachmentsService.delete(a.cr9b5_pt_attachmentid)
+    logActivity('Deleted', 'Attachment', a.cr9b5_filename)
     await openAttachments(propId)
   }
 

@@ -8,6 +8,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import InvoiceForm from './InvoiceForm'
 import InvoiceImport from './InvoiceImport'
+import { logActivity } from '../services/activitylog'
 import { fmtEur } from '../utils/formatters'
 
 const TYPE_INCOMING = 233100000
@@ -133,7 +134,9 @@ export default function Invoices() {
 
     const from = filterFrom || (filtered.length ? filtered.reduce((m, i) => i.cr9b5_date && i.cr9b5_date < m ? i.cr9b5_date : m, filtered[0].cr9b5_date ?? '').slice(0,10).replace(/-/g,'') : 'all')
     const to   = filterTo   || (filtered.length ? filtered.reduce((m, i) => i.cr9b5_date && i.cr9b5_date > m ? i.cr9b5_date : m, filtered[0].cr9b5_date ?? '').slice(0,10).replace(/-/g,'') : 'all')
-    XLSX.writeFile(wb, `invoices_${from}to${to}.xlsx`)
+    const filename = `invoices_${from}to${to}.xlsx`
+    XLSX.writeFile(wb, filename)
+    logActivity('Exported', 'Invoice', 'invoices export', filename)
   }
 
   function openEdit(inv: Cr9b5_pt_invoices) {
@@ -145,6 +148,7 @@ export default function Invoices() {
     if (!confirm(`Cancel invoice ${inv.cr9b5_internalid}? This cannot be undone.`)) return
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await Cr9b5_pt_invoicesService.update(inv.cr9b5_pt_invoiceid, { statecode: 1 as any, statuscode: 2 as any })
+    logActivity('Deleted', 'Invoice', inv.cr9b5_internalid ?? inv.cr9b5_pt_invoiceid)
     await load()
   }
 
