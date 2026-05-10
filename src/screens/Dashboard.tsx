@@ -10,6 +10,7 @@ import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesMod
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import CalendarScreen from './Calendar'
+import { fmtEur, fmtEurShort } from '../utils/formatters'
 
 const TYPE_OUTGOING = 233100001
 const TYPE_INCOMING = 233100000
@@ -40,13 +41,6 @@ function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate()
 }
 
-function fmtEur(n: number): string {
-  return `€ ${n.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-}
-function fmtEurShort(n: number): string {
-  if (Math.abs(n) >= 1000) return `€${(n/1000).toFixed(1)}k`
-  return `€${n.toFixed(0)}`
-}
 function fmtPct(n: number): string { return `${n.toFixed(1)} %` }
 
 function getQuarter(inv: Cr9b5_pt_invoices): number {

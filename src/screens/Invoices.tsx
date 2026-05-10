@@ -8,6 +8,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import InvoiceForm from './InvoiceForm'
 import InvoiceImport from './InvoiceImport'
+import { fmtEur } from '../utils/formatters'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -15,11 +16,6 @@ const TYPE_OUTGOING = 233100001
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
-}
-
-function fmtEur(n: number | undefined): string {
-  if (n == null) return '—'
-  return `€ ${n.toFixed(2)}`
 }
 
 export default function Invoices() {

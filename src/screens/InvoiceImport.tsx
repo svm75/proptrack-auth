@@ -5,6 +5,7 @@ import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_prope
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
+import { fmtEur } from '../utils/formatters'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -86,9 +87,6 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-function fmtEur(n: number): string {
-  return `€ ${n.toFixed(2)}`
-}
 
 // ── column indices (0-based) per spec order ──────────────────────────────────
 // Date, GlSequence, No, No/intern, House, Property, Number, Year, ID,

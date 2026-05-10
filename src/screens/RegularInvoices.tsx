@@ -4,6 +4,7 @@ import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_prope
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
+import { fmtEur } from '../utils/formatters'
 
 const TYPE_INCOMING = 233100000
 
@@ -279,7 +280,7 @@ export default function RegularInvoices() {
                     )}
                   </td>
                   <td className="px-4 py-2.5 text-right font-semibold text-gray-900 whitespace-nowrap">
-                    {base > 0 || tax > 0 ? `€ ${total.toFixed(2)}` : '—'}
+                    {base > 0 || tax > 0 ? fmtEur(total) : '—'}
                   </td>
                 </tr>
               )

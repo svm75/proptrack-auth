@@ -11,6 +11,7 @@ import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesMod
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
 import InvoiceForm from './InvoiceForm'
+import { fmtEur } from '../utils/formatters'
 
 const PROP_REF_TYPE = 233100000
 const TYPE_INCOMING = 233100000
@@ -43,11 +44,6 @@ interface YearSummary {
   expenses: number
 }
 
-function fmtEur(n: number): string {
-  const [int, dec] = n.toFixed(2).split('.')
-  const intFormatted = int.replace(/\B(?=(\d{3})+(?!\d))/g, "'")
-  return `€ ${intFormatted}.${dec}`
-}
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—'
@@ -224,8 +220,8 @@ export default function Properties() {
       const raw = inv as unknown as Record<string, unknown>
       const type = raw['cr9b5_type'] as number | undefined ?? (inv.cr9b5_type as unknown as number)
       const gross = inv.cr9b5_totalgross ?? 0
-      if (type === TYPE_INCOMING) s.income += gross
-      else if (type === TYPE_OUTGOING) s.expenses += gross
+      if (type === TYPE_OUTGOING) s.income += gross
+      else if (type === TYPE_INCOMING) s.expenses += gross
     }
     return Array.from(map.values()).sort((a, b) => b.year - a.year)
   })()
@@ -538,8 +534,8 @@ export default function Properties() {
                       <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
                         <tr className="text-left text-gray-400 font-semibold uppercase tracking-wide">
                           <th className="px-4 py-2">Year</th>
-                          <th className="px-4 py-2 text-right">Income</th>
                           <th className="px-4 py-2 text-right">Expenses</th>
+                          <th className="px-4 py-2 text-right">Income</th>
                           <th className="px-4 py-2 text-right">Net</th>
                         </tr>
                       </thead>
@@ -559,8 +555,8 @@ export default function Properties() {
                               <td className={['px-4 py-2 font-semibold', isSelected ? 'text-indigo-700' : 'text-gray-700'].join(' ')}>
                                 {s.year}
                               </td>
-                              <td className="px-4 py-2 text-right text-blue-700">{fmtEur(s.income)}</td>
-                              <td className="px-4 py-2 text-right text-green-700">{fmtEur(s.expenses)}</td>
+                              <td className="px-4 py-2 text-right text-red-600">{fmtEur(s.expenses)}</td>
+                              <td className="px-4 py-2 text-right text-green-700">{fmtEur(s.income)}</td>
                               <td className={['px-4 py-2 text-right font-semibold', net >= 0 ? 'text-gray-900' : 'text-red-600'].join(' ')}>
                                 {fmtEur(net)}
                               </td>

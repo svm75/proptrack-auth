@@ -9,6 +9,7 @@ import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsMod
 import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
+import { fmtEur } from '../utils/formatters'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -772,7 +773,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
             <div className="flex items-center justify-between bg-gray-50 rounded-lg px-4 py-2.5 border border-gray-200">
               <span className="text-sm font-medium text-gray-700">Total Gross</span>
               <span className="text-lg font-semibold text-gray-900">
-                {baseNum > 0 || taxNum > 0 ? `€ ${totalGross.toFixed(2)}` : '—'}
+                {baseNum > 0 || taxNum > 0 ? fmtEur(totalGross) : '—'}
               </span>
             </div>
           </div>
