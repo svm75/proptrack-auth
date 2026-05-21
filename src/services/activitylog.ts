@@ -8,10 +8,11 @@ const ACTION_MAP = {
 } as const
 
 const TABLE_MAP = {
-  Invoice:    233100000,
-  Contact:    233100001,
-  Property:   233100002,
-  Attachment: 233100003,
+  Invoice:         233100000,
+  Contact:         233100001,
+  Property:        233100002,
+  Attachment:      233100003,
+  'Forecast Flow': 233100004,
 } as const
 
 function getCurrentUser(): string {
@@ -27,7 +28,7 @@ function getCurrentUser(): string {
 
 export async function logActivity(
   action: 'Created' | 'Updated' | 'Deleted' | 'Exported',
-  table: 'Invoice' | 'Contact' | 'Property' | 'Attachment',
+  table: 'Invoice' | 'Contact' | 'Property' | 'Attachment' | 'Forecast Flow',
   recordName: string,
   details?: string,
 ): Promise<void> {

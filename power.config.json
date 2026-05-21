@@ -39,6 +39,14 @@
         "activitylogs": {
           "entitySetName": "cr9b5_pt_activitylogs",
           "logicalName": "cr9b5_pt_activitylog"
+        },
+        "forecastflows": {
+          "entitySetName": "cr9b5_pt_forecastflows",
+          "logicalName": "cr9b5_pt_forecastflow"
+        },
+        "forecastflowproperties": {
+          "entitySetName": "cr9b5_forecastproperties",
+          "logicalName": "cr9b5_forecastproperty"
         }
       },
       "actions": null

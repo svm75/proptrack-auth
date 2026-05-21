@@ -16,6 +16,8 @@ const REF_TYPE_LABELS: Record<number, string> = {
   233100002: 'Client',
   233100003: 'Incoming Invoice',
   233100004: 'Outgoing Invoice',
+  233100005: 'Income Category',
+  233100006: 'Expense Category',
 }
 
 const REF_TYPE_OPTIONS = Object.entries(REF_TYPE_LABELS).map(([k, v]) => ({

@@ -5,8 +5,10 @@ import Contacts        from './screens/Contacts'
 import Invoices        from './screens/Invoices'
 import RegularInvoices from './screens/RegularInvoices'
 import Admin           from './screens/Admin'
+import ForecastFlows   from './screens/ForecastFlows'
+import ForecastView    from './screens/ForecastView'
 
-type Screen = 'dashboard' | 'invoices' | 'regular-invoices' | 'properties' | 'contacts' | 'admin'
+type Screen = 'dashboard' | 'forecast' | 'forecast-flows' | 'forecast-view' | 'invoices' | 'regular-invoices' | 'properties' | 'contacts' | 'admin'
 
 interface NavItem {
   id: Screen
@@ -17,6 +19,9 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard',       label: 'Dashboard',        icon: '▦' },
+  { id: 'forecast',        label: 'Forecast',         icon: '📊' },
+  { id: 'forecast-flows',  label: 'Forecast Flows',   icon: '≋', parent: 'forecast' },
+  { id: 'forecast-view',   label: 'Forecast View',    icon: '📈', parent: 'forecast' },
   { id: 'invoices',        label: 'Invoices',          icon: '📄' },
   { id: 'regular-invoices',label: 'Regular Invoices',  icon: '↻', parent: 'invoices' },
   { id: 'properties',      label: 'Properties',        icon: '🏠' },
@@ -76,12 +81,14 @@ export default function App() {
         </aside>
 
         <main className="flex-1 overflow-y-auto">
-          {screen === 'dashboard'        && <Dashboard />}
-          {screen === 'invoices'         && <Invoices />}
-          {screen === 'regular-invoices' && <RegularInvoices />}
-          {screen === 'properties'       && <Properties />}
-          {screen === 'contacts'         && <Contacts />}
-          {screen === 'admin'            && <Admin />}
+          {screen === 'dashboard'                                   && <Dashboard />}
+          {(screen === 'forecast' || screen === 'forecast-flows') && <ForecastFlows />}
+          {screen === 'forecast-view'                            && <ForecastView />}
+          {screen === 'invoices'                                  && <Invoices />}
+          {screen === 'regular-invoices'                         && <RegularInvoices />}
+          {screen === 'properties'                               && <Properties />}
+          {screen === 'contacts'                                 && <Contacts />}
+          {screen === 'admin'                                    && <Admin />}
         </main>
       </div>
     </div>

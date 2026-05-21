@@ -26,6 +26,20 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
+  "cr9b5_forecastproperties": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "cr9b5_forecastpropertyid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "cr9b5_pt_forecastflows": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "cr9b5_pt_forecastflowid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "cr9b5_pt_invoices": {
     "tableId": "",
     "version": "",
