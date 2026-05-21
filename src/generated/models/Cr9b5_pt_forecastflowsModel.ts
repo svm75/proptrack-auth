@@ -32,8 +32,10 @@ export interface Cr9b5_pt_forecastflowsBase {
   cr9b5_allproperties?: boolean;
   "cr9b5_categoryid@odata.bind"?: string;
   "cr9b5_contactid@odata.bind"?: string;
+  cr9b5_daysofweek?: string;
   cr9b5_enddate?: string;
   cr9b5_frequency?: Cr9b5_pt_forecastflowscr9b5_frequency;
+  cr9b5_grossamount?: number;
   cr9b5_name?: string;
   cr9b5_netamount?: number;
   cr9b5_notes?: string;
@@ -60,6 +62,7 @@ export interface Cr9b5_pt_forecastflows extends Cr9b5_pt_forecastflowsBase {
   cr9b5_categoryidname?: string;
   cr9b5_contactidname?: string;
   cr9b5_frequencyname?: string;
+  cr9b5_grossamount_base?: number;
   cr9b5_netamount_base?: number;
   cr9b5_parentflowidname?: string;
   cr9b5_typename?: string;

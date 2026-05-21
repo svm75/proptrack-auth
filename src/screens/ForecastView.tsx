@@ -29,25 +29,23 @@ const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Se
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface MonthKey { year: number; month: number }   // month 0-11
+interface MonthKey { year: number; month: number }
 
-/** Amounts for a single month for one logical flow */
 interface MonthAmounts {
   gross: number
   vat: number
   net: number
 }
 
-/** A logical flow (possibly spanning multiple versions) */
 interface LogicalFlow {
-  logicalId: string          // parentflowid of oldest, or the flow id if no parent
+  logicalId: string
   name: string
-  type: number               // TYPE_INCOME | TYPE_EXPENSE
+  type: number
   categoryId: string
   contactId: string
   versions: Cr9b5_pt_forecastflows[]
-  linkedPropertyIds: string[]   // union across all versions (allProperties OR specific)
-  allProperties: boolean        // true if ANY version is allProperties
+  linkedPropertyIds: string[]
+  allProperties: boolean
 }
 
 // ── Calendar helpers ─────────────────────────────────────────────────────────
@@ -56,27 +54,13 @@ function daysInMonth(year: number, month: number): number {
   return new Date(year, month + 1, 0).getDate()
 }
 
-/** Count occurrences of day-of-week (1=Mon…7=Sun) in a given month */
 function countDowInMonth(year: number, month: number, dow: number): number {
-  // Convert 1=Mon…7=Sun → JS getDay() 0=Sun…6=Sat
   const jsDow = dow === 7 ? 0 : dow
   let count = 0
-  const days = daysInMonth(year, month)
-  for (let d = 1; d <= days; d++) {
+  for (let d = 1; d <= daysInMonth(year, month); d++) {
     if (new Date(year, month, d).getDay() === jsDow) count++
   }
   return count
-}
-
-function monthsBetween(startYear: number, startMonth: number, endYear: number, endMonth: number): MonthKey[] {
-  const result: MonthKey[] = []
-  let y = startYear, m = startMonth
-  while (y < endYear || (y === endYear && m <= endMonth)) {
-    result.push({ year: y, month: m })
-    m++
-    if (m > 11) { m = 0; y++ }
-  }
-  return result
 }
 
 function parseDate(s: string | undefined): { year: number; month: number } | null {
@@ -85,12 +69,11 @@ function parseDate(s: string | undefined): { year: number; month: number } | nul
   return { year: y, month: mo - 1 }
 }
 
-/** Is the given month within [startDate, endDate]? endDate null = infinite */
 function monthInRange(mk: MonthKey, flow: Cr9b5_pt_forecastflows): boolean {
   const start = parseDate(flow.cr9b5_startdate)
   const end   = parseDate(flow.cr9b5_enddate)
   if (!start) return false
-  const after = mk.year > start.year || (mk.year === start.year && mk.month >= start.month)
+  const after  = mk.year > start.year || (mk.year === start.year && mk.month >= start.month)
   const before = !end || mk.year < end.year || (mk.year === end.year && mk.month <= end.month)
   return after && before
 }
@@ -98,33 +81,29 @@ function monthInRange(mk: MonthKey, flow: Cr9b5_pt_forecastflows): boolean {
 // ── Amount calculation engine ────────────────────────────────────────────────
 
 function computeGrossForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): number {
-  const raw = flow as unknown as Record<string, unknown>
+  const raw   = flow as unknown as Record<string, unknown>
   const gross = (raw['cr9b5_grossamount'] as number) ?? 0
-  const freq = flow.cr9b5_frequency as unknown as number
+  const freq  = Number(flow.cr9b5_frequency)
 
   if (!monthInRange(mk, flow)) return 0
 
   switch (freq) {
-    case FREQ_ONE_OFF:
-      // Only in the exact month of startdate
+    case FREQ_ONE_OFF: {
       const start = parseDate(flow.cr9b5_startdate)
       if (!start) return 0
       return start.year === mk.year && start.month === mk.month ? gross : 0
-
+    }
     case FREQ_DAILY: {
       const dowStr = (raw['cr9b5_daysofweek'] as string) ?? ''
       if (!dowStr) return 0
-      const dows = dowStr.split(',').map(Number).filter(n => n >= 1 && n <= 7)
-      const count = dows.reduce((sum, d) => sum + countDowInMonth(mk.year, mk.month, d), 0)
+      const dows  = dowStr.split(',').map(Number).filter(n => n >= 1 && n <= 7)
+      const count = dows.reduce((s, d) => s + countDowInMonth(mk.year, mk.month, d), 0)
       return Math.round(gross * count * 100) / 100
     }
-
     case FREQ_WEEKLY:
       return Math.round(gross * (daysInMonth(mk.year, mk.month) / 7) * 100) / 100
-
     case FREQ_MONTHLY:
       return gross
-
     case FREQ_QUARTERLY:
     case FREQ_SEMI_ANNUALLY:
     case FREQ_ANNUALLY: {
@@ -134,7 +113,6 @@ function computeGrossForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): numbe
       const totalMonths = (mk.year - start.year) * 12 + (mk.month - start.month)
       return totalMonths >= 0 && totalMonths % interval === 0 ? gross : 0
     }
-
     default:
       return 0
   }
@@ -143,22 +121,19 @@ function computeGrossForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): numbe
 function computeAmountsForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): MonthAmounts {
   const gross = computeGrossForMonth(flow, mk)
   if (gross === 0) return { gross: 0, vat: 0, net: 0 }
-  const vatBase = (flow.cr9b5_vatamount ?? 0)
+  const vatBase   = flow.cr9b5_vatamount ?? 0
   const grossBase = (flow as unknown as Record<string, unknown>)['cr9b5_grossamount'] as number ?? 0
-  // Scale vat proportionally to gross
   const vat = grossBase > 0 ? Math.round((vatBase / grossBase) * gross * 100) / 100 : 0
   const net = Math.round((gross - vat) * 100) / 100
   return { gross, vat, net }
 }
 
-// ── Pro-rata helper ──────────────────────────────────────────────────────────
-
-function applyProRata(amounts: MonthAmounts, ratio: number): MonthAmounts {
-  if (ratio === 1) return amounts
+function applyProRata(a: MonthAmounts, ratio: number): MonthAmounts {
+  if (ratio === 1) return a
   return {
-    gross: Math.round(amounts.gross * ratio * 100) / 100,
-    vat:   Math.round(amounts.vat   * ratio * 100) / 100,
-    net:   Math.round(amounts.net   * ratio * 100) / 100,
+    gross: Math.round(a.gross * ratio * 100) / 100,
+    vat:   Math.round(a.vat   * ratio * 100) / 100,
+    net:   Math.round(a.net   * ratio * 100) / 100,
   }
 }
 
@@ -172,9 +147,11 @@ export default function ForecastView() {
   const [loading, setLoading]       = useState(true)
 
   const curYear = new Date().getFullYear()
-  const [fromYear, setFromYear]     = useState(curYear)
-  const [toYear, setToYear]         = useState(curYear + 2)
-  const [propFilter, setPropFilter] = useState<string[]>([])  // empty = All
+  const minYear = curYear
+  const maxYear = curYear + 10
+
+  const [year, setYear]             = useState(curYear)
+  const [propFilter, setPropFilter] = useState<string[]>([])
 
   const [expanded, setExpanded]     = useState<Set<string>>(new Set())
   const [allExpanded, setAllExpanded] = useState(false)
@@ -190,7 +167,18 @@ export default function ForecastView() {
         Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc', 'cr9b5_value asc'] }),
         Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
       ])
-      setFlows(fRes.data ?? [])
+      const loadedFlows = fRes.data ?? []
+      console.log('[ForecastView] flows loaded:', loadedFlows.length, loadedFlows.map(f => ({
+        id: f.cr9b5_pt_forecastflowid,
+        name: f.cr9b5_name,
+        type: f.cr9b5_type,
+        typeNum: Number(f.cr9b5_type),
+        freq: f.cr9b5_frequency,
+        start: f.cr9b5_startdate,
+        end: f.cr9b5_enddate,
+        gross: (f as any).cr9b5_grossamount,
+      })))
+      setFlows(loadedFlows)
       setFlowProps(fpRes.data ?? [])
       setReferences(rRes.data ?? [])
       setProperties(pRes.data ?? [])
@@ -199,37 +187,23 @@ export default function ForecastView() {
     }
   }
 
-  const yearOptions = useMemo(() => {
-    const opts: number[] = []
-    for (let y = curYear; y <= curYear + 10; y++) opts.push(y)
-    return opts
-  }, [curYear])
-
+  // 12 months of the selected year
   const months = useMemo(
-    () => monthsBetween(fromYear, 0, toYear, 11),
-    [fromYear, toYear],
+    (): MonthKey[] => Array.from({ length: 12 }, (_, m) => ({ year, month: m })),
+    [year],
   )
-
-  const years = useMemo(() => {
-    const ys: number[] = []
-    for (let y = fromYear; y <= toYear; y++) ys.push(y)
-    return ys
-  }, [fromYear, toYear])
 
   // ── Build logical flows ──────────────────────────────────────────────────
 
   const logicalFlows = useMemo((): LogicalFlow[] => {
     const map = new Map<string, LogicalFlow>()
 
-    // First pass: group by logical id (parentflowid chain)
     for (const flow of flows) {
-      const raw = flow as unknown as Record<string, unknown>
       const parentId = flow._cr9b5_parentflowid_value as string | undefined
       const logicalId = parentId ?? flow.cr9b5_pt_forecastflowid
-      const typeNum = flow.cr9b5_type as unknown as number
+      const typeNum = Number(flow.cr9b5_type)
 
       if (!map.has(logicalId)) {
-        // Find the "original" flow (no parent = the root)
         const rootFlow = flows.find(f => f.cr9b5_pt_forecastflowid === logicalId)
         map.set(logicalId, {
           logicalId,
@@ -247,14 +221,12 @@ export default function ForecastView() {
       if (flow.cr9b5_allproperties) lf.allProperties = true
     }
 
-    // Second pass: attach property links
     for (const fp of flowProps) {
       const flowId = fp._cr9b5_forecastflowid_value ?? ''
       const propId = fp._cr9b5_propertyid_value ?? ''
-      // Find which logical flow this version belongs to
       const flow = flows.find(f => f.cr9b5_pt_forecastflowid === flowId)
       if (!flow) continue
-      const parentId = flow._cr9b5_parentflowid_value as string | undefined
+      const parentId  = flow._cr9b5_parentflowid_value as string | undefined
       const logicalId = parentId ?? flow.cr9b5_pt_forecastflowid
       const lf = map.get(logicalId)
       if (lf && propId && !lf.linkedPropertyIds.includes(propId)) {
@@ -265,23 +237,21 @@ export default function ForecastView() {
     return Array.from(map.values())
   }, [flows, flowProps])
 
-  // ── Pro-rata ratio for a logical flow given current property filter ───────
+  // ── Pro-rata ratio ───────────────────────────────────────────────────────
 
   function proRataRatio(lf: LogicalFlow): number {
-    if (propFilter.length === 0) return 1  // All → no pro-rata needed
+    if (propFilter.length === 0) return 1
 
     if (lf.allProperties) {
       const total = properties.length
       if (total === 0) return 0
-      const matching = propFilter.filter(pid =>
-        properties.some(p => p.cr9b5_pt_propertyid === pid)
-      ).length
+      const matching = propFilter.filter(pid => properties.some(p => p.cr9b5_pt_propertyid === pid)).length
       return matching / total
     } else {
       const total = lf.linkedPropertyIds.length
       if (total === 0) return 0
       const matching = propFilter.filter(pid => lf.linkedPropertyIds.includes(pid)).length
-      if (matching === 0) return -1  // exclude entirely
+      if (matching === 0) return -1
       return matching / total
     }
   }
@@ -290,10 +260,9 @@ export default function ForecastView() {
 
   const flowAmounts = useMemo((): Map<string, Map<string, MonthAmounts>> => {
     const result = new Map<string, Map<string, MonthAmounts>>()
-
     for (const lf of logicalFlows) {
       const ratio = proRataRatio(lf)
-      if (ratio === -1) continue  // excluded by property filter
+      if (ratio === -1) continue
 
       const byMonth = new Map<string, MonthAmounts>()
       for (const mk of months) {
@@ -301,18 +270,14 @@ export default function ForecastView() {
         let combined: MonthAmounts = { gross: 0, vat: 0, net: 0 }
         for (const version of lf.versions) {
           const a = computeAmountsForMonth(version, mk)
-          combined = {
-            gross: combined.gross + a.gross,
-            vat:   combined.vat   + a.vat,
-            net:   combined.net   + a.net,
-          }
+          combined = { gross: combined.gross + a.gross, vat: combined.vat + a.vat, net: combined.net + a.net }
         }
-        const proRated = applyProRata(combined, ratio)
-        byMonth.set(key, proRated)
+        byMonth.set(key, applyProRata(combined, ratio))
       }
       result.set(lf.logicalId, byMonth)
     }
     return result
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [logicalFlows, months, propFilter, properties])
 
   // ── Accessors ─────────────────────────────────────────────────────────────
@@ -333,22 +298,16 @@ export default function ForecastView() {
       .reduce((s, lf) => s + getAmt(lf.logicalId, mk)[field], 0)
   }
 
-  function yearTotal(logicalId: string, year: number, field: keyof MonthAmounts): number {
-    return months
-      .filter(mk => mk.year === year)
-      .reduce((s, mk) => s + getAmt(logicalId, mk)[field], 0)
+  function yearTotal(logicalId: string, field: keyof MonthAmounts): number {
+    return months.reduce((s, mk) => s + getAmt(logicalId, mk)[field], 0)
   }
 
-  function yearCategoryTotal(categoryId: string, type: number, year: number, field: keyof MonthAmounts): number {
-    return months
-      .filter(mk => mk.year === year)
-      .reduce((s, mk) => s + sumCategory(categoryId, type, mk, field), 0)
+  function yearCategoryTotal(categoryId: string, type: number, field: keyof MonthAmounts): number {
+    return months.reduce((s, mk) => s + sumCategory(categoryId, type, mk, field), 0)
   }
 
-  function yearTypeTotal(type: number, year: number, field: keyof MonthAmounts): number {
-    return months
-      .filter(mk => mk.year === year)
-      .reduce((s, mk) => s + sumType(type, mk, field), 0)
+  function yearTypeTotal(type: number, field: keyof MonthAmounts): number {
+    return months.reduce((s, mk) => s + sumType(type, mk, field), 0)
   }
 
   // ── Expand / collapse ─────────────────────────────────────────────────────
@@ -379,17 +338,13 @@ export default function ForecastView() {
   // ── Derived lists ─────────────────────────────────────────────────────────
 
   const incomeCategories = useMemo(
-    () => references.filter(r => (r.cr9b5_referencetype as unknown as number) === REF_INCOME_CATEGORY),
+    () => references.filter(r => Number(r.cr9b5_referencetype) === REF_INCOME_CATEGORY),
     [references],
   )
   const expenseCategories = useMemo(
-    () => references.filter(r => (r.cr9b5_referencetype as unknown as number) === REF_EXPENSE_CATEGORY),
+    () => references.filter(r => Number(r.cr9b5_referencetype) === REF_EXPENSE_CATEGORY),
     [references],
   )
-
-  function contactName(id: string): string {
-    return ''  // We don't have contacts loaded in view — use flow name instead
-  }
 
   // ── Render helpers ────────────────────────────────────────────────────────
 
@@ -398,124 +353,50 @@ export default function ForecastView() {
     return fmtEur(Math.round(n * 100) / 100)
   }
 
-  const totalCols = years.length * 13  // 12 months + 1 year total, per year
-
-  // Column header structure: for each year, 12 months + 1 year total
-  const colCount = years.reduce((s) => s + 13, 0) + 1  // +1 for label col
-
-  function renderYearHeaders() {
-    return (
-      <tr className="bg-gray-100">
-        <th className="sticky left-0 bg-gray-100 px-3 py-2 text-left text-xs font-semibold text-gray-600 min-w-[220px] z-10"></th>
-        {years.map(y => (
-          <th
-            key={y}
-            colSpan={13}
-            className="px-2 py-2 text-center text-xs font-bold text-gray-700 border-l border-gray-300"
-          >
-            {y}
-          </th>
-        ))}
-      </tr>
-    )
-  }
-
-  function renderMonthHeaders() {
-    return (
-      <tr className="bg-gray-50 border-b border-gray-200">
-        <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-500 min-w-[220px] z-10">
-          <button
-            onClick={toggleExpandAll}
-            className="text-xs text-teal-600 hover:text-teal-800 font-medium"
-          >
-            {allExpanded ? '− Collapse All' : '+ Expand All'}
-          </button>
-        </th>
-        {years.map(y => (
-          <>
-            {MONTH_NAMES.map((mn, mi) => (
-              <th key={`${y}-${mi}`} className={[
-                'px-1.5 py-2 text-center text-xs font-medium text-gray-500 whitespace-nowrap',
-                mi === 0 ? 'border-l border-gray-300' : '',
-              ].join(' ')}>
-                {mn}
-              </th>
-            ))}
-            <th key={`${y}-total`} className="px-2 py-2 text-center text-xs font-semibold text-gray-600 border-l border-gray-200 whitespace-nowrap">
-              Total
-            </th>
-          </>
-        ))}
-      </tr>
-    )
-  }
-
   function renderAmountRow(
     label: string,
-    field: keyof MonthAmounts,
+    _field: keyof MonthAmounts,
     getMonthVal: (mk: MonthKey) => number,
-    getYearVal: (year: number) => number,
+    getYearVal: () => number,
     opts: {
       bold?: boolean
-      indent?: number
       separator?: boolean
       subtle?: boolean
-      positive?: boolean  // force green tint
-      negative?: boolean  // force red tint
+      positive?: boolean
+      negative?: boolean
     } = {},
   ) {
-    const { bold, indent = 0, separator, subtle, positive, negative } = opts
-    const rowCls = [
-      'border-b',
-      separator ? 'border-gray-300 bg-gray-50' : 'border-gray-100',
-      subtle ? 'text-gray-400' : '',
-    ].join(' ')
-    const labelCls = [
-      'sticky left-0 px-3 py-1.5 text-sm z-10 whitespace-nowrap',
-      separator ? 'bg-gray-50' : 'bg-white',
-      bold ? 'font-bold text-gray-900' : 'text-gray-700',
-      indent === 1 ? 'pl-6' : indent === 2 ? 'pl-10' : '',
-    ].join(' ')
+    const { bold, separator, subtle, positive, negative } = opts
+    const rowCls = ['border-b', separator ? 'border-gray-300 bg-gray-50' : 'border-gray-100', subtle ? 'opacity-60' : ''].join(' ')
+    const labelCls = ['sticky left-0 px-3 py-1.5 text-sm z-10 whitespace-nowrap', separator ? 'bg-gray-50' : 'bg-white', bold ? 'font-bold text-gray-900' : 'text-gray-700'].join(' ')
 
     return (
       <tr className={rowCls}>
         <td className={labelCls}>{label}</td>
-        {years.map(y => (
-          <>
-            {months.filter(mk => mk.year === y).map(mk => {
-              const v = Math.round(getMonthVal(mk) * 100) / 100
-              const neg = negative || (!positive && v < 0)
-              const pos = positive || (!negative && v > 0)
-              return (
-                <td key={`${mk.year}-${mk.month}`} className={[
-                  'px-1.5 py-1.5 text-right text-xs whitespace-nowrap',
-                  mk.month === 0 ? 'border-l border-gray-300' : '',
-                  neg ? 'text-red-600' : pos ? 'text-gray-800' : 'text-gray-400',
-                ].join(' ')}>
-                  {fmtCell(v)}
-                </td>
-              )
-            })}
-            <td key={`${y}-ytotal`} className={[
-              'px-2 py-1.5 text-right text-xs font-semibold whitespace-nowrap border-l border-gray-200',
-              bold ? 'font-bold' : '',
+        {months.map(mk => {
+          const v = Math.round(getMonthVal(mk) * 100) / 100
+          const neg = negative || (!positive && v < 0)
+          const pos = positive || (!negative && v > 0)
+          return (
+            <td key={`${mk.year}-${mk.month}`} className={[
+              'px-2 py-1.5 text-right text-xs whitespace-nowrap',
+              neg ? 'text-red-600' : pos ? 'text-gray-800' : 'text-gray-400',
             ].join(' ')}>
-              {fmtCell(Math.round(getYearVal(y) * 100) / 100)}
+              {fmtCell(v)}
             </td>
-          </>
-        ))}
+          )
+        })}
+        <td className={['px-3 py-1.5 text-right text-xs whitespace-nowrap border-l border-gray-200', bold ? 'font-bold text-gray-900' : 'font-semibold text-gray-700'].join(' ')}>
+          {fmtCell(Math.round(getYearVal() * 100) / 100)}
+        </td>
       </tr>
     )
   }
 
-  function renderCategorySection(
-    type: number,
-    cats: Cr9b5_pt_references[],
-    field: keyof MonthAmounts,
-  ) {
+  function renderCategorySection(type: number, cats: Cr9b5_pt_references[], field: keyof MonthAmounts) {
     return cats.map(cat => {
-      const catKey = `cat-${type}-${cat.cr9b5_pt_referenceid}`
-      const isOpen = expanded.has(catKey)
+      const catKey  = `cat-${type}-${cat.cr9b5_pt_referenceid}`
+      const isOpen  = expanded.has(catKey)
       const catFlows = logicalFlows.filter(
         lf => lf.type === type && lf.categoryId === cat.cr9b5_pt_referenceid && flowAmounts.has(lf.logicalId)
       )
@@ -523,7 +404,6 @@ export default function ForecastView() {
 
       return (
         <>
-          {/* Category row */}
           <tr
             key={catKey}
             className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
@@ -533,47 +413,29 @@ export default function ForecastView() {
               <span className="mr-1.5 text-gray-400 text-xs">{isOpen ? '▾' : '▸'}</span>
               {cat.cr9b5_value}
             </td>
-            {years.map(y => (
-              <>
-                {months.filter(mk => mk.year === y).map(mk => (
-                  <td key={`${mk.year}-${mk.month}`} className={[
-                    'px-1.5 py-1.5 text-right text-xs whitespace-nowrap',
-                    mk.month === 0 ? 'border-l border-gray-300' : '',
-                  ].join(' ')}>
-                    {fmtCell(Math.round(sumCategory(cat.cr9b5_pt_referenceid, type, mk, field) * 100) / 100)}
-                  </td>
-                ))}
-                <td key={`${y}-ytotal`} className="px-2 py-1.5 text-right text-xs font-semibold whitespace-nowrap border-l border-gray-200">
-                  {fmtCell(Math.round(yearCategoryTotal(cat.cr9b5_pt_referenceid, type, y, field) * 100) / 100)}
-                </td>
-              </>
+            {months.map(mk => (
+              <td key={`${mk.year}-${mk.month}`} className="px-2 py-1.5 text-right text-xs whitespace-nowrap">
+                {fmtCell(Math.round(sumCategory(cat.cr9b5_pt_referenceid, type, mk, field) * 100) / 100)}
+              </td>
             ))}
+            <td className="px-3 py-1.5 text-right text-xs font-semibold whitespace-nowrap border-l border-gray-200">
+              {fmtCell(Math.round(yearCategoryTotal(cat.cr9b5_pt_referenceid, type, field) * 100) / 100)}
+            </td>
           </tr>
 
-          {/* Flow rows (expanded) */}
           {isOpen && catFlows.map(lf => (
             <tr key={lf.logicalId} className="border-b border-gray-50 bg-gray-50/50">
               <td className="sticky left-0 bg-gray-50/50 px-3 py-1 text-xs text-gray-600 pl-12 z-10 whitespace-nowrap">
                 {lf.name}
-                {lf.contactId && (
-                  <span className="ml-1 text-gray-400">— {lf.contactId}</span>
-                )}
               </td>
-              {years.map(y => (
-                <>
-                  {months.filter(mk => mk.year === y).map(mk => (
-                    <td key={`${mk.year}-${mk.month}`} className={[
-                      'px-1.5 py-1 text-right text-xs text-gray-500 whitespace-nowrap',
-                      mk.month === 0 ? 'border-l border-gray-300' : '',
-                    ].join(' ')}>
-                      {fmtCell(Math.round(getAmt(lf.logicalId, mk)[field] * 100) / 100)}
-                    </td>
-                  ))}
-                  <td key={`${y}-ytotal`} className="px-2 py-1 text-right text-xs text-gray-500 whitespace-nowrap border-l border-gray-200">
-                    {fmtCell(Math.round(yearTotal(lf.logicalId, y, field) * 100) / 100)}
-                  </td>
-                </>
+              {months.map(mk => (
+                <td key={`${mk.year}-${mk.month}`} className="px-2 py-1 text-right text-xs text-gray-500 whitespace-nowrap">
+                  {fmtCell(Math.round(getAmt(lf.logicalId, mk)[field] * 100) / 100)}
+                </td>
               ))}
+              <td className="px-3 py-1 text-right text-xs text-gray-500 whitespace-nowrap border-l border-gray-200">
+                {fmtCell(Math.round(yearTotal(lf.logicalId, field) * 100) / 100)}
+              </td>
             </tr>
           ))}
         </>
@@ -581,81 +443,72 @@ export default function ForecastView() {
     })
   }
 
+  function renderSectionHeader(label: string, colorCls: string) {
+    return (
+      <tr className={`${colorCls} border-b`}>
+        <td className={`sticky left-0 ${colorCls} px-3 py-2 text-sm font-bold uppercase tracking-wide z-10`} colSpan={14}>
+          {label}
+        </td>
+      </tr>
+    )
+  }
+
+  function renderSpacer() {
+    return (
+      <tr className="bg-gray-100 border-b border-gray-200">
+        <td className="sticky left-0 bg-gray-100 py-0.5 z-10" colSpan={14} />
+      </tr>
+    )
+  }
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold text-gray-900">Forecast View</h1>
-      </div>
+      <h1 className="text-xl font-bold text-gray-900">Forecast View</h1>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3 items-center bg-white border border-gray-200 rounded-xl p-3">
-        {/* Year range */}
-        <div className="flex items-center gap-2 text-sm">
-          <label className="text-gray-600 font-medium">From</label>
-          <select
-            value={fromYear}
-            onChange={e => {
-              const v = Number(e.target.value)
-              setFromYear(v)
-              if (toYear < v) setToYear(v)
-            }}
-            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+      <div className="flex flex-wrap gap-4 items-start bg-white border border-gray-200 rounded-xl p-3">
+        {/* Year navigator */}
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setYear(y => Math.max(minYear, y - 1))}
+            disabled={year <= minYear}
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed text-lg font-bold"
           >
-            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <label className="text-gray-600 font-medium">To</label>
-          <select
-            value={toYear}
-            onChange={e => {
-              const v = Number(e.target.value)
-              setToYear(v)
-              if (fromYear > v) setFromYear(v)
-            }}
-            className="border border-gray-300 rounded-lg px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+            ‹
+          </button>
+          <span className="w-16 text-center text-sm font-bold text-gray-900 select-none">{year}</span>
+          <button
+            onClick={() => setYear(y => Math.min(maxYear, y + 1))}
+            disabled={year >= maxYear}
+            className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed text-lg font-bold"
           >
-            {yearOptions.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
+            ›
+          </button>
         </div>
 
         {/* Property filter */}
-        <div className="flex items-center gap-2 text-sm">
-          <label className="text-gray-600 font-medium">Properties</label>
-          <div className="flex flex-wrap gap-1.5">
-            <button
-              onClick={() => setPropFilter([])}
-              className={[
-                'px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors',
-                propFilter.length === 0
-                  ? 'border-teal-500 bg-teal-50 text-teal-700'
-                  : 'border-gray-200 text-gray-500 hover:bg-gray-50',
-              ].join(' ')}
-            >
-              All
-            </button>
-            {properties.map(p => {
-              const sel = propFilter.includes(p.cr9b5_pt_propertyid)
-              return (
-                <button
-                  key={p.cr9b5_pt_propertyid}
-                  onClick={() => setPropFilter(prev =>
-                    sel
-                      ? prev.filter(id => id !== p.cr9b5_pt_propertyid)
-                      : [...prev, p.cr9b5_pt_propertyid]
-                  )}
-                  className={[
-                    'px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors',
-                    sel
-                      ? 'border-teal-500 bg-teal-50 text-teal-700'
-                      : 'border-gray-200 text-gray-500 hover:bg-gray-50',
-                  ].join(' ')}
-                >
-                  {p.cr9b5_name}
-                </button>
-              )
-            })}
-          </div>
+        <div className="flex items-center gap-2 text-sm flex-wrap">
+          <span className="text-gray-600 font-medium shrink-0">Properties:</span>
+          <button
+            onClick={() => setPropFilter([])}
+            className={['px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors', propFilter.length === 0 ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'].join(' ')}
+          >
+            All
+          </button>
+          {properties.map(p => {
+            const sel = propFilter.includes(p.cr9b5_pt_propertyid)
+            return (
+              <button
+                key={p.cr9b5_pt_propertyid}
+                onClick={() => setPropFilter(prev => sel ? prev.filter(id => id !== p.cr9b5_pt_propertyid) : [...prev, p.cr9b5_pt_propertyid])}
+                className={['px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors', sel ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'].join(' ')}
+              >
+                {p.cr9b5_name}
+              </button>
+            )
+          })}
         </div>
       </div>
 
@@ -664,129 +517,64 @@ export default function ForecastView() {
         <div className="text-center py-16 text-gray-400">Loading…</div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="text-sm border-collapse">
+          <table className="text-sm border-collapse w-full">
             <thead>
-              {renderYearHeaders()}
-              {renderMonthHeaders()}
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-500 min-w-[220px] z-10">
+                  <button onClick={toggleExpandAll} className="text-xs text-teal-600 hover:text-teal-800 font-medium">
+                    {allExpanded ? '− Collapse All' : '+ Expand All'}
+                  </button>
+                </th>
+                {MONTH_NAMES.map(mn => (
+                  <th key={mn} className="px-2 py-2 text-center text-xs font-medium text-gray-500 whitespace-nowrap">
+                    {mn}
+                  </th>
+                ))}
+                <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 border-l border-gray-200 whitespace-nowrap">
+                  {year} Total
+                </th>
+              </tr>
             </thead>
             <tbody>
-              {/* ── INCOME ── */}
-              <tr className="bg-green-50 border-b border-green-200">
-                <td className="sticky left-0 bg-green-50 px-3 py-2 text-sm font-bold text-green-800 uppercase tracking-wide z-10" colSpan={1}>
-                  INCOME
-                </td>
-                {years.map(y => (
-                  <>
-                    {Array.from({ length: 12 }, (_, mi) => (
-                      <td key={`${y}-${mi}`} className={mi === 0 ? 'border-l border-gray-300' : ''} />
-                    ))}
-                    <td className="border-l border-gray-200" />
-                  </>
-                ))}
-              </tr>
-
+              {/* INCOME */}
+              {renderSectionHeader('INCOME', 'bg-green-50 text-green-800')}
               {renderCategorySection(TYPE_INCOME, incomeCategories, 'net')}
-
-              {renderAmountRow(
-                'TOTAL INCOME',
-                'net',
+              {renderAmountRow('TOTAL INCOME', 'net',
                 mk => sumType(TYPE_INCOME, mk, 'net'),
-                y  => yearTypeTotal(TYPE_INCOME, y, 'net'),
+                () => yearTypeTotal(TYPE_INCOME, 'net'),
                 { bold: true, separator: true },
               )}
 
-              {/* ── EXPENSES ── */}
-              <tr className="bg-red-50 border-b border-red-200">
-                <td className="sticky left-0 bg-red-50 px-3 py-2 text-sm font-bold text-red-800 uppercase tracking-wide z-10" colSpan={1}>
-                  EXPENSES
-                </td>
-                {years.map(y => (
-                  <>
-                    {Array.from({ length: 12 }, (_, mi) => (
-                      <td key={`${y}-${mi}`} className={mi === 0 ? 'border-l border-gray-300' : ''} />
-                    ))}
-                    <td className="border-l border-gray-200" />
-                  </>
-                ))}
-              </tr>
+              {renderSpacer()}
 
+              {/* EXPENSES */}
+              {renderSectionHeader('EXPENSES', 'bg-red-50 text-red-800')}
               {renderCategorySection(TYPE_EXPENSE, expenseCategories, 'net')}
-
-              {renderAmountRow(
-                'TOTAL EXPENSES',
-                'net',
+              {renderAmountRow('TOTAL EXPENSES', 'net',
                 mk => sumType(TYPE_EXPENSE, mk, 'net'),
-                y  => yearTypeTotal(TYPE_EXPENSE, y, 'net'),
+                () => yearTypeTotal(TYPE_EXPENSE, 'net'),
                 { bold: true, separator: true },
               )}
 
-              {/* ── VAT ── */}
-              <tr className="bg-gray-100 border-b border-gray-200">
-                <td className="sticky left-0 bg-gray-100 px-3 py-1 z-10" />
-                {years.map(y => (
-                  <>
-                    {Array.from({ length: 12 }, (_, mi) => (
-                      <td key={`${y}-${mi}`} className={mi === 0 ? 'border-l border-gray-300' : ''} />
-                    ))}
-                    <td className="border-l border-gray-200" />
-                  </>
-                ))}
-              </tr>
+              {renderSpacer()}
 
-              {renderAmountRow(
-                'VAT COLLECTED (income)',
-                'vat',
-                mk => sumType(TYPE_INCOME,  mk, 'vat'),
-                y  => yearTypeTotal(TYPE_INCOME,  y, 'vat'),
-                { subtle: true },
-              )}
-              {renderAmountRow(
-                'VAT PAID (expenses)',
-                'vat',
-                mk => sumType(TYPE_EXPENSE, mk, 'vat'),
-                y  => yearTypeTotal(TYPE_EXPENSE, y, 'vat'),
-                { subtle: true },
-              )}
-              {renderAmountRow(
-                'NET VAT',
-                'vat',
+              {/* VAT */}
+              {renderAmountRow('VAT COLLECTED (income)',  'vat', mk => sumType(TYPE_INCOME,  mk, 'vat'), () => yearTypeTotal(TYPE_INCOME,  'vat'), { subtle: true })}
+              {renderAmountRow('VAT PAID (expenses)',     'vat', mk => sumType(TYPE_EXPENSE, mk, 'vat'), () => yearTypeTotal(TYPE_EXPENSE, 'vat'), { subtle: true })}
+              {renderAmountRow('NET VAT', 'vat',
                 mk => Math.round((sumType(TYPE_INCOME, mk, 'vat') - sumType(TYPE_EXPENSE, mk, 'vat')) * 100) / 100,
-                y  => Math.round((yearTypeTotal(TYPE_INCOME, y, 'vat') - yearTypeTotal(TYPE_EXPENSE, y, 'vat')) * 100) / 100,
+                () => Math.round((yearTypeTotal(TYPE_INCOME, 'vat') - yearTypeTotal(TYPE_EXPENSE, 'vat')) * 100) / 100,
                 { bold: true, separator: true },
               )}
 
-              {/* ── CASH FLOW ── */}
-              <tr className="bg-gray-100 border-b border-gray-200">
-                <td className="sticky left-0 bg-gray-100 px-3 py-1 z-10" />
-                {years.map(y => (
-                  <>
-                    {Array.from({ length: 12 }, (_, mi) => (
-                      <td key={`${y}-${mi}`} className={mi === 0 ? 'border-l border-gray-300' : ''} />
-                    ))}
-                    <td className="border-l border-gray-200" />
-                  </>
-                ))}
-              </tr>
+              {renderSpacer()}
 
-              {renderAmountRow(
-                'CASH INFLOW',
-                'gross',
-                mk => sumType(TYPE_INCOME,  mk, 'gross'),
-                y  => yearTypeTotal(TYPE_INCOME,  y, 'gross'),
-                { positive: true },
-              )}
-              {renderAmountRow(
-                'CASH OUTFLOW',
-                'gross',
-                mk => sumType(TYPE_EXPENSE, mk, 'gross'),
-                y  => yearTypeTotal(TYPE_EXPENSE, y, 'gross'),
-                { negative: true },
-              )}
-              {renderAmountRow(
-                'NET CASH FLOW',
-                'gross',
+              {/* CASH FLOW */}
+              {renderAmountRow('CASH INFLOW',  'gross', mk => sumType(TYPE_INCOME,  mk, 'gross'), () => yearTypeTotal(TYPE_INCOME,  'gross'), { positive: true })}
+              {renderAmountRow('CASH OUTFLOW', 'gross', mk => sumType(TYPE_EXPENSE, mk, 'gross'), () => yearTypeTotal(TYPE_EXPENSE, 'gross'), { negative: true })}
+              {renderAmountRow('NET CASH FLOW', 'gross',
                 mk => Math.round((sumType(TYPE_INCOME, mk, 'gross') - sumType(TYPE_EXPENSE, mk, 'gross')) * 100) / 100,
-                y  => Math.round((yearTypeTotal(TYPE_INCOME, y, 'gross') - yearTypeTotal(TYPE_EXPENSE, y, 'gross')) * 100) / 100,
+                () => Math.round((yearTypeTotal(TYPE_INCOME, 'gross') - yearTypeTotal(TYPE_EXPENSE, 'gross')) * 100) / 100,
                 { bold: true, separator: true },
               )}
             </tbody>

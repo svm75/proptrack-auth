@@ -73,6 +73,14 @@
           "x-ms-read-only": true,
           "maxLength": 850
         },
+        "cr9b5_daysofweek": {
+          "type": "string",
+          "title": "Days of Week",
+          "x-ms-dataverse-attribute": "cr9b5_daysofweek",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "cr9b5_daysofweek",
+          "maxLength": 100
+        },
         "cr9b5_enddate": {
           "type": "string",
           "title": "End Date",
@@ -124,6 +132,21 @@
           "x-ms-dataverse-attribute": "cr9b5_frequencyname",
           "x-ms-dataverse-type": "VirtualType",
           "x-ms-schema-name": "cr9b5_frequencyName",
+          "x-ms-read-only": true
+        },
+        "cr9b5_grossamount": {
+          "type": "string",
+          "title": "Gross Amount",
+          "x-ms-dataverse-attribute": "cr9b5_grossamount",
+          "x-ms-dataverse-type": "MoneyType",
+          "x-ms-schema-name": "cr9b5_grossamount"
+        },
+        "cr9b5_grossamount_base": {
+          "type": "string",
+          "title": "Gross Amount (Base)",
+          "x-ms-dataverse-attribute": "cr9b5_grossamount_base",
+          "x-ms-dataverse-type": "MoneyType",
+          "x-ms-schema-name": "cr9b5_grossamount_Base",
           "x-ms-read-only": true
         },
         "cr9b5_name": {

@@ -198,7 +198,18 @@ export default function ForecastFlows() {
         Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'] }),
         Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
       ])
-      setFlows(fRes.data ?? [])
+      const loadedFlows = fRes.data ?? []
+      console.log('[ForecastFlows] flows loaded:', loadedFlows.length, loadedFlows.map(f => ({
+        id: f.cr9b5_pt_forecastflowid,
+        name: f.cr9b5_name,
+        type: f.cr9b5_type,
+        typeNum: Number(f.cr9b5_type),
+        freq: f.cr9b5_frequency,
+        start: f.cr9b5_startdate,
+        end: f.cr9b5_enddate,
+        gross: (f as any).cr9b5_grossamount,
+      })))
+      setFlows(loadedFlows)
       setFlowProps(fpRes.data ?? [])
       setReferences(rRes.data ?? [])
       setContacts(cRes.data ?? [])
@@ -210,12 +221,8 @@ export default function ForecastFlows() {
 
   // ── Derived data ──────────────────────────────────────────────────────────
 
-  const incomeCategories = references.filter(
-    r => (r.cr9b5_referencetype as unknown as number) === REF_INCOME_CATEGORY
-  )
-  const expenseCategories = references.filter(
-    r => (r.cr9b5_referencetype as unknown as number) === REF_EXPENSE_CATEGORY
-  )
+  const incomeCategories = references.filter(r => Number(r.cr9b5_referencetype) === REF_INCOME_CATEGORY)
+  const expenseCategories = references.filter(r => Number(r.cr9b5_referencetype) === REF_EXPENSE_CATEGORY)
 
   function propIdsForFlow(flowId: string): string[] {
     return flowProps
@@ -238,12 +245,11 @@ export default function ForecastFlows() {
   // ── Filtering ─────────────────────────────────────────────────────────────
 
   const visibleFlows = flows.filter(f => {
-    const raw = f as unknown as Record<string, unknown>
     const active = isActiveFlow(f)
     if (!showInactive && !active) return false
 
-    if (typeFilter !== null && (f.cr9b5_type as unknown as number) !== typeFilter) return false
-    if (freqFilter !== null && (f.cr9b5_frequency as unknown as number) !== freqFilter) return false
+    if (typeFilter !== null && Number(f.cr9b5_type) !== typeFilter) return false
+    if (freqFilter !== null && Number(f.cr9b5_frequency) !== freqFilter) return false
 
     if (propFilter) {
       const allProps = f.cr9b5_allproperties
@@ -336,6 +342,8 @@ export default function ForecastFlows() {
       await loadAll()
       closeForm()
     } catch (e) {
+      console.error('[ForecastFlows] save() caught error:', e)
+      console.error('[ForecastFlows] save() error JSON:', JSON.stringify(e, Object.getOwnPropertyNames(e as object)))
       setFormError('Save failed. Please try again.')
     } finally {
       setSaving(false)
@@ -344,8 +352,37 @@ export default function ForecastFlows() {
 
   async function saveNew() {
     const payload = buildPayload()
-    const res = await Cr9b5_pt_forecastflowsService.create(payload as any)
+
+    // ── Debug: validate required fields before sending ──────────────────────
+    const requiredChecks: Record<string, unknown> = {
+      cr9b5_name:       payload.cr9b5_name,
+      cr9b5_type:       payload.cr9b5_type,
+      cr9b5_frequency:  payload.cr9b5_frequency,
+      cr9b5_startdate:  payload.cr9b5_startdate,
+      cr9b5_grossamount: payload.cr9b5_grossamount,
+      'cr9b5_categoryid@odata.bind': (payload as any)['cr9b5_categoryid@odata.bind'],
+    }
+    const missing = Object.entries(requiredChecks).filter(([, v]) => v === undefined || v === null || v === '')
+    if (missing.length > 0) {
+      console.warn('[ForecastFlows] saveNew — missing required fields:', missing.map(([k]) => k))
+    }
+
+    console.log('[ForecastFlows] saveNew payload:', JSON.stringify(payload, null, 2))
+    console.log('[ForecastFlows] type typeof:', typeof payload.cr9b5_type, '  value:', payload.cr9b5_type)
+    console.log('[ForecastFlows] frequency typeof:', typeof payload.cr9b5_frequency, '  value:', payload.cr9b5_frequency)
+
+    let res: Awaited<ReturnType<typeof Cr9b5_pt_forecastflowsService.create>>
+    try {
+      res = await Cr9b5_pt_forecastflowsService.create(payload as any)
+      console.log('[ForecastFlows] create response:', JSON.stringify(res, null, 2))
+    } catch (createErr) {
+      console.error('[ForecastFlows] create FAILED — full error object:', createErr)
+      console.error('[ForecastFlows] error JSON:', JSON.stringify(createErr, Object.getOwnPropertyNames(createErr as object)))
+      throw createErr
+    }
+
     const newId = (res.data as any)?.cr9b5_pt_forecastflowid as string
+    console.log('[ForecastFlows] new record id:', newId)
     await savePropertyLinks(newId)
     await logActivity('Created', 'Forecast Flow', form.name.trim())
   }
@@ -394,7 +431,9 @@ export default function ForecastFlows() {
         ? { 'cr9b5_contactid@odata.bind': `/cr9b5_pt_contacts(${form.contactId})` }
         : {}),
       cr9b5_frequency:  form.frequency as any,
-      cr9b5_daysofweek: form.frequency === FREQ_DAILY ? form.daysOfWeek.join(',') : null,
+      ...(form.frequency === FREQ_DAILY && form.daysOfWeek.length > 0
+        ? { cr9b5_daysofweek: form.daysOfWeek.join(',') }
+        : {}),
       cr9b5_startdate:  form.startDate,
       ...(form.endDate && form.frequency !== FREQ_ONE_OFF
         ? { cr9b5_enddate: form.endDate }
@@ -560,7 +599,7 @@ export default function ForecastFlows() {
                   >
                     <td className="px-4 py-3 font-medium text-gray-900">{f.cr9b5_name}</td>
                     <td className="px-4 py-3">
-                      {(f.cr9b5_type as unknown as number) === TYPE_INCOME ? (
+                      {Number(f.cr9b5_type) === TYPE_INCOME ? (
                         <span className="text-xs font-semibold bg-green-100 text-green-700 px-1.5 py-0.5 rounded">Income</span>
                       ) : (
                         <span className="text-xs font-semibold bg-red-100 text-red-700 px-1.5 py-0.5 rounded">Expense</span>
@@ -573,7 +612,7 @@ export default function ForecastFlows() {
                       {f._cr9b5_contactid_value ? contactName(f._cr9b5_contactid_value) : '—'}
                     </td>
                     <td className="px-4 py-3 text-gray-600">
-                      {FREQ_LABELS[(f.cr9b5_frequency as unknown as number)] ?? '—'}
+                      {FREQ_LABELS[Number(f.cr9b5_frequency)] ?? '—'}
                     </td>
                     <td className="px-4 py-3 text-gray-600">{f.cr9b5_startdate?.slice(0, 10) ?? '—'}</td>
                     <td className="px-4 py-3 text-gray-600">{f.cr9b5_enddate?.slice(0, 10) ?? '∞'}</td>
