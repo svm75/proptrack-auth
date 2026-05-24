@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
+import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
@@ -10,6 +11,9 @@ import InvoiceForm from './InvoiceForm'
 import InvoiceImport from './InvoiceImport'
 import { logActivity } from '../services/activitylog'
 import { fmtEur } from '../utils/formatters'
+
+const REF_CAT_INCOME  = 233100005
+const REF_CAT_EXPENSE = 233100006
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -23,10 +27,11 @@ export default function Invoices() {
   const [invoices, setInvoices] = useState<Cr9b5_pt_invoices[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
+  const [categoryMap, setCategoryMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
 
   // Filters
-  const [filterType, setFilterType] = useState<'all' | 'incoming' | 'outgoing'>('all')
+  const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all')
   const [filterPropId, setFilterPropId] = useState('')
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
@@ -40,14 +45,23 @@ export default function Invoices() {
 
   async function load() {
     setLoading(true)
-    const [invRes, propRes, conRes] = await Promise.all([
+    const [invRes, propRes, conRes, catRes] = await Promise.all([
       Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'], maxPageSize: 5000 }),
       Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
       Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_referencesService.getAll({
+        filter: `cr9b5_referencetype eq ${REF_CAT_INCOME} or cr9b5_referencetype eq ${REF_CAT_EXPENSE}`,
+        maxPageSize: 5000,
+      }),
     ])
     setInvoices(invRes.data ?? [])
     setProperties(propRes.data ?? [])
     setContacts(conRes.data ?? [])
+    const map: Record<string, string> = {}
+    for (const ref of catRes.data ?? []) {
+      if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) map[ref.cr9b5_pt_referenceid] = ref.cr9b5_value
+    }
+    setCategoryMap(map)
     setLoading(false)
   }
 
@@ -67,8 +81,8 @@ export default function Invoices() {
 
   // Apply filters
   const filtered = invoices.filter(inv => {
-    if (filterType === 'incoming' && (inv.cr9b5_type as number) !== TYPE_INCOMING) return false
-    if (filterType === 'outgoing' && (inv.cr9b5_type as number) !== TYPE_OUTGOING) return false
+    if (filterType === 'income'  && (inv.cr9b5_type as number) !== TYPE_OUTGOING) return false
+    if (filterType === 'expense' && (inv.cr9b5_type as number) !== TYPE_INCOMING) return false
     if (filterPropId) {
       const raw = inv as unknown as Record<string, unknown>
       if (raw['_cr9b5_property_value'] !== filterPropId) return false
@@ -104,8 +118,10 @@ export default function Invoices() {
 
     const rows = filtered.map(inv => ({
       'Internal ID':  inv.cr9b5_internalid,
-      'Type':         (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Outgoing' : 'Incoming',
-      'Property':     propName(inv),
+      'Type':         (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense',
+      'Category':        categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '',
+      'Property':        (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'All' : propName(inv),
+      'All Properties':  (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'Yes' : 'No',
       'Contact':      contactName(inv),
       'Date':         fmtD(inv.cr9b5_date),
       'Description':  inv.cr9b5_description ?? '',
@@ -197,16 +213,16 @@ export default function Invoices() {
         <div className="flex flex-wrap gap-2 items-center">
           {/* Type */}
           <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
-            {(['all', 'incoming', 'outgoing'] as const).map(t => (
+            {([['all', 'All'], ['income', 'Income'], ['expense', 'Expense']] as const).map(([t, label]) => (
               <button
                 key={t}
                 onClick={() => setFilterType(t)}
                 className={[
-                  'px-3 py-1.5 font-medium capitalize transition-colors',
+                  'px-3 py-1.5 font-medium transition-colors',
                   filterType === t ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
                 ].join(' ')}
               >
-                {t}
+                {label}
               </button>
             ))}
           </div>
@@ -251,7 +267,7 @@ export default function Invoices() {
 
           {(filterType !== 'all' || filterPropId || filterFrom || filterTo || search) && (
             <button
-              onClick={() => { setFilterType('all'); setFilterPropId(''); setFilterFrom(''); setFilterTo(''); setSearch('') }}
+              onClick={() => { setFilterType('all' as const); setFilterPropId(''); setFilterFrom(''); setFilterTo(''); setSearch('') }}
               className="text-xs text-gray-400 hover:text-gray-700 underline"
             >
               Clear filters
@@ -272,6 +288,7 @@ export default function Invoices() {
               <tr className="text-left text-xs text-gray-500 font-semibold uppercase tracking-wide">
                 <th className="px-4 py-3">Internal ID</th>
                 <th className="px-4 py-3">Type</th>
+                <th className="px-4 py-3">Category</th>
                 <th className="px-4 py-3">Property</th>
                 <th className="px-4 py-3">Contact</th>
                 <th className="px-4 py-3">Date</th>
@@ -305,10 +322,17 @@ export default function Invoices() {
                         'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
                         isOut ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700',
                       ].join(' ')}>
-                        {isOut ? 'Outgoing' : 'Incoming'}
+                        {isOut ? 'Income' : 'Expense'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">{propName(inv)}</td>
+                    <td className="px-4 py-3 text-gray-500 text-xs whitespace-nowrap">
+                      {categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-gray-700 whitespace-nowrap">
+                      {(inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? (
+                        <span className="text-xs text-indigo-600 font-medium">All</span>
+                      ) : propName(inv)}
+                    </td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{contactName(inv)}</td>
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(inv.cr9b5_date)}</td>
                     <td className="px-4 py-3 text-gray-400 text-xs">{inv.cr9b5_bookingreference ?? '—'}</td>

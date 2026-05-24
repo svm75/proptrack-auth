@@ -244,7 +244,7 @@ export default function Properties() {
   function invType(inv: Cr9b5_pt_invoices): string {
     const raw = inv as unknown as Record<string, unknown>
     const type = raw['cr9b5_type'] as number | undefined ?? (inv.cr9b5_type as unknown as number)
-    return type === TYPE_OUTGOING ? 'Outgoing' : 'Incoming'
+    return type === TYPE_OUTGOING ? 'Income' : 'Expense'
   }
 
   // --- Attachments ---

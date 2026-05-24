@@ -16,6 +16,8 @@ const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
 const REF_INCOMING = 233100003
 const REF_OUTGOING = 233100004
+const REF_CAT_INCOME  = 233100005
+const REF_CAT_EXPENSE = 233100006
 const ROLE_CLIENT = 233100001
 const ROLE_SUPPLIER = 233100000
 
@@ -74,6 +76,8 @@ function buildInternalId(shortId: string, seq: number, year: number): string {
 interface InvoiceFormState {
   type: number
   propertyId: string
+  allProperties: boolean
+  categoryId: string
   contactId: string
   date: string
   description: string
@@ -93,6 +97,8 @@ function emptyForm(): InvoiceFormState {
   return {
     type: TYPE_INCOMING,
     propertyId: '',
+    allProperties: false,
+    categoryId: '',
     contactId: '',
     date: new Date().toISOString().slice(0, 10),
     description: '',
@@ -114,6 +120,8 @@ function invoiceToFormState(inv: Cr9b5_pt_invoices): InvoiceFormState {
   return {
     type: (inv.cr9b5_type as number) ?? TYPE_INCOMING,
     propertyId: (raw['_cr9b5_property_value'] as string) ?? '',
+    allProperties: inv.cr9b5_allproperties ?? false,
+    categoryId: (raw['_cr9b5_categoryid_value'] as string) ?? '',
     contactId: (raw['_cr9b5_contact_value'] as string) ?? '',
     date: toFormDate(inv.cr9b5_date),
     description: inv.cr9b5_description ?? '',
@@ -176,6 +184,17 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   const [newContact, setNewContact] = useState<NewContactState>(EMPTY_NEW_CONTACT)
   const [newContactSaving, setNewContactSaving] = useState(false)
   const [newContactError, setNewContactError] = useState<string | null>(null)
+
+  // Categories
+  const [categories, setCategories] = useState<Cr9b5_pt_references[]>([])
+
+  useEffect(() => {
+    const refType = form.type === TYPE_OUTGOING ? REF_CAT_INCOME : REF_CAT_EXPENSE
+    Cr9b5_pt_referencesService.getAll({
+      filter: `cr9b5_referencetype eq ${refType}`,
+      orderBy: ['cr9b5_sortorder asc'],
+    }).then(res => setCategories(res.data ?? []))
+  }, [form.type])
 
   // Attachments
   const [attachments, setAttachments] = useState<Cr9b5_pt_attachments[]>([])
@@ -244,7 +263,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
 
   function validate(): boolean {
     const e: typeof errors = {}
-    if (!form.propertyId) e.propertyId = 'Property is required.'
+    if (!form.allProperties && !form.propertyId) e.propertyId = 'Property is required.'
     if (!form.contactId)  e.contactId  = 'Contact is required.'
     if (!form.date)       e.date       = 'Date is required.'
     if (!form.baseAmount || isNaN(parseFloat(form.baseAmount))) e.baseAmount = 'Base amount is required.'
@@ -272,9 +291,13 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       let globalSequence = invoice?.cr9b5_globalsequence ?? 0
 
       if (!isEdit) {
-        if (!property) throw new Error('Property not found.')
         globalSequence = await getNextSequence(invoiceYear)
-        internalId = buildInternalId(property.cr9b5_shortid, globalSequence, invoiceYear)
+        if (form.allProperties) {
+          internalId = buildInternalId('All', globalSequence, invoiceYear)
+        } else {
+          if (!property) throw new Error('Property not found.')
+          internalId = buildInternalId(property.cr9b5_shortid, globalSequence, invoiceYear)
+        }
       }
 
       // Build payload — OData bind fields for lookups are included via the plain object
@@ -291,8 +314,15 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         cr9b5_taxamount: taxNum,
         cr9b5_taxismanual: form.taxIsManual,
         cr9b5_totalgross: totalGross,
-        'cr9b5_Property@odata.bind': `/cr9b5_pt_properties(${form.propertyId})`,
+        cr9b5_allproperties: form.allProperties,
         'cr9b5_Contact@odata.bind': `/cr9b5_pt_contacts(${form.contactId})`,
+      }
+
+      if (!form.allProperties && form.propertyId) {
+        payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${form.propertyId})`
+      }
+      if (form.categoryId) {
+        payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${form.categoryId})`
       }
 
       if (isOutgoing) {
@@ -506,10 +536,14 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Type *</label>
             <div className="flex rounded-lg border border-gray-300 overflow-hidden w-fit">
-              {[{ val: TYPE_INCOMING, label: 'Incoming' }, { val: TYPE_OUTGOING, label: 'Outgoing' }].map(opt => (
+              {[{ val: TYPE_INCOMING, label: 'Expense' }, { val: TYPE_OUTGOING, label: 'Income' }].map(opt => (
                 <button
                   key={opt.val}
-                  onClick={() => !isEdit && !readOnly && setField('type', opt.val)}
+                  onClick={() => {
+                    if (isEdit || readOnly) return
+                    setForm(f => ({ ...f, type: opt.val, categoryId: '' }))
+                    if (errors.type) setErrors(e => ({ ...e, type: undefined }))
+                  }}
                   disabled={isEdit || readOnly}
                   className={[
                     'px-5 py-2 text-sm font-medium transition-colors',
@@ -523,22 +557,54 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
             </div>
           </div>
 
+          {/* Category */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+            <select
+              value={form.categoryId}
+              onChange={e => setField('categoryId', e.target.value)}
+              disabled={readOnly}
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+            >
+              <option value="">Select category…</option>
+              {categories.map(c => (
+                <option key={c.cr9b5_pt_referenceid} value={c.cr9b5_pt_referenceid}>{c.cr9b5_value}</option>
+              ))}
+            </select>
+          </div>
+
           {/* Property + Date */}
           <div className="grid grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Property *</label>
               <select
-                value={form.propertyId}
+                value={form.allProperties ? '' : form.propertyId}
                 onChange={e => setField('propertyId', e.target.value)}
-                disabled={readOnly}
+                disabled={readOnly || form.allProperties}
                 className={cls(!!errors.propertyId)}
               >
-                <option value="">Select property…</option>
-                {properties.map(p => (
-                  <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>
-                ))}
+                {form.allProperties
+                  ? <option value="">All Properties</option>
+                  : <>
+                    <option value="">Select property…</option>
+                    {properties.map(p => (
+                      <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>
+                    ))}
+                  </>
+                }
               </select>
               {errors.propertyId && <p className="mt-1 text-xs text-red-600">{errors.propertyId}</p>}
+              {!readOnly && (
+                <label className="flex items-center gap-2 mt-2 cursor-pointer select-none w-fit">
+                  <input
+                    type="checkbox"
+                    checked={form.allProperties}
+                    onChange={e => setForm(f => ({ ...f, allProperties: e.target.checked, propertyId: '' }))}
+                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="text-xs text-gray-600">All Properties</span>
+                </label>
+              )}
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Date *</label>

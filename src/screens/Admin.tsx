@@ -14,8 +14,8 @@ const REF_TYPE_LABELS: Record<number, string> = {
   233100000: 'Property',
   233100001: 'Supplier',
   233100002: 'Client',
-  233100003: 'Incoming Invoice',
-  233100004: 'Outgoing Invoice',
+  233100003: 'Expense',
+  233100004: 'Income',
   233100005: 'Income Category',
   233100006: 'Expense Category',
 }

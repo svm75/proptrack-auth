@@ -17,6 +17,37 @@
           "x-ms-dataverse-type": "IntegerType",
           "x-ms-schema-name": "cr9b5_Adults"
         },
+        "cr9b5_allproperties": {
+          "type": "string",
+          "title": "All Properties",
+          "x-ms-dataverse-attribute": "cr9b5_allproperties",
+          "x-ms-dataverse-type": "BooleanType",
+          "x-ms-schema-name": "cr9b5_allproperties",
+          "enum": [
+            "No",
+            "Yes"
+          ],
+          "x-ms-enum-values": [
+            0,
+            1
+          ],
+          "Color": [
+            null,
+            null
+          ],
+          "x-ms-optionsetmetadataid": "b34f0519-8757-f111-a824-002248db1414",
+          "x-ms-isGlobal": false,
+          "x-ms-optionsetdisplayname": "All Properties",
+          "x-ms-optionSetType": "Boolean"
+        },
+        "cr9b5_allpropertiesname": {
+          "type": "string",
+          "title": "cr9b5_allpropertiesname",
+          "x-ms-dataverse-attribute": "cr9b5_allpropertiesname",
+          "x-ms-dataverse-type": "VirtualType",
+          "x-ms-schema-name": "cr9b5_allpropertiesName",
+          "x-ms-read-only": true
+        },
         "cr9b5_babies": {
           "type": "string",
           "title": "Babies",
@@ -46,6 +77,22 @@
           "x-ms-dataverse-type": "StringType",
           "x-ms-schema-name": "cr9b5_BookingReference",
           "maxLength": 100
+        },
+        "cr9b5_categoryid": {
+          "type": "string",
+          "title": "Category",
+          "x-ms-dataverse-attribute": "cr9b5_categoryid",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "cr9b5_categoryid"
+        },
+        "cr9b5_categoryidname": {
+          "type": "string",
+          "title": "cr9b5_categoryidname",
+          "x-ms-dataverse-attribute": "cr9b5_categoryidname",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "cr9b5_categoryidName",
+          "x-ms-read-only": true,
+          "maxLength": 850
         },
         "cr9b5_checkin": {
           "type": "string",
@@ -232,8 +279,8 @@
           "x-ms-dataverse-type": "PicklistType",
           "x-ms-schema-name": "cr9b5_Type",
           "enum": [
-            "Incoming",
-            "Outgoing"
+            "Income",
+            "Expense"
           ],
           "x-ms-enum-values": [
             233100000,

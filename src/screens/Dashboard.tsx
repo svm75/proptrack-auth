@@ -162,7 +162,10 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
 
   const propFiltered = useMemo(() => invoices.filter(inv => {
     if (!isActive(inv)) return false
-    if (filterPropId && (inv as unknown as Record<string,unknown>)['_cr9b5_property_value'] !== filterPropId) return false
+    if (filterPropId) {
+      const raw = inv as unknown as Record<string,unknown>
+      if (!raw['cr9b5_allproperties'] && raw['_cr9b5_property_value'] !== filterPropId) return false
+    }
     return true
   }), [invoices, filterPropId])
 
@@ -538,7 +541,10 @@ function DashboardCashFlow({ invoices, properties }: SharedProps) {
   const filtered = useMemo(() => invoices.filter(inv => {
     if (!isActive(inv)) return false
     if (filterYear!=='all' && inv.cr9b5_year !== filterYear) return false
-    if (filterPropId && (inv as unknown as Record<string,unknown>)['_cr9b5_property_value'] !== filterPropId) return false
+    if (filterPropId) {
+      const raw = inv as unknown as Record<string,unknown>
+      if (!raw['cr9b5_allproperties'] && raw['_cr9b5_property_value'] !== filterPropId) return false
+    }
     return true
   }), [invoices, filterYear, filterPropId])
 

@@ -12,12 +12,37 @@ const TYPE_OUTGOING = 233100001
 const ROLE_SUPPLIER = 233100000
 const ROLE_CLIENT   = 233100001
 
-type RowStatus = 'ready' | 'warning' | 'error' | 'duplicate'
+type RowStatus = 'ready' | 'warning' | 'error' | 'duplicate-no-change' | 'duplicate-update'
+
+interface ExistingRecord {
+  id: string
+  type: number
+  date: string
+  baseAmount: number
+  taxAmount: number
+  totalGross: number
+  taxRate: string
+  taxIsManual: boolean
+  globalSequence: number
+  year: number
+  checkIn: string
+  checkOut: string
+  nights: number
+  days: number
+  adults: number
+  children: number
+  babies: number
+  bookingRef: string
+  propertyId: string
+  contactId: string
+}
 
 interface ImportRow {
   index: number
   status: RowStatus
   statusNote: string
+  checked: boolean
+  existingId: string | null
   date: string
   internalId: string
   propertyId: string | null
@@ -49,14 +74,12 @@ interface ImportRow {
 
 function parseDDMMYYYY(raw: unknown): string {
   if (!raw) return ''
-  // JS Date object — SheetJS emits these for actual Excel date cells
   if (raw instanceof Date) {
     const y  = raw.getFullYear()
     const mo = String(raw.getMonth() + 1).padStart(2, '0')
     const d  = String(raw.getDate()).padStart(2, '0')
     return `${y}-${mo}-${d}`
   }
-  // Text cell in DD.MM.YYYY format
   const s = String(raw).trim()
   const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
   if (!m) return ''
@@ -87,12 +110,33 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+function round2(n: number): number { return Math.round((n ?? 0) * 100) / 100 }
+function datePrefix(iso: string | undefined): string { return iso ? iso.slice(0, 10) : '' }
 
-// ── column indices (0-based) per spec order ──────────────────────────────────
-// Date, GlSequence, No, No/intern, House, Property, Number, Year, ID,
-// Counterpart, Name, TaxID, SupCL, Type, Base Net, Base IGIC, Base Gross,
-// %, standard, Rent Start, Rent End, Booking number, Nights, Days,
-// Adults, Children, Babies
+function detectChanges(row: ImportRow, ex: ExistingRecord): boolean {
+  if (row.type !== ex.type) return true
+  if (row.date !== datePrefix(ex.date)) return true
+  if (round2(row.baseAmount) !== round2(ex.baseAmount)) return true
+  if (round2(row.taxAmount)  !== round2(ex.taxAmount))  return true
+  if (round2(row.totalGross) !== round2(ex.totalGross)) return true
+  if (row.taxRate     !== ex.taxRate)     return true
+  if (row.taxIsManual !== ex.taxIsManual) return true
+  if ((row.globalSequence || 0) !== (ex.globalSequence || 0)) return true
+  if ((row.year || 0)           !== (ex.year || 0))           return true
+  if (row.checkIn  !== datePrefix(ex.checkIn))  return true
+  if (row.checkOut !== datePrefix(ex.checkOut)) return true
+  if ((row.nights   || 0) !== (ex.nights   || 0)) return true
+  if ((row.days     || 0) !== (ex.days     || 0)) return true
+  if ((row.adults   || 0) !== (ex.adults   || 0)) return true
+  if ((row.children || 0) !== (ex.children || 0)) return true
+  if ((row.babies   || 0) !== (ex.babies   || 0)) return true
+  if ((row.bookingRef || '') !== (ex.bookingRef || '')) return true
+  if (row.propertyId && row.propertyId !== ex.propertyId) return true
+  if (row.contactId  && row.contactId  !== ex.contactId)  return true
+  return false
+}
+
+// ── column indices ────────────────────────────────────────────────────────────
 const COL = {
   date:          0,
   glSequence:    1,
@@ -154,7 +198,9 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [importTotal, setImportTotal]       = useState(0)
-  const [results, setResults] = useState<{ imported: number; skipped: number; failed: number } | null>(null)
+  const [results, setResults] = useState<{
+    created: number; updated: number; skippedNoChange: number; failed: number
+  } | null>(null)
 
   // ── parse ──────────────────────────────────────────────────────────────────
 
@@ -167,37 +213,71 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       const ws  = wb.Sheets[wb.SheetNames[0]]
       const raw: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
 
-      // Skip header row
       const dataRows = raw.filter((_, i) => i > 0).filter(r => r.some(c => c !== ''))
       if (dataRows.length === 0) throw new Error('No data rows found in file.')
 
       setFileName(file.name)
       setTotalRows(dataRows.length)
 
-      // Detect date range
       const dates = dataRows.map(r => parseDDMMYYYY(r[COL.date])).filter(Boolean)
       if (dates.length) {
         dates.sort()
         setDateRange({ from: dates[0], to: dates[dates.length - 1] })
       }
 
-      // Load reference data in parallel
       const [propRes, conRes, invRes] = await Promise.all([
         Cr9b5_pt_propertiesService.getAll({ select: ['cr9b5_pt_propertyid', 'cr9b5_name', 'cr9b5_shortid'], orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
         Cr9b5_pt_contactsService.getAll({ select: ['cr9b5_pt_contactid', 'cr9b5_name', 'cr9b5_taxid', 'cr9b5_role'], orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_invoicesService.getAll({ select: ['cr9b5_internalid'], orderBy: ['cr9b5_internalid asc'], maxPageSize: 5000 }),
+        Cr9b5_pt_invoicesService.getAll({
+          select: [
+            'cr9b5_pt_invoiceid', 'cr9b5_internalid', 'cr9b5_type', 'cr9b5_date',
+            'cr9b5_baseamount', 'cr9b5_taxamount', 'cr9b5_totalgross', 'cr9b5_taxrate',
+            'cr9b5_taxismanual', 'cr9b5_globalsequence', 'cr9b5_year',
+            'cr9b5_checkin', 'cr9b5_checkout', 'cr9b5_nights', 'cr9b5_days',
+            'cr9b5_adults', 'cr9b5_children', 'cr9b5_babies', 'cr9b5_bookingreference',
+          ],
+          maxPageSize: 5000,
+        }),
       ])
 
-      const props    = propRes.data ?? []
-      const cons     = conRes.data ?? []
-      const existIds = new Set((invRes.data ?? []).map(i => i.cr9b5_internalid?.toLowerCase()))
+      const props = propRes.data ?? []
+      const cons  = conRes.data ?? []
+
+      // Build existing record map: internalId (lower) → ExistingRecord
+      const existingMap = new Map<string, ExistingRecord>()
+      for (const inv of invRes.data ?? []) {
+        if (!inv.cr9b5_internalid) continue
+        const raw2 = inv as unknown as Record<string, unknown>
+        existingMap.set(inv.cr9b5_internalid.toLowerCase(), {
+          id:             inv.cr9b5_pt_invoiceid,
+          type:           (inv.cr9b5_type as unknown as number) ?? 0,
+          date:           inv.cr9b5_date ?? '',
+          baseAmount:     inv.cr9b5_baseamount ?? 0,
+          taxAmount:      inv.cr9b5_taxamount ?? 0,
+          totalGross:     inv.cr9b5_totalgross ?? 0,
+          taxRate:        inv.cr9b5_taxrate ?? '',
+          taxIsManual:    inv.cr9b5_taxismanual ?? false,
+          globalSequence: inv.cr9b5_globalsequence ?? 0,
+          year:           inv.cr9b5_year ?? 0,
+          checkIn:        inv.cr9b5_checkin ?? '',
+          checkOut:       inv.cr9b5_checkout ?? '',
+          nights:         inv.cr9b5_nights ?? 0,
+          days:           inv.cr9b5_days ?? 0,
+          adults:         inv.cr9b5_adults ?? 0,
+          children:       inv.cr9b5_children ?? 0,
+          babies:         inv.cr9b5_babies ?? 0,
+          bookingRef:     inv.cr9b5_bookingreference ?? '',
+          propertyId:     (raw2['_cr9b5_property_value'] as string) ?? '',
+          contactId:      (raw2['_cr9b5_contact_value'] as string) ?? '',
+        })
+      }
 
       setProperties(props)
       setContacts(cons)
 
-      const parsed: ImportRow[] = dataRows.map((r, idx) => {
-        return mapRow(r, idx, props, cons, existIds)
-      })
+      const parsed: ImportRow[] = dataRows.map((r, idx) =>
+        mapRow(r, idx, props, cons, existingMap)
+      )
 
       setRows(parsed)
       setStep(2)
@@ -213,7 +293,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     idx: number,
     props: Cr9b5_pt_properties[],
     cons: Cr9b5_pt_contacts[],
-    existIds: Set<string>,
+    existingMap: Map<string, ExistingRecord>,
   ): ImportRow {
     const errors: string[] = []
     const warnings: string[] = []
@@ -241,11 +321,6 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const rawGlSeq      = r[COL.glSequence]
     const rawYear       = r[COL.year]
 
-    // Duplicate check
-    if (rawInternalId && existIds.has(rawInternalId.toLowerCase())) {
-      return buildRow(idx, 'duplicate', `Duplicate: Internal ID already exists`, r, props, cons)
-    }
-
     // Date
     const date = parseDDMMYYYY(rawDate)
     if (!date) errors.push('Invalid or missing date')
@@ -270,9 +345,9 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     }
 
     // Type
-    const typeStr  = rawType.toLowerCase()
-    const typeVal  = typeStr.includes('outgoing') ? TYPE_OUTGOING : TYPE_INCOMING
-    const isOut    = typeVal === TYPE_OUTGOING
+    const typeStr = rawType.toLowerCase()
+    const typeVal = typeStr.includes('outgoing') ? TYPE_OUTGOING : TYPE_INCOMING
+    const isOut   = typeVal === TYPE_OUTGOING
 
     // Amounts
     const baseAmount = stripCurrency(rawBaseNet)
@@ -280,38 +355,36 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const totalGross = stripCurrency(rawBaseGross)
     if (isNaN(baseAmount)) errors.push('Invalid base amount')
 
-    // Tax
     const taxIsManual = taxAmount === 0
     const taxRate     = parseTaxRate(rawTaxRate)
 
-    // Dates for outgoing
     const checkIn  = isOut ? parseDDMMYYYY(rawRentStart) : ''
     const checkOut = isOut ? parseDDMMYYYY(rawRentEnd)   : ''
 
-    // Booking ref
     if (!rawBooking && isOut) warnings.push('Missing booking reference')
 
-    const status: RowStatus =
+    const baseStatus: RowStatus =
       errors.length > 0   ? 'error' :
       warnings.length > 0 ? 'warning' :
       'ready'
-
     const note = [...errors, ...warnings].join('; ')
 
-    return {
-      index:        idx,
-      status,
-      statusNote:   note,
+    const partialRow: ImportRow = {
+      index:          idx,
+      status:         baseStatus,
+      statusNote:     note,
+      checked:        baseStatus !== 'error',
+      existingId:     null,
       date,
-      internalId:   rawInternalId,
-      propertyId:   property?.cr9b5_pt_propertyid ?? null,
-      propertyName: property?.cr9b5_name ?? rawProperty,
-      contactId:    contact?.cr9b5_pt_contactid ?? null,
-      contactName:  rawName,
-      contactTaxId: rawTaxId,
-      contactRole:  rawSupCl.toLowerCase().includes('supplier') ? ROLE_SUPPLIER : ROLE_CLIENT,
+      internalId:     rawInternalId,
+      propertyId:     property?.cr9b5_pt_propertyid ?? null,
+      propertyName:   property?.cr9b5_name ?? rawProperty,
+      contactId:      contact?.cr9b5_pt_contactid ?? null,
+      contactName:    rawName,
+      contactTaxId:   rawTaxId,
+      contactRole:    rawSupCl.toLowerCase().includes('supplier') ? ROLE_SUPPLIER : ROLE_CLIENT,
       isNewContact,
-      type:         typeVal,
+      type:           typeVal,
       baseAmount,
       taxAmount,
       totalGross,
@@ -328,12 +401,30 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       babies:   parseInt2(rawBabies),
       bookingRef: rawBooking,
     }
+
+    // Duplicate check — only if no hard errors (we need property/contact resolved)
+    if (rawInternalId && baseStatus !== 'error') {
+      const existing = existingMap.get(rawInternalId.toLowerCase())
+      if (existing) {
+        const changed = detectChanges(partialRow, existing)
+        return {
+          ...partialRow,
+          status:     changed ? 'duplicate-update' : 'duplicate-no-change',
+          statusNote: changed ? 'Record exists — differences found, will update' : 'Record exists — no changes, will be skipped',
+          checked:    changed,   // update rows checked by default, no-change rows unchecked
+          existingId: existing.id,
+        }
+      }
+    }
+
+    return partialRow
   }
 
   function buildRow(
     idx: number,
     status: RowStatus,
     note: string,
+    existingId: string | null,
     r: unknown[],
     props: Cr9b5_pt_properties[],
     cons: Cr9b5_pt_contacts[],
@@ -351,6 +442,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       index:         idx,
       status,
       statusNote:    note,
+      checked:       status === 'duplicate-update',
+      existingId,
       date:          parseDDMMYYYY(r[COL.date]),
       internalId:    String(r[COL.id] ?? '').trim(),
       propertyId:    property?.cr9b5_pt_propertyid ?? null,
@@ -378,6 +471,9 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       bookingRef:    String(r[COL.bookingNumber] ?? '').trim(),
     }
   }
+
+  // Keep buildRow in scope to avoid unused warning — used for future re-parse flows
+  void buildRow
 
   // ── inline editing ─────────────────────────────────────────────────────────
 
@@ -421,44 +517,62 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   }
 
   function revalidateRow(row: ImportRow): ImportRow {
+    // Preserve duplicate statuses through inline edits
+    if (row.status === 'duplicate-no-change' || row.status === 'duplicate-update') return row
+
     const errors: string[]   = []
     const warnings: string[] = []
 
-    if (!row.date)       errors.push('Invalid or missing date')
-    if (!row.propertyId) errors.push(`Property not found: ${row.propertyName}`)
+    if (!row.date)        errors.push('Invalid or missing date')
+    if (!row.propertyId)  errors.push(`Property not found: ${row.propertyName}`)
     if (!row.contactName) errors.push('Missing contact name')
     if (row.isNewContact) warnings.push(`New contact will be created: ${row.contactName}`)
     if (!row.bookingRef && row.type === TYPE_OUTGOING) warnings.push('Missing booking reference')
 
     const status: RowStatus =
-      row.status === 'duplicate' ? 'duplicate' :
-      errors.length > 0          ? 'error' :
-      warnings.length > 0        ? 'warning' :
+      errors.length > 0   ? 'error' :
+      warnings.length > 0 ? 'warning' :
       'ready'
 
-    return { ...row, status, statusNote: [...errors, ...warnings].join('; ') }
+    return { ...row, status, statusNote: [...errors, ...warnings].join('; '), checked: status !== 'error' }
+  }
+
+  // ── checkbox management ────────────────────────────────────────────────────
+
+  function toggleRow(idx: number) {
+    setRows(rs => rs.map((r, i) =>
+      i === idx && r.status !== 'error' ? { ...r, checked: !r.checked } : r
+    ))
+  }
+
+  const nonErrorRows = rows.filter(r => r.status !== 'error')
+  const allChecked   = nonErrorRows.length > 0 && nonErrorRows.every(r => r.checked)
+
+  function toggleSelectAll() {
+    const next = !allChecked
+    setRows(rs => rs.map(r => r.status === 'error' ? r : { ...r, checked: next }))
   }
 
   // ── import ─────────────────────────────────────────────────────────────────
 
   async function runImport() {
-    const importable = rows.filter(r => r.status === 'ready' || r.status === 'warning')
+    const processable = rows.filter(r => r.checked && r.status !== 'error')
     setImporting(true)
-    setImportTotal(importable.length)
+    setImportTotal(processable.length)
     setImportProgress(0)
 
-    let imported = 0
-    let failed   = 0
+    let created = 0
+    let updated = 0
+    let failed  = 0
 
-    // contacts to create: deduplicate by name
+    // Deduplicate new contacts by name
     const newContactNames = new Map<string, ImportRow>()
-    for (const row of importable) {
+    for (const row of processable) {
       if (row.isNewContact && !newContactNames.has(row.contactName.toLowerCase())) {
         newContactNames.set(row.contactName.toLowerCase(), row)
       }
     }
 
-    // Create new contacts and build a map name → id
     const createdContactIds = new Map<string, string>()
     for (const [, row] of newContactNames) {
       try {
@@ -475,11 +589,9 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       }
     }
 
-    for (const row of importable) {
+    for (const row of processable) {
       try {
-        const contactId = row.contactId
-          ?? createdContactIds.get(row.contactName.toLowerCase())
-
+        const contactId = row.contactId ?? createdContactIds.get(row.contactName.toLowerCase())
         const toIso = (d: string) => d ? new Date(`${d}T12:00:00`).toISOString() : undefined
 
         const payload: Record<string, unknown> = {
@@ -506,38 +618,45 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         if (contactId) {
           payload['cr9b5_Contact@odata.bind'] = `/cr9b5_pt_contacts(${contactId})`
         }
-
         if (row.type === TYPE_OUTGOING) {
           if (row.checkIn)    payload.cr9b5_checkin          = toIso(row.checkIn)
           if (row.checkOut)   payload.cr9b5_checkout         = toIso(row.checkOut)
           if (row.bookingRef) payload.cr9b5_bookingreference = row.bookingRef
         }
 
-        await Cr9b5_pt_invoicesService.create(payload as never)
-        imported++
+        if (row.existingId) {
+          await Cr9b5_pt_invoicesService.update(row.existingId, payload as never)
+          updated++
+        } else {
+          await Cr9b5_pt_invoicesService.create(payload as never)
+          created++
+        }
       } catch {
         failed++
       }
       setImportProgress(p => p + 1)
     }
 
-    const skipped = rows.filter(r => r.status === 'duplicate' || r.status === 'error').length
-    setResults({ imported, skipped, failed })
+    // Unchecked no-change duplicates count as skipped
+    const skippedNoChange = rows.filter(r => !r.checked && r.status === 'duplicate-no-change').length
+
+    setResults({ created, updated, skippedNoChange, failed })
     setStep(3)
     setImporting(false)
-    if (imported > 0) onImported()
+    if (created > 0 || updated > 0) onImported()
   }
 
   // ── counts ─────────────────────────────────────────────────────────────────
 
   const counts = {
-    ready:     rows.filter(r => r.status === 'ready').length,
-    warning:   rows.filter(r => r.status === 'warning').length,
-    error:     rows.filter(r => r.status === 'error').length,
-    duplicate: rows.filter(r => r.status === 'duplicate').length,
+    ready:            rows.filter(r => r.status === 'ready').length,
+    warning:          rows.filter(r => r.status === 'warning').length,
+    error:            rows.filter(r => r.status === 'error').length,
+    duplicateUpdate:  rows.filter(r => r.status === 'duplicate-update').length,
+    duplicateNoChange:rows.filter(r => r.status === 'duplicate-no-change').length,
   }
 
-  const importableCount = counts.ready + counts.warning
+  const checkedCount = rows.filter(r => r.checked).length
 
   function startEditRow(row: ImportRow, field: string) {
     let val = ''
@@ -591,8 +710,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
             onBlur={commitEdit}
             className="w-full border border-indigo-400 rounded px-1 py-0.5 text-xs"
           >
-            <option value="incoming">Incoming</option>
-            <option value="outgoing">Outgoing</option>
+            <option value="incoming">Expense</option>
+            <option value="outgoing">Income</option>
           </select>
         )
       }
@@ -619,7 +738,22 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     )
   }
 
-  // ── render ────────────────────────────────────────────────────────────────
+  // ── render ─────────────────────────────────────────────────────────────────
+
+  const statusStyles: Record<RowStatus, string> = {
+    ready:               'bg-green-50  text-green-700  border-green-200',
+    warning:             'bg-amber-50  text-amber-700  border-amber-200',
+    error:               'bg-red-50    text-red-700    border-red-200',
+    'duplicate-update':  'bg-amber-50  text-amber-700  border-amber-200',
+    'duplicate-no-change': 'bg-blue-50 text-blue-700   border-blue-200',
+  }
+  const statusLabels: Record<RowStatus, string> = {
+    ready:               'Ready',
+    warning:             'Warning',
+    error:               'Error',
+    'duplicate-update':  'Duplicate — will update',
+    'duplicate-no-change': 'Duplicate — no changes',
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
@@ -659,7 +793,6 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
             <p className="text-sm text-gray-500 mb-6">
               Upload an .xlsx file with the standard import format.
             </p>
-
             <div
               className="border-2 border-dashed border-gray-300 rounded-xl p-10 flex flex-col items-center gap-3 cursor-pointer hover:border-teal-400 hover:bg-teal-50 transition-colors"
               onClick={() => fileRef.current?.click()}
@@ -671,13 +804,11 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
               <span className="text-xs text-gray-400">.xlsx files only</span>
               <input ref={fileRef} type="file" accept=".xlsx" className="hidden" onChange={e => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
             </div>
-
             {parsing && (
               <div className="mt-6 flex items-center gap-3 text-sm text-gray-600">
                 <span className="animate-spin text-lg">⏳</span> Parsing file and loading reference data…
               </div>
             )}
-
             {parseError && (
               <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
                 {parseError}
@@ -689,12 +820,12 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         {/* ── Step 2: Validation table ── */}
         {step === 2 && (
           <div className="flex flex-col h-full">
-            {/* Summary */}
+            {/* Summary bar */}
             <div className="px-6 py-3 border-b border-gray-200 bg-white flex flex-wrap items-center gap-4">
               <span className="text-sm text-gray-600">
                 <strong className="text-gray-900">{fileName}</strong> — {totalRows} rows{dateRange ? `, ${fmtDate(dateRange.from)} – ${fmtDate(dateRange.to)}` : ''}
               </span>
-              <div className="flex gap-3 ml-auto items-center">
+              <div className="flex gap-2 ml-auto items-center flex-wrap">
                 {counts.ready > 0 && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
                     ✓ {counts.ready} ready
@@ -705,24 +836,29 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                     ⚠ {counts.warning} warning
                   </span>
                 )}
+                {counts.duplicateUpdate > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                    ↑ {counts.duplicateUpdate} will update
+                  </span>
+                )}
+                {counts.duplicateNoChange > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                    ⊘ {counts.duplicateNoChange} no changes
+                  </span>
+                )}
                 {counts.error > 0 && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
                     ✕ {counts.error} error
                   </span>
                 )}
-                {counts.duplicate > 0 && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
-                    ⊘ {counts.duplicate} duplicate
-                  </span>
-                )}
                 <button
                   onClick={runImport}
-                  disabled={importableCount === 0 || importing}
+                  disabled={checkedCount === 0 || importing}
                   className="ml-2 px-4 py-2 bg-teal-600 text-white text-sm font-medium rounded-lg hover:bg-teal-700 disabled:opacity-40 transition-colors"
                 >
                   {importing
                     ? `Importing… (${importProgress}/${importTotal})`
-                    : `Import ${importableCount} Valid Row${importableCount !== 1 ? 's' : ''}`
+                    : `Import ${checkedCount} Checked Row${checkedCount !== 1 ? 's' : ''}`
                   }
                 </button>
               </div>
@@ -740,10 +876,25 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
 
             {/* Table */}
             <div className="flex-1 overflow-auto">
-              <table className="w-full text-xs min-w-[1100px]">
+              <table className="w-full text-xs min-w-[1200px]">
                 <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                   <tr className="text-left text-xs text-gray-500 font-semibold uppercase tracking-wide">
-                    <th className="px-3 py-2 w-24">Status</th>
+                    <th className="px-3 py-2 w-10 text-center">
+                      <button
+                        onClick={toggleSelectAll}
+                        title={allChecked ? 'Deselect all' : 'Select all'}
+                        className="w-4 h-4 border-2 rounded flex items-center justify-center shrink-0 mx-auto transition-colors
+                          border-gray-400 hover:border-teal-500 bg-white"
+                      >
+                        {allChecked
+                          ? <span className="text-teal-600 text-[10px] leading-none font-bold">✓</span>
+                          : nonErrorRows.some(r => r.checked)
+                            ? <span className="text-gray-400 text-[10px] leading-none font-bold">—</span>
+                            : null
+                        }
+                      </button>
+                    </th>
+                    <th className="px-3 py-2 w-36">Status</th>
                     <th className="px-3 py-2">Internal ID</th>
                     <th className="px-3 py-2">Date</th>
                     <th className="px-3 py-2 min-w-[120px]">Property</th>
@@ -763,31 +914,32 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-100">
-                  {rows.map(row => {
-                    const isOut = row.type === TYPE_OUTGOING
-                    const statusStyles: Record<RowStatus, string> = {
-                      ready:     'bg-green-50  text-green-700  border-green-200',
-                      warning:   'bg-amber-50  text-amber-700  border-amber-200',
-                      error:     'bg-red-50    text-red-700    border-red-200',
-                      duplicate: 'bg-blue-50   text-blue-700   border-blue-200',
-                    }
-                    const statusLabels: Record<RowStatus, string> = {
-                      ready:     'Ready',
-                      warning:   'Warning',
-                      error:     'Error',
-                      duplicate: 'Duplicate',
-                    }
+                  {rows.map((row, rowIdx) => {
+                    const isOut      = row.type === TYPE_OUTGOING
+                    const isDisabled = row.status === 'error'
                     return (
-                      <tr key={row.index} className={['hover:bg-gray-50',
-                        row.status === 'error' || row.status === 'duplicate' ? 'opacity-70' : ''
+                      <tr key={row.index} className={['transition-colors',
+                        isDisabled ? 'opacity-50' : 'hover:bg-gray-50',
+                        !row.checked && !isDisabled ? 'bg-gray-50/60' : '',
                       ].join(' ')}>
+                        {/* Checkbox */}
+                        <td className="px-3 py-2 text-center">
+                          <input
+                            type="checkbox"
+                            checked={row.checked}
+                            disabled={isDisabled}
+                            onChange={() => toggleRow(rowIdx)}
+                            className="rounded border-gray-300 text-teal-600 focus:ring-teal-500 disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
+                          />
+                        </td>
+                        {/* Status */}
                         <td className="px-3 py-2">
                           <div>
-                            <span className={['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border', statusStyles[row.status]].join(' ')}>
+                            <span className={['inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border whitespace-nowrap', statusStyles[row.status]].join(' ')}>
                               {statusLabels[row.status]}
                             </span>
-                            {row.statusNote && (
-                              <div className="text-gray-400 text-xs mt-0.5 max-w-[160px] truncate" title={row.statusNote}>
+                            {row.statusNote && row.status !== 'duplicate-update' && row.status !== 'duplicate-no-change' && (
+                              <div className="text-gray-400 text-xs mt-0.5 max-w-[180px] truncate" title={row.statusNote}>
                                 {row.statusNote}
                               </div>
                             )}
@@ -801,7 +953,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                           {row.isNewContact && <span className="text-xs text-amber-600 block">new</span>}
                         </td>
                         <td className="px-3 py-2">
-                          {cellProps(row, 'type', isOut ? 'Outgoing' : 'Incoming')}
+                          {cellProps(row, 'type', isOut ? 'Income' : 'Expense')}
                         </td>
                         <td className="px-3 py-2 text-right">{cellProps(row, 'baseAmount', fmtEur(row.baseAmount), 'number')}</td>
                         <td className="px-3 py-2 text-right">{cellProps(row, 'taxAmount', fmtEur(row.taxAmount), 'number')}</td>
@@ -830,24 +982,32 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
               <div className="text-5xl mb-3">{results.failed === 0 ? '✅' : '⚠️'}</div>
               <h2 className="text-xl font-semibold text-gray-900">Import Complete</h2>
             </div>
-
             <div className="space-y-3 mb-8">
-              <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg border border-green-200">
-                <span className="text-sm font-medium text-green-700">Imported successfully</span>
-                <span className="text-lg font-bold text-green-700">{results.imported}</span>
-              </div>
-              <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
-                <span className="text-sm font-medium text-blue-700">Skipped (duplicates / errors)</span>
-                <span className="text-lg font-bold text-blue-700">{results.skipped}</span>
-              </div>
+              {results.created > 0 && (
+                <div className="flex items-center justify-between p-4 bg-green-50 rounded-lg border border-green-200">
+                  <span className="text-sm font-medium text-green-700">Created</span>
+                  <span className="text-lg font-bold text-green-700">{results.created}</span>
+                </div>
+              )}
+              {results.updated > 0 && (
+                <div className="flex items-center justify-between p-4 bg-indigo-50 rounded-lg border border-indigo-200">
+                  <span className="text-sm font-medium text-indigo-700">Updated</span>
+                  <span className="text-lg font-bold text-indigo-700">{results.updated}</span>
+                </div>
+              )}
+              {results.skippedNoChange > 0 && (
+                <div className="flex items-center justify-between p-4 bg-blue-50 rounded-lg border border-blue-200">
+                  <span className="text-sm font-medium text-blue-700">Skipped (no changes)</span>
+                  <span className="text-lg font-bold text-blue-700">{results.skippedNoChange}</span>
+                </div>
+              )}
               {results.failed > 0 && (
                 <div className="flex items-center justify-between p-4 bg-red-50 rounded-lg border border-red-200">
-                  <span className="text-sm font-medium text-red-700">Failed during import</span>
+                  <span className="text-sm font-medium text-red-700">Failed</span>
                   <span className="text-lg font-bold text-red-700">{results.failed}</span>
                 </div>
               )}
             </div>
-
             <div className="flex gap-3">
               <button
                 onClick={onClose}
