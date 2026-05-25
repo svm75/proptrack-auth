@@ -32,9 +32,24 @@ export interface InvoiceFormProps {
 
 // ---------- helpers ----------
 
+function parseAmount(raw: string): number {
+  let s = raw.replace(/[€\s']/g, '').trim()
+  if (s.includes(',') && s.includes('.')) {
+    // European: 1.234,56 — dots are thousands separators
+    s = s.replace(/\./g, '').replace(',', '.')
+  } else if (s.includes(',')) {
+    // Comma-only: treat as decimal (1234,56)
+    s = s.replace(',', '.')
+  } else if (/\.\d{3}$/.test(s) && (s.match(/\./g) ?? []).length === 1) {
+    // Single dot with 3 trailing digits: thousands separator (1.234)
+    s = s.replace('.', '')
+  }
+  return parseFloat(s) || 0
+}
+
 function calcTax(baseAmount: string): string {
-  const base = parseFloat(baseAmount)
-  if (isNaN(base) || base <= 0) return ''
+  const base = parseAmount(baseAmount)
+  if (!base || base <= 0) return ''
   return String(Math.round(base * 0.07 * 100) / 100)
 }
 
@@ -222,8 +237,8 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   const isOutgoing = form.type === TYPE_OUTGOING
   const nights = calcNights(form.checkIn, form.checkOut)
   const days = nights + 1
-  const baseNum = parseFloat(form.baseAmount) || 0
-  const taxNum = parseFloat(form.taxAmount) || 0
+  const baseNum = parseAmount(form.baseAmount)
+  const taxNum  = parseAmount(form.taxAmount)
   const totalGross = baseNum + taxNum
 
   // ---------- field helpers ----------
@@ -266,7 +281,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     if (!form.allProperties && !form.propertyId) e.propertyId = 'Property is required.'
     if (!form.contactId)  e.contactId  = 'Contact is required.'
     if (!form.date)       e.date       = 'Date is required.'
-    if (!form.baseAmount || isNaN(parseFloat(form.baseAmount))) e.baseAmount = 'Base amount is required.'
+    if (!form.baseAmount || !parseAmount(form.baseAmount)) e.baseAmount = 'Base amount is required.'
     if (isOutgoing) {
       if (!form.checkIn)  e.checkIn  = 'Check-in is required for outgoing invoices.'
       if (!form.checkOut) e.checkOut = 'Check-out is required for outgoing invoices.'
@@ -309,7 +324,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         cr9b5_type: form.type,
         cr9b5_date: toIso(form.date),
         cr9b5_description: form.description.trim() || undefined,
-        cr9b5_baseamount: parseFloat(form.baseAmount),
+        cr9b5_baseamount: baseNum,
         cr9b5_taxrate: form.taxIsManual ? 'n/a' : form.taxRate,
         cr9b5_taxamount: taxNum,
         cr9b5_taxismanual: form.taxIsManual,

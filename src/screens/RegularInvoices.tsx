@@ -2,15 +2,30 @@ import { useEffect, useState } from 'react'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
+import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
+import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import { fmtEur } from '../utils/formatters'
 
-const TYPE_INCOMING = 233100000
+const TYPE_INCOMING   = 233100000
+const REF_CAT_EXPENSE = 233100006
+
+function parseAmount(raw: string): number {
+  let s = raw.replace(/[€\s']/g, '').trim()
+  if (s.includes(',') && s.includes('.')) {
+    s = s.replace(/\./g, '').replace(',', '.')
+  } else if (s.includes(',')) {
+    s = s.replace(',', '.')
+  } else if (/\.\d{3}$/.test(s) && (s.match(/\./g) ?? []).length === 1) {
+    s = s.replace('.', '')
+  }
+  return parseFloat(s) || 0
+}
 
 function calcTax(base: string): string {
-  const n = parseFloat(base)
-  if (isNaN(n) || n <= 0) return ''
+  const n = parseAmount(base)
+  if (!n || n <= 0) return ''
   return String(Math.round(n * 0.07 * 100) / 100)
 }
 
@@ -40,6 +55,8 @@ interface Row {
   description: string
   date: string
   propertyId: string
+  allProperties: boolean
+  categoryId: string
   baseAmount: string
   taxAmount: string
   taxIsManual: boolean
@@ -48,6 +65,7 @@ interface Row {
 export default function RegularInvoices() {
   const [rows, setRows] = useState<Row[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
+  const [categories, setCategories] = useState<Cr9b5_pt_references[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
@@ -55,20 +73,28 @@ export default function RegularInvoices() {
 
   async function load() {
     setLoading(true)
-    const [suppRes, propRes] = await Promise.all([
+    const [suppRes, propRes, catRes] = await Promise.all([
       Cr9b5_pt_contactsService.getAll({
         filter: `cr9b5_role eq 233100000 and cr9b5_regularsupplier eq true`,
         orderBy: ['cr9b5_name asc'],
         maxPageSize: 5000,
       }),
       Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_referencesService.getAll({
+        filter: `cr9b5_referencetype eq ${REF_CAT_EXPENSE}`,
+        orderBy: ['cr9b5_sortorder asc'],
+        maxPageSize: 500,
+      }),
     ])
     setProperties(propRes.data ?? [])
+    setCategories(catRes.data ?? [])
     setRows((suppRes.data ?? []).map(s => ({
       supplier: s,
       description: s.cr9b5_defaultdescription ?? '',
       date: '',
       propertyId: '',
+      allProperties: false,
+      categoryId: '',
       baseAmount: '',
       taxAmount: '',
       taxIsManual: false,
@@ -95,6 +121,16 @@ export default function RegularInvoices() {
     setError(null)
   }
 
+  function resetAll() {
+    setRows(rs => rs.map(r => ({
+      ...r,
+      date: '', propertyId: '', allProperties: false, categoryId: '',
+      baseAmount: '', taxAmount: '', taxIsManual: false,
+    })))
+    setSummary(null)
+    setError(null)
+  }
+
   function handleTax(idx: number, val: string) {
     setRows(rs => rs.map((r, i) => i !== idx ? r : { ...r, taxAmount: val, taxIsManual: true }))
     setSummary(null)
@@ -109,7 +145,7 @@ export default function RegularInvoices() {
   }
 
   async function saveAll() {
-    const toSave = rows.filter(r => r.date && r.propertyId && r.baseAmount && parseFloat(r.baseAmount) > 0)
+    const toSave = rows.filter(r => r.date && (r.propertyId || r.allProperties) && r.baseAmount && parseFloat(r.baseAmount) > 0)
     if (toSave.length === 0) {
       setError('No rows have Date, Property and Base Amount filled in.')
       return
@@ -124,14 +160,15 @@ export default function RegularInvoices() {
 
       for (const row of toSave) {
         const rowYear = new Date(row.date).getFullYear()
-        const property = properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
-        if (!property) throw new Error(`Property not found for ${row.supplier.cr9b5_name}.`)
+        const property = row.allProperties ? null : properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
+        if (!row.allProperties && !property) throw new Error(`Property not found for ${row.supplier.cr9b5_name}.`)
 
         const seq = await getNextSequence(rowYear)
-        const internalId = buildInternalId(property.cr9b5_shortid, seq, rowYear)
+        const shortId = property?.cr9b5_shortid ?? 'ALL'
+        const internalId = buildInternalId(shortId, seq, rowYear)
 
-        const base = parseFloat(row.baseAmount)
-        const tax = parseFloat(row.taxAmount) || 0
+        const base = parseAmount(row.baseAmount)
+        const tax = parseAmount(row.taxAmount) || 0
         const total = base + tax
 
         const payload: Record<string, unknown> = {
@@ -146,8 +183,14 @@ export default function RegularInvoices() {
           cr9b5_taxamount: tax,
           cr9b5_taxismanual: row.taxIsManual,
           cr9b5_totalgross: total,
-          'cr9b5_Property@odata.bind': `/cr9b5_pt_properties(${row.propertyId})`,
+          cr9b5_allproperties: row.allProperties,
           'cr9b5_Contact@odata.bind': `/cr9b5_pt_contacts(${row.supplier.cr9b5_pt_contactid})`,
+        }
+        if (property) {
+          payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${property.cr9b5_pt_propertyid})`
+        }
+        if (row.categoryId) {
+          payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${row.categoryId})`
         }
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -159,7 +202,7 @@ export default function RegularInvoices() {
       const savedIds = new Set(toSave.map(r => r.supplier.cr9b5_pt_contactid))
       setRows(rs => rs.map(r =>
         savedIds.has(r.supplier.cr9b5_pt_contactid)
-          ? { ...r, date: '', propertyId: '', baseAmount: '', taxAmount: '', taxIsManual: false }
+          ? { ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false }
           : r
       ))
 
@@ -183,7 +226,7 @@ export default function RegularInvoices() {
     )
   }
 
-  const readyCount = rows.filter(r => r.date && r.propertyId && r.baseAmount && parseFloat(r.baseAmount) > 0).length
+  const readyCount = rows.filter(r => r.date && (r.propertyId || r.allProperties) && r.baseAmount && parseFloat(r.baseAmount) > 0).length
 
   return (
     <div className="flex flex-col h-full">
@@ -200,7 +243,9 @@ export default function RegularInvoices() {
               <th className="px-4 py-3">Supplier</th>
               <th className="px-4 py-3">Description</th>
               <th className="px-4 py-3">Date</th>
+              <th className="px-4 py-3">Category</th>
               <th className="px-4 py-3">Property</th>
+              <th className="px-4 py-3 text-center">All Prop</th>
               <th className="px-4 py-3 text-right">Base Amount</th>
               <th className="px-4 py-3 text-right">Tax Amount</th>
               <th className="px-4 py-3 text-right">Total Gross</th>
@@ -211,7 +256,7 @@ export default function RegularInvoices() {
               const base = parseFloat(row.baseAmount) || 0
               const tax = parseFloat(row.taxAmount) || 0
               const total = base + tax
-              const ready = !!(row.date && row.propertyId && row.baseAmount && base > 0)
+              const ready = !!(row.date && (row.propertyId || row.allProperties) && row.baseAmount && base > 0)
               return (
                 <tr key={row.supplier.cr9b5_pt_contactid} className="hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-center">
@@ -239,14 +284,37 @@ export default function RegularInvoices() {
                   </td>
                   <td className="px-4 py-2.5">
                     <select
+                      value={row.categoryId}
+                      onChange={e => updateRow(idx, { categoryId: e.target.value })}
+                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white min-w-[140px]"
+                    >
+                      <option value="">No category</option>
+                      {categories.map(c => (
+                        <option key={c.cr9b5_pt_referenceid} value={c.cr9b5_pt_referenceid}>{c.cr9b5_value}</option>
+                      ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <select
                       value={row.propertyId}
                       onChange={e => updateRow(idx, { propertyId: e.target.value })}
-                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white min-w-[140px]"
+                      disabled={row.allProperties}
+                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white min-w-[140px] disabled:opacity-40 disabled:cursor-not-allowed"
                     >
                       <option value="">Select property…</option>
                       {properties.map(p => (
                         <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>
                       ))}
+                    </select>
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    <select
+                      value={row.allProperties ? 'yes' : 'no'}
+                      onChange={e => updateRow(idx, { allProperties: e.target.value === 'yes', propertyId: e.target.value === 'yes' ? '' : row.propertyId })}
+                      className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                    >
+                      <option value="no">No</option>
+                      <option value="yes">Yes</option>
                     </select>
                   </td>
                   <td className="px-4 py-2.5 text-right">
@@ -292,10 +360,17 @@ export default function RegularInvoices() {
       <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 flex items-center gap-4">
         <button
           onClick={saveAll}
-          disabled={saving}
+          disabled={saving || readyCount === 0}
           className="px-6 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
         >
           {saving ? 'Saving…' : `Save All${readyCount > 0 ? ` (${readyCount})` : ''}`}
+        </button>
+        <button
+          onClick={resetAll}
+          disabled={saving}
+          className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+        >
+          Reset All
         </button>
         {summary && (
           <span className="text-sm text-green-700 font-medium">✓ {summary}</span>

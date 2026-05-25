@@ -1,6 +1,8 @@
-export function fmtEur(n: number | undefined): string {
-  if (n == null) return '—'
-  const [int, dec] = n.toFixed(2).split('.')
+export function fmtEur(n: number | string | undefined | null): string {
+  if (n == null || n === '') return '—'
+  const num = typeof n === 'string' ? parseFloat(n.replace(/[€\s']/g, '').replace(',', '.')) : n
+  if (isNaN(num)) return '—'
+  const [int, dec] = num.toFixed(2).split('.')
   const intFormatted = int.replace(/\B(?=(\d{3})+(?!\d))/g, "'")
   return `€ ${intFormatted}.${dec}`
 }

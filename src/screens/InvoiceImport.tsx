@@ -3,16 +3,19 @@ import * as XLSX from 'xlsx'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
+import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
+import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import { fmtEur } from '../utils/formatters'
 
-const TYPE_INCOMING = 233100000
-const TYPE_OUTGOING = 233100001
-const ROLE_SUPPLIER = 233100000
-const ROLE_CLIENT   = 233100001
+const TYPE_INCOMING   = 233100000
+const TYPE_OUTGOING   = 233100001
+const ROLE_CLIENT     = 233100001
+const REF_CAT_INCOME  = 233100005
+const REF_CAT_EXPENSE = 233100006
 
-type RowStatus = 'ready' | 'warning' | 'error' | 'duplicate-no-change' | 'duplicate-update'
+type RowStatus = 'ready' | 'warning' | 'error' | 'duplicate-no-change' | 'duplicate-update' | 'skipped-new'
 
 interface ExistingRecord {
   id: string
@@ -68,28 +71,67 @@ interface ImportRow {
   children: number
   babies: number
   bookingRef: string
+  allProperties: boolean
+  categoryId: string
+  categoryName: string
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-function parseDDMMYYYY(raw: unknown): string {
-  if (!raw) return ''
+function toIsoDate(y: number, mo: number, d: number): string {
+  if (y < 1900 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return ''
+  const date = new Date(y, mo - 1, d)
+  if (date.getFullYear() !== y || date.getMonth() + 1 !== mo || date.getDate() !== d) return ''
+  return `${y}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`
+}
+
+function parseFlexDate(raw: unknown): string {
+  if (!raw && raw !== 0) return ''
+  // JavaScript Date (SheetJS cellDates:true)
   if (raw instanceof Date) {
-    const y  = raw.getFullYear()
-    const mo = String(raw.getMonth() + 1).padStart(2, '0')
-    const d  = String(raw.getDate()).padStart(2, '0')
-    return `${y}-${mo}-${d}`
+    return toIsoDate(raw.getFullYear(), raw.getMonth() + 1, raw.getDate())
+  }
+  // Excel serial number
+  if (typeof raw === 'number') {
+    const d = XLSX.SSF.parse_date_code(raw)
+    if (d) return toIsoDate(d.y, d.m, d.d)
+    return ''
   }
   const s = String(raw).trim()
-  const m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
-  if (!m) return ''
-  const [, d, mo, y] = m
-  return `${y}-${mo.padStart(2,'0')}-${d.padStart(2,'0')}`
+  let m: RegExpMatchArray | null
+  // DD.MM.YYYY or D.M.YYYY
+  m = s.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/)
+  if (m) return toIsoDate(+m[3], +m[2], +m[1])
+  // DD/MM/YYYY
+  m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (m) return toIsoDate(+m[3], +m[2], +m[1])
+  // YYYY-MM-DD
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+  if (m) return toIsoDate(+m[1], +m[2], +m[3])
+  // MM/DD/YYYY
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (m) return toIsoDate(+m[3], +m[1], +m[2])
+  return ''
 }
+
+// Keep old name as alias so all call sites work unchanged
+const parseDDMMYYYY = parseFlexDate
 
 function stripCurrency(raw: unknown): number {
   if (raw == null || raw === '') return 0
-  const s = String(raw).replace(/[€\s']/g, '').replace(',', '.')
+  if (typeof raw === 'number') return raw
+  let s = String(raw).replace(/[€\s']/g, '').trim()
+  if (s.includes(',') && s.includes('.')) {
+    // European format: 1.234,56 — dots are thousands separators
+    s = s.replace(/\./g, '').replace(',', '.')
+  } else if (s.includes(',')) {
+    // Comma-only: treat as decimal separator (e.g. 1234,56)
+    s = s.replace(',', '.')
+  } else if (/\.\d{3}$/.test(s) && (s.match(/\./g) ?? []).length === 1) {
+    // Single dot followed by exactly 3 digits: European thousands separator (e.g. 1.234)
+    s = s.replace('.', '')
+  }
+  // else: standard decimal dot (e.g. 1234.56) — use as-is
   return parseFloat(s) || 0
 }
 
@@ -136,36 +178,45 @@ function detectChanges(row: ImportRow, ex: ExistingRecord): boolean {
   return false
 }
 
-// ── column indices ────────────────────────────────────────────────────────────
-const COL = {
-  date:          0,
-  glSequence:    1,
-  no:            2,
-  internalId:    3,
-  house:         4,
-  property:      5,
-  number:        6,
-  year:          7,
-  id:            8,
-  counterpart:   9,
-  name:          10,
-  taxId:         11,
-  supCl:         12,
-  type:          13,
-  baseNet:       14,
-  baseIgic:      15,
-  baseGross:     16,
-  taxRate:       17,
-  standard:      18,
-  rentStart:     19,
-  rentEnd:       20,
-  bookingNumber: 21,
-  nights:        22,
-  days:          23,
-  adults:        24,
-  children:      25,
-  babies:        26,
-} as const
+// ── column map ────────────────────────────────────────────────────────────────
+
+type ColMap = Record<string, number>
+
+const HEADER_ALIASES: Record<string, string> = {
+  'internal id':  'internalId',
+  'type':         'type',
+  'category':     'category',
+  'property':     'property',
+  'all properties': 'allProperties',
+  'contact':      'contact',
+  'date':         'date',
+  'description':  'description',
+  'booking ref':  'bookingNumber',
+  'check-in':     'rentStart',
+  'check-out':    'rentEnd',
+  'nights':       'nights',
+  'days':         'days',
+  'adults':       'adults',
+  'children':     'children',
+  'babies':       'babies',
+  'base amount':  'baseNet',
+  'tax rate':     'taxRate',
+  'tax amount':   'baseIgic',
+  'total gross':  'baseGross',
+}
+
+const FULL_COLS = ['internalId', 'type', 'property', 'contact', 'date', 'baseNet', 'taxRate', 'baseGross']
+
+function buildColMap(headerRow: unknown[]): { col: ColMap; isPartial: boolean } {
+  const map: ColMap = {}
+  headerRow.forEach((cell, i) => {
+    const key = HEADER_ALIASES[String(cell ?? '').trim().toLowerCase()]
+    if (key) map[key] = i
+  })
+  if (!('internalId' in map)) throw new Error('Missing required column: Internal ID')
+  const isPartial = FULL_COLS.some(k => !(k in map))
+  return { col: map, isPartial }
+}
 
 // ── main component ────────────────────────────────────────────────────────────
 
@@ -193,6 +244,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   // Reference data (loaded during parse)
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts, setContacts]     = useState<Cr9b5_pt_contacts[]>([])
+  const [colMap,    setColMap]       = useState<ColMap>({})
+  const [isPartial, setIsPartial]    = useState(false)
 
   // Step 3
   const [importing, setImporting] = useState(false)
@@ -213,19 +266,23 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       const ws  = wb.Sheets[wb.SheetNames[0]]
       const raw: unknown[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
 
+      const { col, isPartial: partial } = buildColMap(raw[0] ?? [])
+
       const dataRows = raw.filter((_, i) => i > 0).filter(r => r.some(c => c !== ''))
       if (dataRows.length === 0) throw new Error('No data rows found in file.')
 
       setFileName(file.name)
       setTotalRows(dataRows.length)
+      setColMap(col)
+      setIsPartial(partial)
 
-      const dates = dataRows.map(r => parseDDMMYYYY(r[COL.date])).filter(Boolean)
+      const dates = dataRows.map(r => col.date !== undefined ? parseDDMMYYYY(r[col.date]) : '').filter(Boolean)
       if (dates.length) {
         dates.sort()
         setDateRange({ from: dates[0], to: dates[dates.length - 1] })
       }
 
-      const [propRes, conRes, invRes] = await Promise.all([
+      const [propRes, conRes, invRes, catIncRes, catExpRes] = await Promise.all([
         Cr9b5_pt_propertiesService.getAll({ select: ['cr9b5_pt_propertyid', 'cr9b5_name', 'cr9b5_shortid'], orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
         Cr9b5_pt_contactsService.getAll({ select: ['cr9b5_pt_contactid', 'cr9b5_name', 'cr9b5_taxid', 'cr9b5_role'], orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
         Cr9b5_pt_invoicesService.getAll({
@@ -238,10 +295,13 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
           ],
           maxPageSize: 5000,
         }),
+        Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_INCOME}`,  select: ['cr9b5_pt_referenceid', 'cr9b5_value'], maxPageSize: 500 }),
+        Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_EXPENSE}`, select: ['cr9b5_pt_referenceid', 'cr9b5_value'], maxPageSize: 500 }),
       ])
 
       const props = propRes.data ?? []
       const cons  = conRes.data ?? []
+      const cats  = [...(catIncRes.data ?? []), ...(catExpRes.data ?? [])]
 
       // Build existing record map: internalId (lower) → ExistingRecord
       const existingMap = new Map<string, ExistingRecord>()
@@ -276,7 +336,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       setContacts(cons)
 
       const parsed: ImportRow[] = dataRows.map((r, idx) =>
-        mapRow(r, idx, props, cons, existingMap)
+        mapRow(r, idx, col, props, cons, cats, existingMap, partial)
       )
 
       setRows(parsed)
@@ -291,48 +351,52 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   function mapRow(
     r: unknown[],
     idx: number,
+    col: ColMap,
     props: Cr9b5_pt_properties[],
     cons: Cr9b5_pt_contacts[],
+    cats: Cr9b5_pt_references[],
     existingMap: Map<string, ExistingRecord>,
+    partial = false,
   ): ImportRow {
     const errors: string[] = []
     const warnings: string[] = []
 
-    const rawInternalId = String(r[COL.id] ?? '').trim()
-    const rawDate       = r[COL.date]
-    const rawName       = String(r[COL.name] ?? '').trim()
-    const rawTaxId      = String(r[COL.taxId] ?? '').trim()
-    const rawSupCl      = String(r[COL.supCl] ?? '').trim()
-    const rawType       = String(r[COL.type] ?? '').trim()
-    const rawProperty   = String(r[COL.property] ?? '').trim()
-    const rawHouse      = String(r[COL.house] ?? '').trim()
-    const rawBaseNet    = r[COL.baseNet]
-    const rawBaseIgic   = r[COL.baseIgic]
-    const rawBaseGross  = r[COL.baseGross]
-    const rawTaxRate    = r[COL.taxRate]
-    const rawRentStart  = r[COL.rentStart]
-    const rawRentEnd    = r[COL.rentEnd]
-    const rawBooking    = String(r[COL.bookingNumber] ?? '').trim()
-    const rawNights     = r[COL.nights]
-    const rawDays       = r[COL.days]
-    const rawAdults     = r[COL.adults]
-    const rawChildren   = r[COL.children]
-    const rawBabies     = r[COL.babies]
-    const rawGlSeq      = r[COL.glSequence]
-    const rawYear       = r[COL.year]
+    const rawInternalId = String(r[col.internalId] ?? '').trim()
+    const rawDate       = r[col.date]
+    const rawName       = String(r[col.contact] ?? '').trim()
+    const rawType       = String(r[col.type] ?? '').trim()
+    const rawProperty   = String(r[col.property] ?? '').trim()
+    const rawBaseNet    = r[col.baseNet]
+    const rawBaseIgic   = r[col.baseIgic]
+    const rawBaseGross  = r[col.baseGross]
+    const rawTaxRate    = r[col.taxRate]
+    const rawRentStart  = r[col.rentStart]
+    const rawRentEnd    = r[col.rentEnd]
+    const rawBooking    = String(r[col.bookingNumber] ?? '').trim()
+    const rawNights      = r[col.nights]
+    const rawDays        = r[col.days]
+    const rawAdults      = r[col.adults]
+    const rawChildren    = r[col.children]
+    const rawBabies      = r[col.babies]
+    const rawAllProps    = String(r[col.allProperties] ?? '').trim().toLowerCase()
+    const rawCategory    = String(r[col.category] ?? '').trim()
 
     // Date
     const date = parseDDMMYYYY(rawDate)
-    if (!date) errors.push('Invalid or missing date')
+    if (!date) errors.push(rawDate ? `Invalid date format: ${rawDate}` : 'Missing date')
 
-    // Property
+    // All Properties flag
+    const allProperties = rawAllProps === 'yes' || rawAllProps === 'true' || rawAllProps === '1'
+
+    // Property (not required when allProperties is set)
     const propNameLower = rawProperty.toLowerCase()
-    const houseLower    = rawHouse.toLowerCase()
     let property = props.find(p => p.cr9b5_name.toLowerCase() === propNameLower)
-    if (!property && houseLower) {
-      property = props.find(p => p.cr9b5_shortid?.toLowerCase() === houseLower)
-    }
-    if (!property) errors.push(`Property not found: ${rawProperty || rawHouse}`)
+    if (!property && !allProperties) errors.push(`Property not found: ${rawProperty}`)
+
+    // Category
+    const catNameLower = rawCategory.toLowerCase()
+    const category = cats.find(c => c.cr9b5_value?.toLowerCase() === catNameLower)
+    if (rawCategory && !category) warnings.push(`New category will be created: ${rawCategory}`)
 
     // Contact
     let contact = cons.find(c => c.cr9b5_name.toLowerCase() === rawName.toLowerCase())
@@ -346,7 +410,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
 
     // Type
     const typeStr = rawType.toLowerCase()
-    const typeVal = typeStr.includes('outgoing') ? TYPE_OUTGOING : TYPE_INCOMING
+    const typeVal = (typeStr.includes('outgoing') || typeStr.includes('income')) ? TYPE_OUTGOING : TYPE_INCOMING
     const isOut   = typeVal === TYPE_OUTGOING
 
     // Amounts
@@ -381,8 +445,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       propertyName:   property?.cr9b5_name ?? rawProperty,
       contactId:      contact?.cr9b5_pt_contactid ?? null,
       contactName:    rawName,
-      contactTaxId:   rawTaxId,
-      contactRole:    rawSupCl.toLowerCase().includes('supplier') ? ROLE_SUPPLIER : ROLE_CLIENT,
+      contactTaxId:   '',
+      contactRole:    ROLE_CLIENT,
       isNewContact,
       type:           typeVal,
       baseAmount,
@@ -390,16 +454,19 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       totalGross,
       taxRate,
       taxIsManual,
-      globalSequence: parseInt2(rawGlSeq),
-      year:           parseInt2(rawYear),
+      globalSequence: 0,
+      year:           0,
       checkIn,
       checkOut,
-      nights:   parseInt2(rawNights),
-      days:     parseInt2(rawDays),
-      adults:   parseInt2(rawAdults),
-      children: parseInt2(rawChildren),
-      babies:   parseInt2(rawBabies),
-      bookingRef: rawBooking,
+      nights:        parseInt2(rawNights),
+      days:          parseInt2(rawDays),
+      adults:        parseInt2(rawAdults),
+      children:      parseInt2(rawChildren),
+      babies:        parseInt2(rawBabies),
+      bookingRef:    rawBooking,
+      allProperties,
+      categoryId:    category?.cr9b5_pt_referenceid ?? '',
+      categoryName:  category?.cr9b5_value ?? rawCategory,
     }
 
     // Duplicate check — only if no hard errors (we need property/contact resolved)
@@ -411,69 +478,24 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
           ...partialRow,
           status:     changed ? 'duplicate-update' : 'duplicate-no-change',
           statusNote: changed ? 'Record exists — differences found, will update' : 'Record exists — no changes, will be skipped',
-          checked:    changed,   // update rows checked by default, no-change rows unchecked
+          checked:    changed,
           existingId: existing.id,
         }
       }
     }
 
+    // In partial mode, new rows are not allowed
+    if (partial && !partialRow.existingId) {
+      return {
+        ...partialRow,
+        status:     'skipped-new',
+        statusNote: 'Partial import — new rows are not created',
+        checked:    false,
+      }
+    }
+
     return partialRow
   }
-
-  function buildRow(
-    idx: number,
-    status: RowStatus,
-    note: string,
-    existingId: string | null,
-    r: unknown[],
-    props: Cr9b5_pt_properties[],
-    cons: Cr9b5_pt_contacts[],
-  ): ImportRow {
-    const rawType  = String(r[COL.type] ?? '').toLowerCase()
-    const typeVal  = rawType.includes('outgoing') ? TYPE_OUTGOING : TYPE_INCOMING
-    const isOut    = typeVal === TYPE_OUTGOING
-    const rawName  = String(r[COL.name] ?? '').trim()
-    const contact  = cons.find(c => c.cr9b5_name.toLowerCase() === rawName.toLowerCase())
-    const rawProp  = String(r[COL.property] ?? '').trim()
-    const rawHouse = String(r[COL.house] ?? '').trim()
-    let property   = props.find(p => p.cr9b5_name.toLowerCase() === rawProp.toLowerCase())
-    if (!property) property = props.find(p => p.cr9b5_shortid?.toLowerCase() === rawHouse.toLowerCase())
-    return {
-      index:         idx,
-      status,
-      statusNote:    note,
-      checked:       status === 'duplicate-update',
-      existingId,
-      date:          parseDDMMYYYY(r[COL.date]),
-      internalId:    String(r[COL.id] ?? '').trim(),
-      propertyId:    property?.cr9b5_pt_propertyid ?? null,
-      propertyName:  property?.cr9b5_name ?? rawProp,
-      contactId:     contact?.cr9b5_pt_contactid ?? null,
-      contactName:   rawName,
-      contactTaxId:  String(r[COL.taxId] ?? '').trim(),
-      contactRole:   String(r[COL.supCl] ?? '').toLowerCase().includes('supplier') ? ROLE_SUPPLIER : ROLE_CLIENT,
-      isNewContact:  false,
-      type:          typeVal,
-      baseAmount:    stripCurrency(r[COL.baseNet]),
-      taxAmount:     stripCurrency(r[COL.baseIgic]),
-      totalGross:    stripCurrency(r[COL.baseGross]),
-      taxRate:       parseTaxRate(r[COL.taxRate]),
-      taxIsManual:   stripCurrency(r[COL.baseIgic]) === 0,
-      globalSequence: parseInt2(r[COL.glSequence]),
-      year:          parseInt2(r[COL.year]),
-      checkIn:       isOut ? parseDDMMYYYY(r[COL.rentStart]) : '',
-      checkOut:      isOut ? parseDDMMYYYY(r[COL.rentEnd])   : '',
-      nights:        parseInt2(r[COL.nights]),
-      days:          parseInt2(r[COL.days]),
-      adults:        parseInt2(r[COL.adults]),
-      children:      parseInt2(r[COL.children]),
-      babies:        parseInt2(r[COL.babies]),
-      bookingRef:    String(r[COL.bookingNumber] ?? '').trim(),
-    }
-  }
-
-  // Keep buildRow in scope to avoid unused warning — used for future re-parse flows
-  void buildRow
 
   // ── inline editing ─────────────────────────────────────────────────────────
 
@@ -501,9 +523,9 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         return { ...row, contactName: val, contactId: con?.cr9b5_pt_contactid ?? null, isNewContact: !con && !!val }
       }
       case 'type': return { ...row, type: val === 'outgoing' ? TYPE_OUTGOING : TYPE_INCOMING }
-      case 'baseAmount': return { ...row, baseAmount: parseFloat(val) || 0 }
-      case 'taxAmount':  return { ...row, taxAmount:  parseFloat(val) || 0 }
-      case 'totalGross': return { ...row, totalGross: parseFloat(val) || 0 }
+      case 'baseAmount': return { ...row, baseAmount: stripCurrency(val) }
+      case 'taxAmount':  return { ...row, taxAmount:  stripCurrency(val) }
+      case 'totalGross': return { ...row, totalGross: stripCurrency(val) }
       case 'nights':    return { ...row, nights:   parseInt(val, 10) || 0 }
       case 'days':      return { ...row, days:     parseInt(val, 10) || 0 }
       case 'adults':    return { ...row, adults:   parseInt(val, 10) || 0 }
@@ -523,8 +545,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const errors: string[]   = []
     const warnings: string[] = []
 
-    if (!row.date)        errors.push('Invalid or missing date')
-    if (!row.propertyId)  errors.push(`Property not found: ${row.propertyName}`)
+    if (!row.date)                            errors.push('Invalid or missing date')
+    if (!row.propertyId && !row.allProperties) errors.push(`Property not found: ${row.propertyName}`)
     if (!row.contactName) errors.push('Missing contact name')
     if (row.isNewContact) warnings.push(`New contact will be created: ${row.contactName}`)
     if (!row.bookingRef && row.type === TYPE_OUTGOING) warnings.push('Missing booking reference')
@@ -545,7 +567,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     ))
   }
 
-  const nonErrorRows = rows.filter(r => r.status !== 'error')
+  const nonErrorRows = rows.filter(r => r.status !== 'error' && r.status !== 'skipped-new')
   const allChecked   = nonErrorRows.length > 0 && nonErrorRows.every(r => r.checked)
 
   function toggleSelectAll() {
@@ -564,6 +586,41 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     let created = 0
     let updated = 0
     let failed  = 0
+
+    // Create missing categories (deduplicated by lowercase name)
+    const newCatNames = new Map<string, { name: string; type: number }>()
+    for (const row of processable) {
+      if (row.categoryName && !row.categoryId) {
+        const key = row.categoryName.toLowerCase()
+        if (!newCatNames.has(key)) newCatNames.set(key, { name: row.categoryName, type: row.type })
+      }
+    }
+    const createdCategoryIds = new Map<string, string>()
+    for (const [key, { name, type }] of newCatNames) {
+      try {
+        const refType = type === TYPE_OUTGOING ? REF_CAT_INCOME : REF_CAT_EXPENSE
+        // Check server-side before creating to prevent duplicates
+        const existing = await Cr9b5_pt_referencesService.getAll({
+          filter: `cr9b5_referencetype eq ${refType} and cr9b5_value eq '${name.replace(/'/g, "''")}'`,
+          select: ['cr9b5_pt_referenceid'],
+          top: 1,
+        })
+        const existingId = existing.data?.[0]?.cr9b5_pt_referenceid
+        if (existingId) {
+          createdCategoryIds.set(key, existingId)
+          continue
+        }
+        const res = await Cr9b5_pt_referencesService.create({
+          cr9b5_value: name,
+          cr9b5_referencetype: refType as never,
+        } as never)
+        if (res.data?.cr9b5_pt_referenceid) {
+          createdCategoryIds.set(key, res.data.cr9b5_pt_referenceid)
+        }
+      } catch {
+        // category creation failed; invoice will be imported without category
+      }
+    }
 
     // Deduplicate new contacts by name
     const newContactNames = new Map<string, ImportRow>()
@@ -589,40 +646,43 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       }
     }
 
+    const has = (key: string) => key in colMap
+
     for (const row of processable) {
       try {
         const contactId = row.contactId ?? createdContactIds.get(row.contactName.toLowerCase())
         const toIso = (d: string) => d ? new Date(`${d}T12:00:00`).toISOString() : undefined
 
         const payload: Record<string, unknown> = {
-          cr9b5_internalid:     row.internalId,
-          cr9b5_globalsequence: row.globalSequence || undefined,
-          cr9b5_year:           row.year || undefined,
-          cr9b5_type:           row.type,
-          cr9b5_date:           toIso(row.date),
-          cr9b5_baseamount:     row.baseAmount,
-          cr9b5_taxrate:        row.taxIsManual ? 'n/a' : row.taxRate,
-          cr9b5_taxamount:      row.taxAmount,
-          cr9b5_taxismanual:    row.taxIsManual,
-          cr9b5_totalgross:     row.totalGross,
-          cr9b5_nights:         row.nights,
-          cr9b5_days:           row.days,
-          cr9b5_adults:         row.adults,
-          cr9b5_children:       row.children,
-          cr9b5_babies:         row.babies,
+          cr9b5_internalid: row.internalId,
         }
 
-        if (row.propertyId) {
+        if (has('type'))        payload.cr9b5_type           = row.type
+        if (has('date'))        payload.cr9b5_date           = toIso(row.date)
+        if (has('baseNet'))     payload.cr9b5_baseamount     = row.baseAmount
+        if (has('taxRate'))     payload.cr9b5_taxrate        = row.taxIsManual ? 'n/a' : row.taxRate
+        if (has('baseIgic'))    { payload.cr9b5_taxamount    = row.taxAmount; payload.cr9b5_taxismanual = row.taxIsManual }
+        if (has('baseGross'))   payload.cr9b5_totalgross     = row.totalGross
+        if (has('nights'))      payload.cr9b5_nights         = row.nights
+        if (has('days'))        payload.cr9b5_days           = row.days
+        if (has('adults'))      payload.cr9b5_adults         = row.adults
+        if (has('children'))    payload.cr9b5_children       = row.children
+        if (has('babies'))      payload.cr9b5_babies         = row.babies
+        if (has('allProperties')) payload.cr9b5_allproperties = row.allProperties
+
+        if (has('category')) {
+          const categoryId = row.categoryId || createdCategoryIds.get(row.categoryName.toLowerCase())
+          if (categoryId) payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${categoryId})`
+        }
+        if (has('property') && row.propertyId && !row.allProperties) {
           payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${row.propertyId})`
         }
-        if (contactId) {
+        if (has('contact') && contactId) {
           payload['cr9b5_Contact@odata.bind'] = `/cr9b5_pt_contacts(${contactId})`
         }
-        if (row.type === TYPE_OUTGOING) {
-          if (row.checkIn)    payload.cr9b5_checkin          = toIso(row.checkIn)
-          if (row.checkOut)   payload.cr9b5_checkout         = toIso(row.checkOut)
-          if (row.bookingRef) payload.cr9b5_bookingreference = row.bookingRef
-        }
+        if (has('rentStart') && row.checkIn)    payload.cr9b5_checkin          = toIso(row.checkIn)
+        if (has('rentEnd')   && row.checkOut)   payload.cr9b5_checkout         = toIso(row.checkOut)
+        if (has('bookingNumber') && row.bookingRef) payload.cr9b5_bookingreference = row.bookingRef
 
         if (row.existingId) {
           await Cr9b5_pt_invoicesService.update(row.existingId, payload as never)
@@ -654,6 +714,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     error:            rows.filter(r => r.status === 'error').length,
     duplicateUpdate:  rows.filter(r => r.status === 'duplicate-update').length,
     duplicateNoChange:rows.filter(r => r.status === 'duplicate-no-change').length,
+    skippedNew:       rows.filter(r => r.status === 'skipped-new').length,
   }
 
   const checkedCount = rows.filter(r => r.checked).length
@@ -746,6 +807,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     error:               'bg-red-50    text-red-700    border-red-200',
     'duplicate-update':  'bg-amber-50  text-amber-700  border-amber-200',
     'duplicate-no-change': 'bg-blue-50 text-blue-700   border-blue-200',
+    'skipped-new':       'bg-gray-100  text-gray-400   border-gray-200',
   }
   const statusLabels: Record<RowStatus, string> = {
     ready:               'Ready',
@@ -753,6 +815,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     error:               'Error',
     'duplicate-update':  'Duplicate — will update',
     'duplicate-no-change': 'Duplicate — no changes',
+    'skipped-new':       'New — skipped',
   }
 
   return (
@@ -820,6 +883,13 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         {/* ── Step 2: Validation table ── */}
         {step === 2 && (
           <div className="flex flex-col h-full">
+            {/* Partial mode banner */}
+            {isPartial && (
+              <div className="px-6 py-2 bg-amber-50 border-b border-amber-200 flex items-center gap-2 text-sm text-amber-800">
+                <span className="font-semibold">Partial import mode</span>
+                <span className="text-amber-600">— only existing records will be updated for the columns present in this file. New rows are skipped.</span>
+              </div>
+            )}
             {/* Summary bar */}
             <div className="px-6 py-3 border-b border-gray-200 bg-white flex flex-wrap items-center gap-4">
               <span className="text-sm text-gray-600">
@@ -844,6 +914,11 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                 {counts.duplicateNoChange > 0 && (
                   <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
                     ⊘ {counts.duplicateNoChange} no changes
+                  </span>
+                )}
+                {counts.skippedNew > 0 && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-500">
+                    ⊘ {counts.skippedNew} new skipped
                   </span>
                 )}
                 {counts.error > 0 && (
@@ -900,6 +975,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                     <th className="px-3 py-2 min-w-[120px]">Property</th>
                     <th className="px-3 py-2 min-w-[120px]">Contact</th>
                     <th className="px-3 py-2">Type</th>
+                    <th className="px-3 py-2">Category</th>
+                    <th className="px-3 py-2 text-center">All Prop</th>
                     <th className="px-3 py-2 text-right">Base Net</th>
                     <th className="px-3 py-2 text-right">Tax</th>
                     <th className="px-3 py-2 text-right">Gross</th>
@@ -916,7 +993,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                 <tbody className="bg-white divide-y divide-gray-100">
                   {rows.map((row, rowIdx) => {
                     const isOut      = row.type === TYPE_OUTGOING
-                    const isDisabled = row.status === 'error'
+                    const isDisabled = row.status === 'error' || row.status === 'skipped-new'
                     return (
                       <tr key={row.index} className={['transition-colors',
                         isDisabled ? 'opacity-50' : 'hover:bg-gray-50',
@@ -955,6 +1032,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                         <td className="px-3 py-2">
                           {cellProps(row, 'type', isOut ? 'Income' : 'Expense')}
                         </td>
+                        <td className="px-3 py-2">{row.categoryName || <span className="text-gray-300">—</span>}</td>
+                        <td className="px-3 py-2 text-center">{row.allProperties ? '✓' : <span className="text-gray-300">—</span>}</td>
                         <td className="px-3 py-2 text-right">{cellProps(row, 'baseAmount', fmtEur(row.baseAmount), 'number')}</td>
                         <td className="px-3 py-2 text-right">{cellProps(row, 'taxAmount', fmtEur(row.taxAmount), 'number')}</td>
                         <td className="px-3 py-2 text-right font-semibold">{cellProps(row, 'totalGross', fmtEur(row.totalGross), 'number')}</td>

@@ -6,10 +6,16 @@ import {
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
+import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
+import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import CalendarScreen from './Calendar'
+import CategoryPnL from './CategoryPnL'
+import CategoryTrend from './CategoryTrend'
+import ExpenseBreakdown from './ExpenseBreakdown'
+import IncomevsForecast from './IncomevsForecast'
 import { fmtEur, fmtEurShort } from '../utils/formatters'
 
 const TYPE_OUTGOING = 233100001
@@ -774,21 +780,26 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
 // MAIN DASHBOARD — tab shell
 // ============================================================
 
-type DashTab = 'overview' | 'comparison' | 'heatmap' | 'cashflow' | 'tax' | 'calendar'
+type DashTab = 'overview' | 'comparison' | 'heatmap' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'expense-breakdown' | 'income-vs-forecast'
 
 const TABS: { id: DashTab; label: string; printName: string }[] = [
-  { id: 'overview',    label: 'Overview',            printName: 'overview' },
-  { id: 'comparison',  label: 'Property Comparison', printName: 'property-comparison' },
-  { id: 'heatmap',     label: 'Occupancy Heatmap',   printName: 'occupancy-heatmap' },
-  { id: 'cashflow',    label: 'Cash Flow',            printName: 'cash-flow' },
-  { id: 'tax',         label: 'Tax Summary',          printName: 'tax-summary' },
-  { id: 'calendar',    label: 'Calendar',             printName: 'calendar' },
+  { id: 'overview',            label: 'Overview',            printName: 'overview' },
+  { id: 'comparison',          label: 'Property Comparison', printName: 'property-comparison' },
+  { id: 'heatmap',             label: 'Occupancy Heatmap',   printName: 'occupancy-heatmap' },
+  { id: 'cashflow',            label: 'Cash Flow',            printName: 'cash-flow' },
+  { id: 'tax',                 label: 'Tax Summary',          printName: 'tax-summary' },
+  { id: 'calendar',            label: 'Calendar',             printName: 'calendar' },
+  { id: 'cat-pnl',             label: 'Category P&L',         printName: 'category-pnl' },
+  { id: 'cat-trend',           label: 'Category Trend',       printName: 'category-trend' },
+  { id: 'expense-breakdown',   label: 'Expense Breakdown',    printName: 'expense-breakdown' },
+  { id: 'income-vs-forecast',  label: 'Income vs Forecast',   printName: 'income-vs-forecast' },
 ]
 
 export default function Dashboard() {
   const [invoices,   setInvoices]   = useState<Cr9b5_pt_invoices[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
+  const [references, setReferences] = useState<Cr9b5_pt_references[]>([])
   const [loading,    setLoading]    = useState(true)
   const [tab,        setTab]        = useState<DashTab>('overview')
 
@@ -804,14 +815,16 @@ export default function Dashboard() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [invRes, propRes, conRes] = await Promise.all([
+      const [invRes, propRes, conRes, refRes] = await Promise.all([
         Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'], maxPageSize: 5000 }),
         Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
         Cr9b5_pt_contactsService.getAll({ select: ['cr9b5_pt_contactid', 'cr9b5_name'], maxPageSize: 5000 }),
+        Cr9b5_pt_referencesService.getAll({ select: ['cr9b5_pt_referenceid', 'cr9b5_value', 'cr9b5_referencetype'], maxPageSize: 5000 }),
       ])
       setInvoices(invRes.data ?? [])
       setProperties(propRes.data ?? [])
       setContacts(conRes.data ?? [])
+      setReferences(refRes.data ?? [])
       setLoading(false)
     }
     load()
@@ -820,7 +833,7 @@ export default function Dashboard() {
   const activeTab = TABS.find(t => t.id === tab)!
 
   return (
-    <div className={tab === 'calendar' ? 'flex flex-col h-full' : 'p-6 max-w-5xl'}>
+    <div className={tab === 'calendar' ? 'flex flex-col h-full' : 'p-6 max-w-[83rem]'}>
       {/* Header row */}
       <div className={['flex flex-wrap items-start justify-between gap-4', tab==='calendar'?'px-6 pt-6 pb-0 shrink-0':'mb-6'].join(' ')}>
         <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 flex-wrap">
@@ -843,12 +856,16 @@ export default function Dashboard() {
         <p className={tab==='calendar'?'p-6 text-gray-400':'mt-8 text-gray-400'}>Loading…</p>
       ) : (
         <div className={['dashboard-print-content', tab==='calendar'?'flex-1 min-h-0 flex flex-col mt-4':'mt-6 space-y-0'].join(' ')}>
-          {tab==='overview'   && <DashboardOverview    invoices={invoices} properties={properties} />}
-          {tab==='comparison' && <DashboardComparison  invoices={invoices} properties={properties} />}
-          {tab==='heatmap'    && <DashboardHeatmap     invoices={invoices} properties={properties} />}
-          {tab==='cashflow'   && <DashboardCashFlow    invoices={invoices} properties={properties} />}
-          {tab==='tax'        && <DashboardTax         invoices={invoices} contacts={contacts} />}
-          {tab==='calendar'   && <div className="flex-1 min-h-0"><CalendarScreen /></div>}
+          {tab==='overview'            && <DashboardOverview    invoices={invoices} properties={properties} />}
+          {tab==='comparison'          && <DashboardComparison  invoices={invoices} properties={properties} />}
+          {tab==='heatmap'             && <DashboardHeatmap     invoices={invoices} properties={properties} />}
+          {tab==='cashflow'            && <DashboardCashFlow    invoices={invoices} properties={properties} />}
+          {tab==='tax'                 && <DashboardTax         invoices={invoices} contacts={contacts} />}
+          {tab==='calendar'            && <div className="flex-1 min-h-0"><CalendarScreen /></div>}
+          {tab==='cat-pnl'             && <CategoryPnL          invoices={invoices} properties={properties} references={references} contacts={contacts} />}
+          {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
+          {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
+          {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} references={references} />}
         </div>
       )}
     </div>

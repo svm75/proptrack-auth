@@ -9,6 +9,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import InvoiceForm from './InvoiceForm'
 import InvoiceImport from './InvoiceImport'
+import ExportConfigModal from './ExportConfigModal'
 import { logActivity } from '../services/activitylog'
 import { fmtEur } from '../utils/formatters'
 
@@ -41,7 +42,8 @@ export default function Invoices() {
   const [formOpen, setFormOpen] = useState(false)
   const [editInvoice, setEditInvoice] = useState<Cr9b5_pt_invoices | null>(null)
   const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
-  const [importOpen, setImportOpen] = useState(false)
+  const [importOpen, setImportOpen]   = useState(false)
+  const [exportOpen, setExportOpen]   = useState(false)
 
   async function load() {
     setLoading(true)
@@ -108,7 +110,7 @@ export default function Invoices() {
     setFormOpen(true)
   }
 
-  function exportExcel() {
+  function exportExcel(orderedColumns: string[]) {
     const fmtD = (iso: string | undefined) => {
       if (!iso) return ''
       const d = new Date(iso)
@@ -116,32 +118,40 @@ export default function Invoices() {
     }
     const fmtN = (n: number | undefined) => n != null ? Number(n.toFixed(2)) : ''
 
-    const rows = filtered.map(inv => ({
-      'Internal ID':  inv.cr9b5_internalid,
-      'Type':         (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense',
-      'Category':        categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '',
-      'Property':        (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'All' : propName(inv),
-      'All Properties':  (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'Yes' : 'No',
-      'Contact':      contactName(inv),
-      'Date':         fmtD(inv.cr9b5_date),
-      'Description':  inv.cr9b5_description ?? '',
-      'Booking Ref':  inv.cr9b5_bookingreference ?? '',
-      'Check-in':     fmtD(inv.cr9b5_checkin),
-      'Check-out':    fmtD(inv.cr9b5_checkout),
-      'Nights':       inv.cr9b5_nights ?? '',
-      'Adults':       inv.cr9b5_adults ?? '',
-      'Children':     inv.cr9b5_children ?? '',
-      'Babies':       inv.cr9b5_babies ?? '',
-      'Base Amount':  fmtN(inv.cr9b5_baseamount),
-      'Tax Rate':     inv.cr9b5_taxrate ?? '',
-      'Tax Amount':   fmtN(inv.cr9b5_taxamount),
-      'Total Gross':  fmtN(inv.cr9b5_totalgross),
-    }))
+    const allCols: Record<string, (inv: Cr9b5_pt_invoices) => unknown> = {
+      'Internal ID':    inv => inv.cr9b5_internalid,
+      'Type':           inv => (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense',
+      'Category':       inv => categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '',
+      'Property':       inv => (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'All' : propName(inv),
+      'All Properties': inv => (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'Yes' : 'No',
+      'Contact':        inv => contactName(inv),
+      'Date':           inv => fmtD(inv.cr9b5_date),
+      'Description':    inv => inv.cr9b5_description ?? '',
+      'Booking Ref':    inv => inv.cr9b5_bookingreference ?? '',
+      'Check-in':       inv => fmtD(inv.cr9b5_checkin),
+      'Check-out':      inv => fmtD(inv.cr9b5_checkout),
+      'Nights':         inv => inv.cr9b5_nights ?? '',
+      'Days':           inv => (inv as unknown as Record<string,unknown>)['cr9b5_days'] ?? '',
+      'Adults':         inv => inv.cr9b5_adults ?? '',
+      'Children':       inv => inv.cr9b5_children ?? '',
+      'Babies':         inv => inv.cr9b5_babies ?? '',
+      'Base Amount':    inv => fmtN(inv.cr9b5_baseamount),
+      'Tax Rate':       inv => inv.cr9b5_taxrate ?? '',
+      'Tax Amount':     inv => fmtN(inv.cr9b5_taxamount),
+      'Total Gross':    inv => fmtN(inv.cr9b5_totalgross),
+    }
 
-    const ws = XLSX.utils.json_to_sheet(rows)
-    // Auto-width for each column
-    const colWidths = Object.keys(rows[0] ?? {}).map(k => ({
-      wch: Math.max(k.length, ...rows.map(r => String((r as Record<string,unknown>)[k] ?? '').length)) + 2
+    const rows = filtered.map(inv => {
+      const row: Record<string, unknown> = {}
+      for (const col of orderedColumns) {
+        row[col] = allCols[col]?.(inv) ?? ''
+      }
+      return row
+    })
+
+    const ws = XLSX.utils.json_to_sheet(rows, { header: orderedColumns })
+    const colWidths = orderedColumns.map(k => ({
+      wch: Math.max(k.length, ...rows.map(r => String(r[k] ?? '').length)) + 2
     }))
     ws['!cols'] = colWidths
 
@@ -153,6 +163,7 @@ export default function Invoices() {
     const filename = `invoices_${from}to${to}.xlsx`
     XLSX.writeFile(wb, filename)
     logActivity('Exported', 'Invoice', 'invoices export', filename)
+    setExportOpen(false)
   }
 
   function openEdit(inv: Cr9b5_pt_invoices) {
@@ -188,7 +199,7 @@ export default function Invoices() {
           <h1 className="text-2xl font-semibold text-gray-900">Invoices</h1>
           <div className="flex gap-2">
             <button
-              onClick={exportExcel}
+              onClick={() => setExportOpen(true)}
               disabled={filtered.length === 0}
               className="px-4 py-2 bg-white border border-gray-300 text-gray-700 text-sm font-medium rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
             >
@@ -320,7 +331,7 @@ export default function Invoices() {
                     <td className="px-4 py-3">
                       <span className={[
                         'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
-                        isOut ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700',
+                        isOut ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700',
                       ].join(' ')}>
                         {isOut ? 'Income' : 'Expense'}
                       </span>
@@ -426,6 +437,13 @@ export default function Invoices() {
         <InvoiceImport
           onClose={() => setImportOpen(false)}
           onImported={() => load()}
+        />
+      )}
+      {exportOpen && (
+        <ExportConfigModal
+          rowCount={filtered.length}
+          onExport={exportExcel}
+          onClose={() => setExportOpen(false)}
         />
       )}
     </div>
