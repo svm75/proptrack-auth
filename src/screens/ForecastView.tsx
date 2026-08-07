@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, Fragment } from 'react'
+import { makeStyles, tokens, mergeClasses, Text, Button } from '@fluentui/react-components'
 import { Cr9b5_pt_forecastflowsService } from '../generated/services/Cr9b5_pt_forecastflowsService'
 import { Cr9b5_forecastpropertiesService } from '../generated/services/Cr9b5_forecastpropertiesService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
@@ -7,7 +8,7 @@ import type { Cr9b5_pt_forecastflows } from '../generated/models/Cr9b5_pt_foreca
 import type { Cr9b5_forecastproperties } from '../generated/models/Cr9b5_forecastpropertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
-import { fmtEur } from '../utils/formatters'
+import { formatMoney } from '@/domain/money'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -137,9 +138,55 @@ function applyProRata(a: MonthAmounts, ratio: number): MonthAmounts {
   }
 }
 
+// ── Styles ───────────────────────────────────────────────────────────────────
+
+const useStyles = makeStyles({
+  root: { padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' },
+  filterBar: { display: 'flex', flexWrap: 'wrap', gap: '16px', alignItems: 'flex-start', backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, padding: '12px' },
+  yearNav: { display: 'flex', alignItems: 'center', gap: '4px' },
+  yearBtn: { width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: tokens.borderRadiusMedium, border: `1px solid ${tokens.colorNeutralStroke2}`, color: tokens.colorNeutralForeground2, fontSize: '18px', fontWeight: 700, backgroundColor: tokens.colorNeutralBackground1, cursor: 'pointer' },
+  yearLabel: { width: '64px', textAlign: 'center', fontSize: '14px', fontWeight: 700, userSelect: 'none' },
+  propFilter: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '14px', flexWrap: 'wrap' },
+  chip: { padding: '4px 10px', borderRadius: tokens.borderRadiusMedium, fontSize: '12px', fontWeight: 500, border: `1px solid ${tokens.colorNeutralStroke2}`, cursor: 'pointer', backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground3 },
+  empty: { textAlign: 'center', padding: '64px', color: tokens.colorNeutralForeground4 },
+  tableWrap: { overflowX: 'auto', borderRadius: tokens.borderRadiusLarge, border: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground1 },
+  table: { fontSize: '14px', borderCollapse: 'collapse', width: '100%' },
+  theadRow: { backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  thLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground3, minWidth: '220px', zIndex: 1 },
+  th: { padding: '8px', textAlign: 'center', fontSize: '12px', fontWeight: 500, color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap' },
+  thTotal: { padding: '8px 12px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground2, borderLeft: `1px solid ${tokens.colorNeutralStroke2}`, whiteSpace: 'nowrap' },
+  sectionHeader: { borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  sectionHeaderCell: { position: 'sticky', left: 0, padding: '8px 12px', fontSize: '14px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.03em', zIndex: 1 },
+  incomeBg: { backgroundColor: tokens.colorPaletteGreenBackground1, color: tokens.colorPaletteGreenForeground1 },
+  expenseBg: { backgroundColor: tokens.colorPaletteRedBackground1, color: tokens.colorPaletteRedForeground1 },
+  spacerRow: { backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  spacerCell: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '2px', zIndex: 1 },
+  catRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, cursor: 'pointer' },
+  catLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground1, padding: '6px 12px 6px 24px', fontSize: '14px', fontWeight: 600, color: tokens.colorNeutralForeground1, zIndex: 1, whiteSpace: 'nowrap' },
+  catCaret: { marginRight: '6px', color: tokens.colorNeutralForeground4, fontSize: '12px' },
+  cellNum: { padding: '6px 8px', textAlign: 'right', fontSize: '12px', whiteSpace: 'nowrap' },
+  cellTotal: { padding: '6px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  flowRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke1}`, backgroundColor: tokens.colorNeutralBackground2 },
+  flowLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '4px 12px 4px 48px', fontSize: '12px', color: tokens.colorNeutralForeground3, zIndex: 1, whiteSpace: 'nowrap' },
+  flowCell: { padding: '4px 8px', textAlign: 'right', fontSize: '12px', color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap' },
+  amtRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  amtRowSeparator: { backgroundColor: tokens.colorNeutralBackground2 },
+  amtRowSubtle: { opacity: 0.6 },
+  amtLabel: { position: 'sticky', left: 0, padding: '6px 12px', fontSize: '14px', backgroundColor: tokens.colorNeutralBackground1, zIndex: 1, whiteSpace: 'nowrap' },
+  amtLabelSep: { backgroundColor: tokens.colorNeutralBackground2 },
+  amtLabelBold: { fontWeight: 700, color: tokens.colorNeutralForeground1 },
+  amtLabelReg: { color: tokens.colorNeutralForeground2 },
+  amtCellBold: { fontWeight: 700, color: tokens.colorNeutralForeground1 },
+  amtCellReg: { fontWeight: 600, color: tokens.colorNeutralForeground2 },
+  neg: { color: tokens.colorPaletteRedForeground1 },
+  pos: { color: tokens.colorNeutralForeground1 },
+  neutral: { color: tokens.colorNeutralForeground4 },
+})
+
 // ── Component ────────────────────────────────────────────────────────────────
 
 export default function ForecastView() {
+  const s = useStyles()
   const [flows, setFlows]           = useState<Cr9b5_pt_forecastflows[]>([])
   const [flowProps, setFlowProps]   = useState<Cr9b5_forecastproperties[]>([])
   const [references, setReferences] = useState<Cr9b5_pt_references[]>([])
@@ -167,18 +214,7 @@ export default function ForecastView() {
         Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc', 'cr9b5_value asc'] }),
         Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
       ])
-      const loadedFlows = fRes.data ?? []
-      console.log('[ForecastView] flows loaded:', loadedFlows.length, loadedFlows.map(f => ({
-        id: f.cr9b5_pt_forecastflowid,
-        name: f.cr9b5_name,
-        type: f.cr9b5_type,
-        typeNum: Number(f.cr9b5_type),
-        freq: f.cr9b5_frequency,
-        start: f.cr9b5_startdate,
-        end: f.cr9b5_enddate,
-        gross: (f as any).cr9b5_grossamount,
-      })))
-      setFlows(loadedFlows)
+      setFlows(fRes.data ?? [])
       setFlowProps(fpRes.data ?? [])
       setReferences(rRes.data ?? [])
       setProperties(pRes.data ?? [])
@@ -350,7 +386,7 @@ export default function ForecastView() {
 
   function fmtCell(n: number): string {
     if (n === 0) return '—'
-    return fmtEur(Math.round(n * 100) / 100)
+    return formatMoney(Math.round(n * 100) / 100)
   }
 
   function renderAmountRow(
@@ -367,26 +403,20 @@ export default function ForecastView() {
     } = {},
   ) {
     const { bold, separator, subtle, positive, negative } = opts
-    const rowCls = ['border-b', separator ? 'border-gray-300 bg-gray-50' : 'border-gray-100', subtle ? 'opacity-60' : ''].join(' ')
-    const labelCls = ['sticky left-0 px-3 py-1.5 text-sm z-10 whitespace-nowrap', separator ? 'bg-gray-50' : 'bg-white', bold ? 'font-bold text-gray-900' : 'text-gray-700'].join(' ')
-
     return (
-      <tr className={rowCls}>
-        <td className={labelCls}>{label}</td>
+      <tr key={label} className={mergeClasses(s.amtRow, separator && s.amtRowSeparator, subtle && s.amtRowSubtle)}>
+        <td className={mergeClasses(s.amtLabel, separator && s.amtLabelSep, bold ? s.amtLabelBold : s.amtLabelReg)}>{label}</td>
         {months.map(mk => {
           const v = Math.round(getMonthVal(mk) * 100) / 100
           const neg = negative || (!positive && v < 0)
           const pos = positive || (!negative && v > 0)
           return (
-            <td key={`${mk.year}-${mk.month}`} className={[
-              'px-2 py-1.5 text-right text-xs whitespace-nowrap',
-              neg ? 'text-red-600' : pos ? 'text-gray-800' : 'text-gray-400',
-            ].join(' ')}>
+            <td key={`${mk.year}-${mk.month}`} className={mergeClasses(s.cellNum, neg ? s.neg : pos ? s.pos : s.neutral)}>
               {fmtCell(v)}
             </td>
           )
         })}
-        <td className={['px-3 py-1.5 text-right text-xs whitespace-nowrap border-l border-gray-200', bold ? 'font-bold text-gray-900' : 'font-semibold text-gray-700'].join(' ')}>
+        <td className={mergeClasses(s.cellTotal, bold ? s.amtCellBold : s.amtCellReg)}>
           {fmtCell(Math.round(getYearVal() * 100) / 100)}
         </td>
       </tr>
@@ -403,50 +433,44 @@ export default function ForecastView() {
       if (catFlows.length === 0) return null
 
       return (
-        <>
-          <tr
-            key={catKey}
-            className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
-            onClick={() => toggleExpand(catKey)}
-          >
-            <td className="sticky left-0 bg-white px-3 py-1.5 text-sm font-semibold text-gray-800 pl-6 z-10 whitespace-nowrap">
-              <span className="mr-1.5 text-gray-400 text-xs">{isOpen ? '▾' : '▸'}</span>
+        <Fragment key={catKey}>
+          <tr className={s.catRow} onClick={() => toggleExpand(catKey)}>
+            <td className={s.catLabel}>
+              <span className={s.catCaret}>{isOpen ? '▾' : '▸'}</span>
               {cat.cr9b5_value}
             </td>
             {months.map(mk => (
-              <td key={`${mk.year}-${mk.month}`} className="px-2 py-1.5 text-right text-xs whitespace-nowrap">
+              <td key={`${mk.year}-${mk.month}`} className={s.cellNum}>
                 {fmtCell(Math.round(sumCategory(cat.cr9b5_pt_referenceid, type, mk, field) * 100) / 100)}
               </td>
             ))}
-            <td className="px-3 py-1.5 text-right text-xs font-semibold whitespace-nowrap border-l border-gray-200">
+            <td className={mergeClasses(s.cellTotal, s.amtCellReg)}>
               {fmtCell(Math.round(yearCategoryTotal(cat.cr9b5_pt_referenceid, type, field) * 100) / 100)}
             </td>
           </tr>
 
           {isOpen && catFlows.map(lf => (
-            <tr key={lf.logicalId} className="border-b border-gray-50 bg-gray-50/50">
-              <td className="sticky left-0 bg-gray-50/50 px-3 py-1 text-xs text-gray-600 pl-12 z-10 whitespace-nowrap">
-                {lf.name}
-              </td>
+            <tr key={lf.logicalId} className={s.flowRow}>
+              <td className={s.flowLabel}>{lf.name}</td>
               {months.map(mk => (
-                <td key={`${mk.year}-${mk.month}`} className="px-2 py-1 text-right text-xs text-gray-500 whitespace-nowrap">
+                <td key={`${mk.year}-${mk.month}`} className={s.flowCell}>
                   {fmtCell(Math.round(getAmt(lf.logicalId, mk)[field] * 100) / 100)}
                 </td>
               ))}
-              <td className="px-3 py-1 text-right text-xs text-gray-500 whitespace-nowrap border-l border-gray-200">
+              <td className={mergeClasses(s.flowCell, s.cellTotal)}>
                 {fmtCell(Math.round(yearTotal(lf.logicalId, field) * 100) / 100)}
               </td>
             </tr>
           ))}
-        </>
+        </Fragment>
       )
     })
   }
 
   function renderSectionHeader(label: string, colorCls: string) {
     return (
-      <tr className={`${colorCls} border-b`}>
-        <td className={`sticky left-0 ${colorCls} px-3 py-2 text-sm font-bold uppercase tracking-wide z-10`} colSpan={14}>
+      <tr className={s.sectionHeader}>
+        <td className={mergeClasses(s.sectionHeaderCell, colorCls)} colSpan={14}>
           {label}
         </td>
       </tr>
@@ -455,8 +479,8 @@ export default function ForecastView() {
 
   function renderSpacer() {
     return (
-      <tr className="bg-gray-100 border-b border-gray-200">
-        <td className="sticky left-0 bg-gray-100 py-0.5 z-10" colSpan={14} />
+      <tr className={s.spacerRow}>
+        <td className={s.spacerCell} colSpan={14} />
       </tr>
     )
   }
@@ -464,46 +488,30 @@ export default function ForecastView() {
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
-    <div className="p-6 space-y-4">
-      <h1 className="text-xl font-bold text-gray-900">Forecast View</h1>
+    <div className={s.root}>
+      <Text size={600} weight="semibold">Forecast View</Text>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-4 items-start bg-white border border-gray-200 rounded-xl p-3">
+      <div className={s.filterBar}>
         {/* Year navigator */}
-        <div className="flex items-center gap-1">
-          <button
-            onClick={() => setYear(y => Math.max(minYear, y - 1))}
-            disabled={year <= minYear}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed text-lg font-bold"
-          >
-            ‹
-          </button>
-          <span className="w-16 text-center text-sm font-bold text-gray-900 select-none">{year}</span>
-          <button
-            onClick={() => setYear(y => Math.min(maxYear, y + 1))}
-            disabled={year >= maxYear}
-            className="w-8 h-8 flex items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50 disabled:opacity-30 disabled:cursor-not-allowed text-lg font-bold"
-          >
-            ›
-          </button>
+        <div className={s.yearNav}>
+          <button onClick={() => setYear(y => Math.max(minYear, y - 1))} disabled={year <= minYear} className={s.yearBtn} style={year <= minYear ? { opacity: 0.3, cursor: 'not-allowed' } : undefined}>‹</button>
+          <span className={s.yearLabel}>{year}</span>
+          <button onClick={() => setYear(y => Math.min(maxYear, y + 1))} disabled={year >= maxYear} className={s.yearBtn} style={year >= maxYear ? { opacity: 0.3, cursor: 'not-allowed' } : undefined}>›</button>
         </div>
 
         {/* Property filter */}
-        <div className="flex items-center gap-2 text-sm flex-wrap">
-          <span className="text-gray-600 font-medium shrink-0">Properties:</span>
-          <button
-            onClick={() => setPropFilter([])}
-            className={['px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors', propFilter.length === 0 ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'].join(' ')}
-          >
-            All
-          </button>
+        <div className={s.propFilter}>
+          <Text weight="medium" size={300}>Properties:</Text>
+          <button onClick={() => setPropFilter([])} className={s.chip} style={propFilter.length === 0 ? { border: '1px solid #0F766E', backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}>All</button>
           {properties.map(p => {
             const sel = propFilter.includes(p.cr9b5_pt_propertyid)
             return (
               <button
                 key={p.cr9b5_pt_propertyid}
                 onClick={() => setPropFilter(prev => sel ? prev.filter(id => id !== p.cr9b5_pt_propertyid) : [...prev, p.cr9b5_pt_propertyid])}
-                className={['px-2.5 py-1 rounded-lg text-xs font-medium border transition-colors', sel ? 'border-teal-500 bg-teal-50 text-teal-700' : 'border-gray-200 text-gray-500 hover:bg-gray-50'].join(' ')}
+                className={s.chip}
+                style={sel ? { border: '1px solid #0F766E', backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}
               >
                 {p.cr9b5_name}
               </button>
@@ -514,30 +522,26 @@ export default function ForecastView() {
 
       {/* Table */}
       {loading ? (
-        <div className="text-center py-16 text-gray-400">Loading…</div>
+        <div className={s.empty}>Loading…</div>
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-          <table className="text-sm border-collapse w-full">
+        <div className={s.tableWrap}>
+          <table className={s.table}>
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-500 min-w-[220px] z-10">
-                  <button onClick={toggleExpandAll} className="text-xs text-teal-600 hover:text-teal-800 font-medium">
+              <tr className={s.theadRow}>
+                <th className={s.thLabel}>
+                  <Button appearance="transparent" size="small" onClick={toggleExpandAll} style={{ color: '#0F766E', fontWeight: 500 }}>
                     {allExpanded ? '− Collapse All' : '+ Expand All'}
-                  </button>
+                  </Button>
                 </th>
                 {MONTH_NAMES.map(mn => (
-                  <th key={mn} className="px-2 py-2 text-center text-xs font-medium text-gray-500 whitespace-nowrap">
-                    {mn}
-                  </th>
+                  <th key={mn} className={s.th}>{mn}</th>
                 ))}
-                <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 border-l border-gray-200 whitespace-nowrap">
-                  {year} Total
-                </th>
+                <th className={s.thTotal}>{year} Total</th>
               </tr>
             </thead>
             <tbody>
               {/* INCOME */}
-              {renderSectionHeader('INCOME', 'bg-green-50 text-green-800')}
+              {renderSectionHeader('INCOME', s.incomeBg)}
               {renderCategorySection(TYPE_INCOME, incomeCategories, 'net')}
               {renderAmountRow('TOTAL INCOME', 'net',
                 mk => sumType(TYPE_INCOME, mk, 'net'),
@@ -548,7 +552,7 @@ export default function ForecastView() {
               {renderSpacer()}
 
               {/* EXPENSES */}
-              {renderSectionHeader('EXPENSES', 'bg-red-50 text-red-800')}
+              {renderSectionHeader('EXPENSES', s.expenseBg)}
               {renderCategorySection(TYPE_EXPENSE, expenseCategories, 'net')}
               {renderAmountRow('TOTAL EXPENSES', 'net',
                 mk => sumType(TYPE_EXPENSE, mk, 'net'),
