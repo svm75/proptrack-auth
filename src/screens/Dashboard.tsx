@@ -3,6 +3,7 @@ import {
   BarChart, Bar, LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
+import { makeStyles, tokens, mergeClasses, Text, Button, Select } from '@fluentui/react-components'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
@@ -16,7 +17,7 @@ import CategoryPnL from './CategoryPnL'
 import CategoryTrend from './CategoryTrend'
 import ExpenseBreakdown from './ExpenseBreakdown'
 import IncomevsForecast from './IncomevsForecast'
-import { fmtEur, fmtEurShort } from '../utils/formatters'
+import { formatMoney, formatMoneyShort } from '@/domain/money'
 
 const TYPE_OUTGOING = 233100001
 const TYPE_INCOMING = 233100000
@@ -88,6 +89,93 @@ const PRINT_CSS = `
 }
 `
 
+// ---------- shared styles ----------
+
+const useStyles = makeStyles({
+  page: { padding: '24px', maxWidth: '83rem' },
+  pageCalendar: { display: 'flex', flexDirection: 'column', height: '100%' },
+  headerRow: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', marginBottom: '24px' },
+  headerRowCalendar: { display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: '16px', padding: '24px 24px 0', flexShrink: 0 },
+  tabBar: { display: 'flex', backgroundColor: tokens.colorNeutralBackground3, borderRadius: tokens.borderRadiusMedium, padding: '2px', gap: '2px', flexWrap: 'wrap' },
+  tabBtn: { padding: '6px 12px', borderRadius: tokens.borderRadiusSmall, fontSize: '13px', fontWeight: 500, border: 'none', cursor: 'pointer', backgroundColor: 'transparent', color: tokens.colorNeutralForeground3 },
+  tabBtnActive: { backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorBrandForeground1, boxShadow: tokens.shadow2 },
+  exportBtn: { flexShrink: 0 },
+  loading: { marginTop: '32px', color: tokens.colorNeutralForeground4 },
+  loadingCalendar: { padding: '24px', color: tokens.colorNeutralForeground4 },
+  content: { marginTop: '24px' },
+  contentCalendar: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', marginTop: '16px' },
+
+  stack: { display: 'flex', flexDirection: 'column', gap: '32px' },
+  stack6: { display: 'flex', flexDirection: 'column', gap: '24px' },
+  filterRow: { display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap', marginBottom: '24px' },
+
+  kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' },
+  kpiGrid4: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' },
+  kpiCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '20px', display: 'flex', flexDirection: 'column', gap: '4px', position: 'relative', overflow: 'hidden' },
+  kpiBar: { position: 'absolute', top: 0, left: 0, right: 0, height: '4px' },
+  kpiLabel: { fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: tokens.colorNeutralForeground4 },
+  kpiValue: { fontSize: '24px', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  kpiSub: { fontSize: '11px', color: tokens.colorNeutralForeground4, fontVariantNumeric: 'tabular-nums' },
+  kpiSubLabel: { fontWeight: 500, color: tokens.colorNeutralForeground3 },
+
+  sectionHeading: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' },
+  sectionHeadingText: { fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: tokens.colorNeutralForeground4 },
+  sectionHeadingLine: { flex: 1, height: '1px', backgroundColor: tokens.colorNeutralStroke2 },
+
+  chartCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '20px' },
+  muted: { fontSize: '14px', color: tokens.colorNeutralForeground4 },
+  tooltipBox: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16, padding: '8px 12px', fontSize: '13px' },
+  tooltipTitle: { fontWeight: 600, color: tokens.colorNeutralForeground2, marginBottom: '4px' },
+
+  compGrid1: { display: 'grid', gridTemplateColumns: '1fr', gap: '20px', maxWidth: '384px' },
+  compGrid2: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '20px' },
+  compCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, overflow: 'hidden', boxShadow: tokens.shadow2 },
+  compCardBar: { height: '6px' },
+  compCardBody: { padding: '20px' },
+  compHeader: { display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' },
+  compDot: { width: '12px', height: '12px', borderRadius: tokens.borderRadiusCircular, flexShrink: 0 },
+  compTitle: { fontWeight: 600, color: tokens.colorNeutralForeground1, fontSize: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  compSub: { fontSize: '12px', color: tokens.colorNeutralForeground4, flexShrink: 0 },
+  statGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px', fontSize: '13px' },
+  statRow: { backgroundColor: tokens.colorNeutralBackground2, borderRadius: tokens.borderRadiusMedium, padding: '8px 12px' },
+  statLabel: { fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: tokens.colorNeutralForeground4, marginBottom: '2px' },
+  statValue: { fontWeight: 700, fontVariantNumeric: 'tabular-nums', fontSize: '13px', color: tokens.colorNeutralForeground1 },
+  statSub: { fontSize: '10px', color: tokens.colorNeutralForeground4, fontVariantNumeric: 'tabular-nums' },
+
+  heatmapWrap: { position: 'relative' },
+  heatTooltip: { position: 'fixed', zIndex: 9999, backgroundColor: '#111827', color: '#fff', fontSize: '12px', borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16, padding: '6px 10px', pointerEvents: 'none' },
+  heatTooltipTitle: { fontWeight: 600, marginBottom: '2px' },
+  heatTooltipLine: { color: '#d1d5db' },
+  heatYearRow: { display: 'flex', alignItems: 'center', gap: '16px', marginBottom: '8px' },
+  heatYearLabel: { fontSize: '14px', fontWeight: 600, color: tokens.colorNeutralForeground2, width: '40px', flexShrink: 0 },
+  heatYearSub: { fontSize: '12px', color: tokens.colorNeutralForeground4, fontVariantNumeric: 'tabular-nums' },
+  heatGrid: { display: 'grid', gridTemplateColumns: 'repeat(12, auto)', gap: '6px' },
+  heatMonthCol: { display: 'flex', flexDirection: 'column', gap: '1px' },
+  heatMonthLabel: { fontSize: '9px', fontWeight: 600, color: tokens.colorNeutralForeground4, textAlign: 'center', marginBottom: '2px' },
+  heatCell: { width: '12px', height: '12px', borderRadius: '2px' },
+  legendRow: { display: 'flex', flexWrap: 'wrap', gap: '16px', marginBottom: '8px' },
+  legendItem: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: tokens.colorNeutralForeground3 },
+  legendSwatch: { width: '12px', height: '12px', borderRadius: '2px', flexShrink: 0 },
+  heatFooter: { display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', borderTop: `1px solid ${tokens.colorNeutralStroke2}`, fontSize: '10px', color: tokens.colorNeutralForeground4 },
+
+  tableCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, overflow: 'hidden' },
+  table: { width: '100%', fontSize: '14px', borderCollapse: 'collapse' },
+  th: { textAlign: 'left', padding: '10px 16px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground4, textTransform: 'uppercase', letterSpacing: '0.04em', backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  thRight: { textAlign: 'right' },
+  td: { padding: '10px 16px', borderBottom: `1px solid ${tokens.colorNeutralStroke1}`, color: tokens.colorNeutralForeground2 },
+  tdLabel: { fontWeight: 500, color: tokens.colorNeutralForeground2 },
+  tdRight: { textAlign: 'right', fontVariantNumeric: 'tabular-nums', color: tokens.colorNeutralForeground3 },
+  tdTotal: { textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: tokens.colorNeutralForeground1 },
+  trTotal: { backgroundColor: tokens.colorNeutralBackground2, fontWeight: 600 },
+
+  sbCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '16px', position: 'relative' },
+  sbLegendCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '20px', minWidth: '220px' },
+  sbLegendTitle: { fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: tokens.colorNeutralForeground4, marginBottom: '12px' },
+  sbLegendRow: { display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', marginBottom: '8px' },
+  sbLegendName: { color: tokens.colorNeutralForeground2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 },
+  sbLegendVal: { fontVariantNumeric: 'tabular-nums', color: tokens.colorNeutralForeground4, fontSize: '12px' },
+})
+
 // ---------- shared small components ----------
 
 interface KpiCardProps {
@@ -96,58 +184,66 @@ interface KpiCardProps {
 }
 
 function KpiCard({ label, value, sub, subLabel, accent = 'blue' }: KpiCardProps) {
-  const bar: Record<string, string> = { green:'bg-green-500', red:'bg-red-400', blue:'bg-indigo-500', purple:'bg-purple-500', gray:'bg-gray-400' }
-  const val: Record<string, string> = { green:'text-green-700', red:'text-red-600', blue:'text-indigo-700', purple:'text-purple-700', gray:'text-gray-600' }
+  const s = useStyles()
+  const bar: Record<string, string> = {
+    green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1,
+    blue: tokens.colorBrandForeground1, purple: tokens.colorPalettePurpleForeground2, gray: tokens.colorNeutralForeground4,
+  }
+  const val: Record<string, string> = {
+    green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1,
+    blue: tokens.colorBrandForeground1, purple: tokens.colorPalettePurpleForeground2, gray: tokens.colorNeutralForeground3,
+  }
   return (
-    <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-1 relative overflow-hidden">
-      <div className={['absolute top-0 left-0 right-0 h-1', bar[accent]].join(' ')} />
-      <span className="text-xs font-semibold uppercase tracking-wide text-gray-400">{label}</span>
-      <span className={['text-2xl font-bold tabular-nums', val[accent]].join(' ')}>{value}</span>
-      {sub && <span className="text-xs text-gray-400 tabular-nums">{subLabel && <span className="font-medium text-gray-500">{subLabel} </span>}{sub}</span>}
+    <div className={s.kpiCard}>
+      <div className={s.kpiBar} style={{ backgroundColor: bar[accent] }} />
+      <span className={s.kpiLabel}>{label}</span>
+      <span className={s.kpiValue} style={{ color: val[accent] }}>{value}</span>
+      {sub && <span className={s.kpiSub}>{subLabel && <span className={s.kpiSubLabel}>{subLabel} </span>}{sub}</span>}
     </div>
   )
 }
 
 function SectionHeading({ children }: { children: string }) {
+  const s = useStyles()
   return (
-    <div className="flex items-center gap-3 mb-3">
-      <span className="text-xs font-semibold uppercase tracking-widest text-gray-400">{children}</span>
-      <div className="flex-1 h-px bg-gray-200" />
+    <div className={s.sectionHeading}>
+      <span className={s.sectionHeadingText}>{children}</span>
+      <div className={s.sectionHeadingLine} />
     </div>
   )
 }
 
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: {name:string;value:number;color:string}[]; label?: string }) {
+  const s = useStyles()
   if (!active || !payload?.length) return null
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-sm">
-      <p className="font-semibold text-gray-700 mb-1">{label}</p>
-      {payload.map(p => <p key={p.name} style={{color:p.color}} className="tabular-nums">{p.name}: {fmtEur(p.value)}</p>)}
+    <div className={s.tooltipBox}>
+      <p className={s.tooltipTitle}>{label}</p>
+      {payload.map(p => <p key={p.name} style={{ color: p.color, fontVariantNumeric: 'tabular-nums' }}>{p.name}: {formatMoney(p.value)}</p>)}
     </div>
   )
 }
 
 function FilterRow({ children }: { children: React.ReactNode }) {
-  return <div className="flex gap-2 items-center flex-wrap mb-6">{children}</div>
+  const s = useStyles()
+  return <div className={s.filterRow}>{children}</div>
 }
 
 function YearSelect({ value, years, onChange, allowAll = true }: { value: number|'all'; years: number[]; onChange:(v:number|'all')=>void; allowAll?: boolean }) {
   return (
-    <select value={value} onChange={e => onChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+    <Select value={String(value)} onChange={e => onChange(e.target.value === 'all' ? 'all' : Number(e.target.value))}>
       {allowAll && <option value="all">All years</option>}
       {years.map(y => <option key={y} value={y}>{y}</option>)}
-    </select>
+    </Select>
   )
 }
 
 function PropSelect({ value, properties, onChange }: { value: string; properties: Cr9b5_pt_properties[]; onChange:(v:string)=>void }) {
   return (
-    <select value={value} onChange={e => onChange(e.target.value)}
-      className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+    <Select value={value} onChange={e => onChange(e.target.value)}>
       <option value="">All properties</option>
       {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
-    </select>
+    </Select>
   )
 }
 
@@ -156,6 +252,7 @@ function PropSelect({ value, properties, onChange }: { value: string; properties
 // ============================================================
 
 function DashboardOverview({ invoices, properties }: SharedProps) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear,   setFilterYear]   = useState<number|'all'>(currentYear)
   const [filterPropId, setFilterPropId] = useState('')
@@ -216,38 +313,38 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
   }, [propFiltered])
 
   return (
-    <div className="space-y-8">
+    <div className={s.stack}>
       <FilterRow>
         <YearSelect value={filterYear} years={years} onChange={setFilterYear} />
         <PropSelect value={filterPropId} properties={properties} onChange={setFilterPropId} />
       </FilterRow>
       <div>
         <SectionHeading>Gross — incl. VAT</SectionHeading>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <KpiCard label="Income"     value={fmtEur(incomeGross)}   sub={`${income.length} invoice${income.length!==1?'s':''}`} accent="green" />
-          <KpiCard label="Expenses"   value={fmtEur(expensesGross)} sub={`${expenses.length} invoice${expenses.length!==1?'s':''}`} accent="red" />
-          <KpiCard label="Net Profit" value={fmtEur(netProfitGross)} accent={netProfitGross>=0?'blue':'red'} />
+        <div className={s.kpiGrid4} style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+          <KpiCard label="Income"     value={formatMoney(incomeGross)}   sub={`${income.length} invoice${income.length!==1?'s':''}`} accent="green" />
+          <KpiCard label="Expenses"   value={formatMoney(expensesGross)} sub={`${expenses.length} invoice${expenses.length!==1?'s':''}`} accent="red" />
+          <KpiCard label="Net Profit" value={formatMoney(netProfitGross)} accent={netProfitGross>=0?'blue':'red'} />
           <KpiCard label="Occupancy"  value={occupancyPct!==null?fmtPct(occupancyPct):'—'}
             sub={occupancyPct!==null?`${totalNights} / ${availableNights} nights`:filterYear==='all'?'Select a year':'No properties'} accent="purple" />
         </div>
       </div>
       <div>
         <SectionHeading>Net — excl. VAT</SectionHeading>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <KpiCard label="Income Net"   value={fmtEur(incomeNet)}   sub={fmtEur(income.reduce((s,i)=>s+(i.cr9b5_taxamount??0),0))}   subLabel="VAT:" accent="green" />
-          <KpiCard label="Expenses Net" value={fmtEur(expensesNet)} sub={fmtEur(expenses.reduce((s,i)=>s+(i.cr9b5_taxamount??0),0))} subLabel="VAT:" accent="red" />
-          <KpiCard label="Net Profit"   value={fmtEur(netProfitNet)} sub={fmtEur(vatComponent)} subLabel="VAT total:" accent={netProfitNet>=0?'blue':'red'} />
+        <div className={s.kpiGrid} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
+          <KpiCard label="Income Net"   value={formatMoney(incomeNet)}   sub={formatMoney(income.reduce((s,i)=>s+(i.cr9b5_taxamount??0),0))}   subLabel="VAT:" accent="green" />
+          <KpiCard label="Expenses Net" value={formatMoney(expensesNet)} sub={formatMoney(expenses.reduce((s,i)=>s+(i.cr9b5_taxamount??0),0))} subLabel="VAT:" accent="red" />
+          <KpiCard label="Net Profit"   value={formatMoney(netProfitNet)} sub={formatMoney(vatComponent)} subLabel="VAT total:" accent={netProfitNet>=0?'blue':'red'} />
         </div>
       </div>
       <div>
         <SectionHeading>{filterYear!=='all'?`Monthly Breakdown — ${filterYear}`:'Monthly Breakdown — select a year'}</SectionHeading>
-        {filterYear==='all' ? <p className="text-sm text-gray-400">Select a year to see the monthly breakdown.</p> : (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
+        {filterYear==='all' ? <p className={s.muted}>Select a year to see the monthly breakdown.</p> : (
+          <div className={s.chartCard}>
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={monthlyData} margin={{top:4,right:8,left:8,bottom:0}} barGap={3}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                 <XAxis dataKey="month" tick={{fontSize:12,fill:'#9ca3af'}} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmtEurShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={52} />
+                <YAxis tickFormatter={formatMoneyShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={52} />
                 <Tooltip content={<ChartTooltip />} />
                 <Legend wrapperStyle={{fontSize:12,paddingTop:12}} />
                 <Bar dataKey="income"   name="Income"   fill={COLOR_INCOME}  radius={[4,4,0,0]} maxBarSize={36} />
@@ -259,13 +356,13 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
       </div>
       <div>
         <SectionHeading>Year-on-Year</SectionHeading>
-        {yearlyData.length<1 ? <p className="text-sm text-gray-400">No data.</p> : (
-          <div className="bg-white border border-gray-200 rounded-xl p-5">
+        {yearlyData.length<1 ? <p className={s.muted}>No data.</p> : (
+          <div className={s.chartCard}>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={yearlyData} margin={{top:4,right:8,left:8,bottom:0}}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                 <XAxis dataKey="year" tick={{fontSize:12,fill:'#9ca3af'}} axisLine={false} tickLine={false} />
-                <YAxis tickFormatter={fmtEurShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={52} />
+                <YAxis tickFormatter={formatMoneyShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={52} />
                 <Tooltip content={<ChartTooltip />} />
                 <Legend wrapperStyle={{fontSize:12,paddingTop:12}} />
                 <Line dataKey="income"   name="Income"     stroke={COLOR_INCOME}  strokeWidth={2} dot={{r:4}} />
@@ -285,17 +382,22 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
 // ============================================================
 
 function StatRow({ label, value, sub, accent }: { label:string; value:string; sub?:string; accent?:'green'|'red'|'blue'|'purple' }) {
-  const colors: Record<string,string> = { green:'text-green-700', red:'text-red-600', blue:'text-indigo-700', purple:'text-purple-700' }
+  const s = useStyles()
+  const colors: Record<string,string> = {
+    green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1,
+    blue: tokens.colorBrandForeground1, purple: tokens.colorPalettePurpleForeground2,
+  }
   return (
-    <div className="bg-gray-50 rounded-lg px-3 py-2">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400 mb-0.5">{label}</div>
-      <div className={['font-bold tabular-nums text-sm', accent?colors[accent]:'text-gray-800'].join(' ')}>{value}</div>
-      {sub && <div className="text-[10px] text-gray-400 tabular-nums">{sub}</div>}
+    <div className={s.statRow}>
+      <div className={s.statLabel}>{label}</div>
+      <div className={s.statValue} style={{ color: accent ? colors[accent] : undefined }}>{value}</div>
+      {sub && <div className={s.statSub}>{sub}</div>}
     </div>
   )
 }
 
 function DashboardComparison({ invoices, properties }: SharedProps) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear, setFilterYear] = useState<number|'all'>(currentYear)
   const years = useMemo(() => {
@@ -330,27 +432,27 @@ function DashboardComparison({ invoices, properties }: SharedProps) {
   }), [invoices, properties, filterYear])
 
   return (
-    <div className="space-y-6">
+    <div className={s.stack6}>
       <FilterRow><YearSelect value={filterYear} years={years} onChange={setFilterYear} /></FilterRow>
-      {properties.length===0 && <p className="text-sm text-gray-400">No properties found.</p>}
-      <div className={`grid gap-5 ${properties.length>1?'grid-cols-1 md:grid-cols-2':'grid-cols-1 max-w-sm'}`}>
-        {propStats.map(s => (
-          <div key={s.prop.cr9b5_pt_propertyid} className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-            <div className="h-1.5" style={{backgroundColor:s.color}} />
-            <div className="p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="w-3 h-3 rounded-full shrink-0" style={{backgroundColor:s.color}} />
-                <h3 className="font-semibold text-gray-900 text-base truncate">{s.prop.cr9b5_name}</h3>
-                {s.prop.cr9b5_shortid && <span className="text-xs text-gray-400 shrink-0">({s.prop.cr9b5_shortid})</span>}
+      {properties.length===0 && <p className={s.muted}>No properties found.</p>}
+      <div className={properties.length>1 ? s.compGrid2 : s.compGrid1}>
+        {propStats.map(p => (
+          <div key={p.prop.cr9b5_pt_propertyid} className={s.compCard}>
+            <div className={s.compCardBar} style={{backgroundColor:p.color}} />
+            <div className={s.compCardBody}>
+              <div className={s.compHeader}>
+                <span className={s.compDot} style={{backgroundColor:p.color}} />
+                <h3 className={s.compTitle}>{p.prop.cr9b5_name}</h3>
+                {p.prop.cr9b5_shortid && <span className={s.compSub}>({p.prop.cr9b5_shortid})</span>}
               </div>
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <StatRow label="Income (gross)"   value={fmtEur(s.income)}   accent="green" />
-                <StatRow label="Expenses (gross)" value={fmtEur(s.expenses)} accent="red" />
-                <StatRow label="Net Profit"       value={fmtEur(s.profit)}   accent={s.profit>=0?'blue':'red'} />
-                <StatRow label="Occupancy"        value={fmtPct(s.occupancyPct)} sub={`${s.nights} nights`} accent="purple" />
-                <StatRow label="Avg Nightly Rate" value={s.nights>0?fmtEur(s.avgNightlyRate):'—'} />
-                <StatRow label="Avg Stay Length"  value={s.stayCount>0?`${s.avgStayLength.toFixed(1)} nights`:'—'} sub={`${s.stayCount} stays`} />
-                <div className="col-span-2"><StatRow label="Busiest Month" value={s.busiestMonth} /></div>
+              <div className={s.statGrid}>
+                <StatRow label="Income (gross)"   value={formatMoney(p.income)}   accent="green" />
+                <StatRow label="Expenses (gross)" value={formatMoney(p.expenses)} accent="red" />
+                <StatRow label="Net Profit"       value={formatMoney(p.profit)}   accent={p.profit>=0?'blue':'red'} />
+                <StatRow label="Occupancy"        value={fmtPct(p.occupancyPct)} sub={`${p.nights} nights`} accent="purple" />
+                <StatRow label="Avg Nightly Rate" value={p.nights>0?formatMoney(p.avgNightlyRate):'—'} />
+                <StatRow label="Avg Stay Length"  value={p.stayCount>0?`${p.avgStayLength.toFixed(1)} nights`:'—'} sub={`${p.stayCount} stays`} />
+                <div style={{ gridColumn: 'span 2' }}><StatRow label="Busiest Month" value={p.busiestMonth} /></div>
               </div>
             </div>
           </div>
@@ -378,6 +480,7 @@ function YearHeatmap({ year, occupiedMap, colorMap }: {
   occupiedMap: Record<string, {propId:string;propName:string;contactName:string}[]>
   colorMap: Record<string, string>
 }) {
+  const s = useStyles()
   const [tooltip, setTooltip] = useState<HeatTooltip|null>(null)
   const totalOccupied = useMemo(() => {
     return Object.keys(occupiedMap).filter(k => k.startsWith(`${year}-`)).length
@@ -398,8 +501,8 @@ function YearHeatmap({ year, occupiedMap, colorMap }: {
     const lines = [`${day} ${MONTH_FULL[month]} ${year}`]
     const seen = new Set<string>()
     entries.forEach(e => {
-      const s = e.contactName ? `${e.propName} — ${e.contactName}` : e.propName
-      if (!seen.has(s)) { seen.add(s); lines.push(s) }
+      const str = e.contactName ? `${e.propName} — ${e.contactName}` : e.propName
+      if (!seen.has(str)) { seen.add(str); lines.push(str) }
     })
     return lines
   }
@@ -407,33 +510,32 @@ function YearHeatmap({ year, occupiedMap, colorMap }: {
   const MONTH_1 = ['J','F','M','A','M','J','J','A','S','O','N','D']
 
   return (
-    <div className="relative">
+    <div className={s.heatmapWrap}>
       {tooltip && (
-        <div style={{position:'fixed',left:tooltip.x+14,top:tooltip.y-8,zIndex:9999}}
-          className="bg-gray-900 text-white text-xs rounded-lg px-2.5 py-1.5 shadow-xl pointer-events-none">
-          {tooltip.lines.map((l,i) => <div key={i} className={i===0?'font-semibold mb-0.5':'text-gray-300'}>{l}</div>)}
+        <div style={{position:'fixed',left:tooltip.x+14,top:tooltip.y-8,zIndex:9999}} className={s.heatTooltip}>
+          {tooltip.lines.map((l,i) => <div key={i} className={i===0?s.heatTooltipTitle:s.heatTooltipLine}>{l}</div>)}
         </div>
       )}
 
-      <div className="flex items-center gap-4 mb-2">
-        <span className="text-sm font-semibold text-gray-700 w-10 shrink-0">{year}</span>
-        <span className="text-xs text-gray-400 tabular-nums">{totalOccupied} / {daysInYear(year)} days occupied</span>
+      <div className={s.heatYearRow}>
+        <span className={s.heatYearLabel}>{year}</span>
+        <span className={s.heatYearSub}>{totalOccupied} / {daysInYear(year)} days occupied</span>
       </div>
 
-      {/* 12-month grid with compact cells */}
-      <div style={{display:'grid',gridTemplateColumns:'repeat(12, auto)',gap:'6px'}}>
+      <div className={s.heatGrid}>
         {Array.from({length:12}, (_,month) => {
           const dim = daysInMonth(year, month)
           return (
-            <div key={month} className="flex flex-col" style={{gap:'1px'}}>
-              <div className="text-[9px] font-semibold text-gray-400 text-center mb-[2px]">{MONTH_1[month]}</div>
+            <div key={month} className={s.heatMonthCol}>
+              <div className={s.heatMonthLabel}>{MONTH_1[month]}</div>
               {Array.from({length:31}, (_,di) => {
                 const day = di+1
                 if (day>dim) return <div key={day} style={{width:12,height:12}} />
                 const tipLines = getCellTip(month, day)
                 return (
                   <div key={day}
-                    style={{width:12,height:12,borderRadius:2,backgroundColor:getCellColor(month,day),cursor:tipLines?'default':'default'}}
+                    className={s.heatCell}
+                    style={{backgroundColor:getCellColor(month,day)}}
                     onMouseEnter={e => { if(tipLines) setTooltip({x:e.clientX,y:e.clientY,lines:tipLines}) }}
                     onMouseMove={e => { if(tipLines) setTooltip(t => t?{...t,x:e.clientX,y:e.clientY}:null) }}
                     onMouseLeave={() => setTooltip(null)}
@@ -449,6 +551,7 @@ function YearHeatmap({ year, occupiedMap, colorMap }: {
 }
 
 function DashboardHeatmap({ invoices, properties }: SharedProps) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear,   setFilterYear]   = useState<number|'all'>('all')
   const [filterPropId, setFilterPropId] = useState('')
@@ -495,34 +598,34 @@ function DashboardHeatmap({ invoices, properties }: SharedProps) {
   }, [invoices, properties, filterPropId])
 
   return (
-    <div className="space-y-6">
+    <div className={s.stack6}>
       <FilterRow>
         <YearSelect value={filterYear} years={years} onChange={setFilterYear} />
         <PropSelect value={filterPropId} properties={properties} onChange={setFilterPropId} />
       </FilterRow>
 
       {!filterPropId && properties.length>1 && (
-        <div className="flex flex-wrap gap-4 mb-2">
+        <div className={s.legendRow}>
           {properties.map((p,i) => (
-            <div key={p.cr9b5_pt_propertyid} className="flex items-center gap-1.5 text-xs text-gray-600">
-              <span className="w-3 h-3 rounded-sm shrink-0" style={{backgroundColor:PROPERTY_COLORS[i%PROPERTY_COLORS.length]}} />
+            <div key={p.cr9b5_pt_propertyid} className={s.legendItem}>
+              <span className={s.legendSwatch} style={{backgroundColor:PROPERTY_COLORS[i%PROPERTY_COLORS.length]}} />
               {p.cr9b5_name}
             </div>
           ))}
         </div>
       )}
 
-      <div className="bg-white border border-gray-200 rounded-xl p-5 space-y-6">
+      <div className={s.chartCard} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
         {visibleYears.map(year => (
           <YearHeatmap key={year} year={year} occupiedMap={occupiedMap} colorMap={colorMap} />
         ))}
-        {visibleYears.length===0 && <p className="text-sm text-gray-400">No data.</p>}
-        <div className="flex items-center gap-2 pt-2 border-t border-gray-100 text-[10px] text-gray-400">
+        {visibleYears.length===0 && <p className={s.muted}>No data.</p>}
+        <div className={s.heatFooter}>
           <span>Empty</span>
-          <div className="w-3 h-3 rounded-[2px]" style={{backgroundColor:'#e5e7eb'}} />
-          <span className="mx-2">→ Occupied</span>
+          <div style={{width:12,height:12,borderRadius:2,backgroundColor:'#e5e7eb'}} />
+          <span style={{marginLeft:8}}>→ Occupied</span>
           {!filterPropId && properties.map((p,i) => (
-            <div key={p.cr9b5_pt_propertyid} className="w-3 h-3 rounded-[2px] ml-1" style={{backgroundColor:PROPERTY_COLORS[i%PROPERTY_COLORS.length]}} />
+            <div key={p.cr9b5_pt_propertyid} style={{width:12,height:12,borderRadius:2,backgroundColor:PROPERTY_COLORS[i%PROPERTY_COLORS.length],marginLeft:4}} />
           ))}
         </div>
       </div>
@@ -535,6 +638,7 @@ function DashboardHeatmap({ invoices, properties }: SharedProps) {
 // ============================================================
 
 function DashboardCashFlow({ invoices, properties }: SharedProps) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear,   setFilterYear]   = useState<number|'all'>(currentYear)
   const [filterPropId, setFilterPropId] = useState('')
@@ -573,27 +677,27 @@ function DashboardCashFlow({ invoices, properties }: SharedProps) {
   const highExpense = monthlyData.length ? Math.max(...monthlyData.map(m=>m.expenses)) : 0
 
   return (
-    <div className="space-y-6">
+    <div className={s.stack6}>
       <FilterRow>
         <YearSelect value={filterYear} years={years} onChange={setFilterYear} />
         <PropSelect value={filterPropId} properties={properties} onChange={setFilterPropId} />
       </FilterRow>
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className={s.kpiGrid4} style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
         <KpiCard label="Opening Balance"        value="€ 0"              sub="Start of period" accent="gray" />
-        <KpiCard label="Closing Balance"         value={fmtEur(closing)} accent={closing>=0?'blue':'red'} />
-        <KpiCard label="Highest Month — Income"  value={fmtEur(highIncome)}  accent="green" />
-        <KpiCard label="Highest Month — Expense" value={fmtEur(highExpense)} accent="red" />
+        <KpiCard label="Closing Balance"         value={formatMoney(closing)} accent={closing>=0?'blue':'red'} />
+        <KpiCard label="Highest Month — Income"  value={formatMoney(highIncome)}  accent="green" />
+        <KpiCard label="Highest Month — Expense" value={formatMoney(highExpense)} accent="red" />
       </div>
-      {filterYear==='all' ? <p className="text-sm text-gray-400">Select a year to see the cash flow timeline.</p> : (
+      {filterYear==='all' ? <p className={s.muted}>Select a year to see the cash flow timeline.</p> : (
         <>
           <div>
             <SectionHeading>{`Cumulative Net Cash Flow — ${filterYear}`}</SectionHeading>
-            <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className={s.chartCard}>
               <ResponsiveContainer width="100%" height={220}>
                 <LineChart data={monthlyData} margin={{top:4,right:8,left:8,bottom:0}}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                   <XAxis dataKey="month" tick={{fontSize:12,fill:'#9ca3af'}} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={fmtEurShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={56} />
+                  <YAxis tickFormatter={formatMoneyShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={56} />
                   <Tooltip content={<ChartTooltip />} />
                   <ReferenceLine y={0} stroke="#e5e7eb" strokeDasharray="3 3" />
                   <Line dataKey="cumulative" name="Cumulative Net" stroke={COLOR_PROFIT} strokeWidth={2.5} dot={{r:4}} activeDot={{r:6}} />
@@ -603,12 +707,12 @@ function DashboardCashFlow({ invoices, properties }: SharedProps) {
           </div>
           <div>
             <SectionHeading>{`Monthly Income vs Expenses — ${filterYear}`}</SectionHeading>
-            <div className="bg-white border border-gray-200 rounded-xl p-5">
+            <div className={s.chartCard}>
               <ResponsiveContainer width="100%" height={220}>
                 <BarChart data={monthlyData} margin={{top:4,right:8,left:8,bottom:0}} barGap={3}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                   <XAxis dataKey="month" tick={{fontSize:12,fill:'#9ca3af'}} axisLine={false} tickLine={false} />
-                  <YAxis tickFormatter={fmtEurShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={56} />
+                  <YAxis tickFormatter={formatMoneyShort} tick={{fontSize:11,fill:'#9ca3af'}} axisLine={false} tickLine={false} width={56} />
                   <Tooltip content={<ChartTooltip />} />
                   <Legend wrapperStyle={{fontSize:12,paddingTop:12}} />
                   <Bar dataKey="income"   name="Income"   fill={COLOR_INCOME}  radius={[4,4,0,0]} maxBarSize={36} />
@@ -632,38 +736,38 @@ function TaxTable({ title, rows, totalRow }: {
   rows: { label:string; q1:number; q2:number; q3:number; q4:number; total:number }[]
   totalRow?: { label:string; q1:number; q2:number; q3:number; q4:number; total:number }
 }) {
+  const s = useStyles()
   const cols = ['Q1','Q2','Q3','Q4','Annual']
-  const fmt = (n: number) => fmtEur(n)
   return (
     <div>
       <SectionHeading>{title}</SectionHeading>
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
+      <div className={s.tableCard}>
+        <table className={s.table}>
           <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Period / Name</th>
-              {cols.map(c => <th key={c} className="text-right px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">{c}</th>)}
+            <tr>
+              <th className={s.th}>Period / Name</th>
+              {cols.map(c => <th key={c} className={mergeClasses(s.th, s.thRight)}>{c}</th>)}
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
-                <td className="px-4 py-2.5 font-medium text-gray-700">{r.label}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmt(r.q1)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmt(r.q2)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmt(r.q3)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-gray-600">{fmt(r.q4)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums font-semibold text-gray-800">{fmt(r.total)}</td>
+              <tr key={i}>
+                <td className={mergeClasses(s.td, s.tdLabel)}>{r.label}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(r.q1)}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(r.q2)}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(r.q3)}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(r.q4)}</td>
+                <td className={mergeClasses(s.td, s.tdTotal)}>{formatMoney(r.total)}</td>
               </tr>
             ))}
             {totalRow && (
-              <tr className="bg-gray-50 font-semibold border-t-2 border-gray-300">
-                <td className="px-4 py-2.5 text-gray-800">{totalRow.label}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(totalRow.q1)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(totalRow.q2)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(totalRow.q3)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums">{fmt(totalRow.q4)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-indigo-700">{fmt(totalRow.total)}</td>
+              <tr className={s.trTotal}>
+                <td className={s.td}>{totalRow.label}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(totalRow.q1)}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(totalRow.q2)}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(totalRow.q3)}</td>
+                <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(totalRow.q4)}</td>
+                <td className={mergeClasses(s.td, s.tdTotal)} style={{ color: tokens.colorBrandForeground1 }}>{formatMoney(totalRow.total)}</td>
               </tr>
             )}
           </tbody>
@@ -674,6 +778,7 @@ function TaxTable({ title, rows, totalRow }: {
 }
 
 function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; contacts: Cr9b5_pt_contacts[] }) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear, setFilterYear] = useState(currentYear)
 
@@ -693,7 +798,6 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
     invoices.filter(inv => isActive(inv) && inv.cr9b5_year === filterYear)
   , [invoices, filterYear])
 
-  // Helper: group invoices by contact name, get quarterly net
   function buildContactTable(type: number, threshold: number) {
     const grouped: Record<string, {q1:number;q2:number;q3:number;q4:number}> = {}
     yearInvoices.filter(i => (i.cr9b5_type as unknown as number)===type).forEach(inv => {
@@ -713,7 +817,7 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
   const clientRows   = useMemo(() => buildContactTable(TYPE_OUTGOING, 3000), [yearInvoices, contactById])
 
   return (
-    <div className="space-y-8">
+    <div className={s.stack}>
       <FilterRow>
         <YearSelect value={filterYear} years={years} onChange={v => setFilterYear(v as number)} allowAll={false} />
       </FilterRow>
@@ -721,14 +825,14 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
       {/* VAT table — custom column headers */}
       <div>
         <SectionHeading>VAT per Quarter</SectionHeading>
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
+        <div className={s.tableCard}>
+          <table className={s.table}>
             <thead>
-              <tr className="bg-gray-50 border-b border-gray-200">
-                <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Quarter</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-green-600 uppercase tracking-wide">VAT Collected</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-red-500 uppercase tracking-wide">VAT Paid</th>
-                <th className="text-right px-4 py-2.5 text-xs font-semibold text-indigo-600 uppercase tracking-wide">Net VAT</th>
+              <tr>
+                <th className={s.th}>Quarter</th>
+                <th className={mergeClasses(s.th, s.thRight)} style={{ color: tokens.colorPaletteGreenForeground1 }}>VAT Collected</th>
+                <th className={mergeClasses(s.th, s.thRight)} style={{ color: tokens.colorPaletteRedForeground1 }}>VAT Paid</th>
+                <th className={mergeClasses(s.th, s.thRight)} style={{ color: tokens.colorBrandForeground1 }}>Net VAT</th>
               </tr>
             </thead>
             <tbody>
@@ -737,11 +841,11 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
                 const paid      = yearInvoices.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING&&getQuarter(i)===q).reduce((s,i)=>s+(i.cr9b5_taxamount??0),0)
                 const net = collected - paid
                 return (
-                  <tr key={q} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="px-4 py-2.5 font-medium text-gray-700">Q{q}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-green-700">{fmtEur(collected)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-red-600">{fmtEur(paid)}</td>
-                    <td className={['px-4 py-2.5 text-right tabular-nums font-semibold', net>=0?'text-indigo-700':'text-red-600'].join(' ')}>{fmtEur(net)}</td>
+                  <tr key={q}>
+                    <td className={mergeClasses(s.td, s.tdLabel)}>Q{q}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteGreenForeground1 }}>{formatMoney(collected)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteRedForeground1 }}>{formatMoney(paid)}</td>
+                    <td className={mergeClasses(s.td, s.tdTotal)} style={{ color: net>=0?tokens.colorBrandForeground1:tokens.colorPaletteRedForeground1 }}>{formatMoney(net)}</td>
                   </tr>
                 )
               })}
@@ -750,11 +854,11 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
                 const tp = yearInvoices.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING).reduce((s,i)=>s+(i.cr9b5_taxamount??0),0)
                 const tn = tc-tp
                 return (
-                  <tr className="bg-gray-50 border-t-2 border-gray-300 font-semibold">
-                    <td className="px-4 py-2.5 text-gray-800">Annual Total</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-green-700">{fmtEur(tc)}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-red-600">{fmtEur(tp)}</td>
-                    <td className={['px-4 py-2.5 text-right tabular-nums', tn>=0?'text-indigo-700':'text-red-600'].join(' ')}>{fmtEur(tn)}</td>
+                  <tr className={s.trTotal}>
+                    <td className={s.td}>Annual Total</td>
+                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteGreenForeground1 }}>{formatMoney(tc)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteRedForeground1 }}>{formatMoney(tp)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tn>=0?tokens.colorBrandForeground1:tokens.colorPaletteRedForeground1, fontWeight: 600 }}>{formatMoney(tn)}</td>
                   </tr>
                 )
               })()}
@@ -816,6 +920,7 @@ function lighten(hex: string, amount: number): string {
 interface SbSegment { path: string; color: string; label: string; value: number; depth: number }
 
 function DashboardExpenseSunburst({ invoices, properties, contacts, references }: SharedProps & { contacts: Cr9b5_pt_contacts[]; references: Cr9b5_pt_references[] }) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear, setFilterYear] = useState<number>(currentYear)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: number; pct: number } | null>(null)
@@ -847,7 +952,6 @@ function DashboardExpenseSunburst({ invoices, properties, contacts, references }
     return m
   }, [references])
 
-  // Build hierarchy: property → category → contact
   const hierarchy = useMemo(() => {
     const expenses = invoices.filter(inv =>
       isActive(inv) &&
@@ -892,9 +996,9 @@ function DashboardExpenseSunburst({ invoices, properties, contacts, references }
     if (total === 0) return []
     const cx = 300, cy = 300
     const R = [
-      { r0: 60,  r1: 140 },  // ring 1: property
-      { r0: 148, r1: 210 },  // ring 2: category
-      { r0: 218, r1: 275 },  // ring 3: contact
+      { r0: 60,  r1: 140 },
+      { r0: 148, r1: 210 },
+      { r0: 218, r1: 275 },
     ]
     const segs: SbSegment[] = []
     const TWO_PI = 2 * Math.PI
@@ -959,30 +1063,26 @@ function DashboardExpenseSunburst({ invoices, properties, contacts, references }
   const RING_LABELS = ['Property', 'Category', 'Contact']
 
   return (
-    <div className="space-y-6">
+    <div className={s.stack6}>
       <FilterRow>
         <YearSelect value={filterYear} years={years} onChange={v => setFilterYear(v as number)} allowAll={false} />
       </FilterRow>
 
       {total === 0 ? (
-        <p className="text-sm text-gray-400">No expense data for {filterYear}.</p>
+        <p className={s.muted}>No expense data for {filterYear}.</p>
       ) : (
-        <div className="flex flex-col lg:flex-row gap-8 items-start">
-          <div className="bg-white border border-gray-200 rounded-xl p-4 relative">
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '32px', alignItems: 'flex-start' }}>
+          <div className={s.sbCard}>
             {tooltip && (
-              <div
-                style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 8, zIndex: 9999 }}
-                className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-xl pointer-events-none"
-              >
-                <div className="font-semibold mb-0.5">{tooltip.label}</div>
-                <div className="tabular-nums">{fmtEur(tooltip.value)}</div>
-                <div className="text-gray-300 tabular-nums">{tooltip.pct.toFixed(1)} % of total</div>
+              <div style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 8, zIndex: 9999 }} className={s.heatTooltip}>
+                <div className={s.heatTooltipTitle}>{tooltip.label}</div>
+                <div style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(tooltip.value)}</div>
+                <div className={s.heatTooltipLine} style={{ fontVariantNumeric: 'tabular-nums' }}>{tooltip.pct.toFixed(1)} % of total</div>
               </div>
             )}
             <svg width={600} height={600} viewBox="0 0 600 600">
-              {/* center label */}
               <text x={300} y={294} textAnchor="middle" fontSize={13} fill="#6b7280" fontWeight={600}>Expenses</text>
-              <text x={300} y={312} textAnchor="middle" fontSize={12} fill="#9ca3af" className="tabular-nums">{fmtEur(total)}</text>
+              <text x={300} y={312} textAnchor="middle" fontSize={12} fill="#9ca3af" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(total)}</text>
 
               {segments.map((seg, i) => (
                 <path
@@ -998,7 +1098,6 @@ function DashboardExpenseSunburst({ invoices, properties, contacts, references }
                 />
               ))}
 
-              {/* ring labels */}
               {[{ r: 100, label: 'Property' }, { r: 179, label: 'Category' }, { r: 246, label: 'Contact' }].map(({ r, label }) => (
                 <text key={label} x={300} y={300 - r} textAnchor="middle" fontSize={9} fill="#9ca3af" dy={-3}>{label}</text>
               ))}
@@ -1006,28 +1105,28 @@ function DashboardExpenseSunburst({ invoices, properties, contacts, references }
           </div>
 
           {/* Legend: top-level properties */}
-          <div className="bg-white border border-gray-200 rounded-xl p-5 min-w-[220px]">
-            <div className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Properties</div>
-            <div className="space-y-2">
+          <div className={s.sbLegendCard}>
+            <div className={s.sbLegendTitle}>Properties</div>
+            <div>
               {Array.from(hierarchy.entries())
                 .sort((a, b) => b[1].value - a[1].value)
                 .map(([propId, propEntry], idx) => {
                   const name = propId === '__none__' ? 'No Property' : (propById[propId] ?? propId)
                   const color = PROPERTY_COLORS[idx % PROPERTY_COLORS.length]
                   return (
-                    <div key={propId} className="flex items-center gap-2 text-sm">
-                      <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: color }} />
-                      <span className="text-gray-700 truncate flex-1">{name}</span>
-                      <span className="tabular-nums text-gray-500 text-xs">{fmtEur(propEntry.value)}</span>
+                    <div key={propId} className={s.sbLegendRow}>
+                      <span className={s.legendSwatch} style={{ backgroundColor: color, borderRadius: '2px' }} />
+                      <span className={s.sbLegendName}>{name}</span>
+                      <span className={s.sbLegendVal}>{formatMoney(propEntry.value)}</span>
                     </div>
                   )
                 })}
             </div>
-            <div className="mt-4 pt-4 border-t border-gray-100">
-              <div className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">Ring guide</div>
+            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${tokens.colorNeutralStroke2}` }}>
+              <div className={s.sbLegendTitle} style={{ marginBottom: '4px' }}>Ring guide</div>
               {RING_LABELS.map((l, i) => (
-                <div key={l} className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                  <span className="w-4 h-2 rounded-sm bg-gray-300 shrink-0" style={{ opacity: 0.4 + i * 0.2 }} />
+                <div key={l} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: tokens.colorNeutralForeground4, marginTop: '4px' }}>
+                  <span style={{ width: '16px', height: '8px', borderRadius: '2px', backgroundColor: tokens.colorNeutralStroke1, opacity: 0.4 + i * 0.2, flexShrink: 0 }} />
                   {i + 1}. {l}
                 </div>
               ))}
@@ -1060,6 +1159,7 @@ const TABS: { id: DashTab; label: string; printName: string }[] = [
 ]
 
 export default function Dashboard() {
+  const s = useStyles()
   const [invoices,   setInvoices]   = useState<Cr9b5_pt_invoices[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
@@ -1095,37 +1195,34 @@ export default function Dashboard() {
   }, [])
 
   const activeTab = TABS.find(t => t.id === tab)!
+  const isCalendar = tab === 'calendar'
 
   return (
-    <div className={tab === 'calendar' ? 'flex flex-col h-full' : 'p-6 max-w-[83rem]'}>
+    <div className={isCalendar ? s.pageCalendar : s.page}>
       {/* Header row */}
-      <div className={['flex flex-wrap items-start justify-between gap-4', tab==='calendar'?'px-6 pt-6 pb-0 shrink-0':'mb-6'].join(' ')}>
-        <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5 flex-wrap">
+      <div className={isCalendar ? s.headerRowCalendar : s.headerRow}>
+        <div className={s.tabBar}>
           {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)}
-              className={['px-3 py-1.5 rounded-md text-sm font-medium transition-colors', tab===t.id?'bg-white text-indigo-700 shadow-sm':'text-gray-500 hover:text-gray-700'].join(' ')}>
+            <button key={t.id} onClick={() => setTab(t.id)} className={mergeClasses(s.tabBtn, tab===t.id && s.tabBtnActive)}>
               {t.label}
             </button>
           ))}
         </div>
-        <button
-          onClick={() => handlePrint(activeTab.printName)}
-          className="no-print flex items-center gap-1.5 border border-gray-300 rounded-lg px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-50 hover:border-gray-400 transition-colors shrink-0"
-        >
+        <Button className={mergeClasses('no-print', s.exportBtn)} appearance="secondary" onClick={() => handlePrint(activeTab.printName)}>
           ↓ Export PDF
-        </button>
+        </Button>
       </div>
 
       {loading ? (
-        <p className={tab==='calendar'?'p-6 text-gray-400':'mt-8 text-gray-400'}>Loading…</p>
+        <Text className={isCalendar ? s.loadingCalendar : s.loading}>Loading…</Text>
       ) : (
-        <div className={['dashboard-print-content', tab==='calendar'?'flex-1 min-h-0 flex flex-col mt-4':'mt-6 space-y-0'].join(' ')}>
+        <div className={mergeClasses('dashboard-print-content', isCalendar ? s.contentCalendar : s.content)}>
           {tab==='overview'            && <DashboardOverview    invoices={invoices} properties={properties} />}
           {tab==='comparison'          && <DashboardComparison  invoices={invoices} properties={properties} />}
           {tab==='heatmap'             && <DashboardHeatmap     invoices={invoices} properties={properties} />}
           {tab==='cashflow'            && <DashboardCashFlow    invoices={invoices} properties={properties} />}
           {tab==='tax'                 && <DashboardTax         invoices={invoices} contacts={contacts} />}
-          {tab==='calendar'            && <div className="flex-1 min-h-0"><CalendarScreen /></div>}
+          {tab==='calendar'            && <div style={{ flex: 1, minHeight: 0 }}><CalendarScreen /></div>}
           {tab==='cat-pnl'             && <CategoryPnL          invoices={invoices} properties={properties} references={references} contacts={contacts} />}
           {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
           {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
