@@ -80,9 +80,12 @@ function ownerNightsForPeriod(records: Svm_pt_owneroccupancies[], propertyId: st
   return total
 }
 
-function exclOccupancyPct(totalGuestNights: number, availableNights: number, ownerNights: number): number | null {
-  const denom = availableNights - ownerNights
-  return denom > 0 ? (totalGuestNights / denom) * 100 : null
+// "Incl. owner" treats owner-use nights as occupied too (bigger numerator,
+// same denominator as the plain guest-only rate) — the higher of the two
+// figures, showing overall property utilization rather than just paying
+// rentals.
+function inclOccupancyPct(totalGuestNights: number, ownerNights: number, availableNights: number): number | null {
+  return availableNights > 0 ? ((totalGuestNights + ownerNights) / availableNights) * 100 : null
 }
 
 function getQuarter(inv: Cr9b5_pt_invoices): number {
@@ -347,9 +350,9 @@ function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps
   const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
   const propCount      = filterPropId ? 1 : properties.length
   const availableNights = filterYear !== 'all' && propCount > 0 ? daysElapsedInYear(filterYear as number) * propCount : null
-  const occupancyPct   = availableNights ? (totalNights / availableNights) * 100 : null
+  const occupancyExclPct = availableNights ? (totalNights / availableNights) * 100 : null
   const ownerNights    = filterYear !== 'all' ? ownerNightsForPeriod(ownerOccupancy, filterPropId, filterYear as number) : 0
-  const occupancyExclPct = availableNights !== null ? exclOccupancyPct(totalNights, availableNights, ownerNights) : null
+  const occupancyInclPct = availableNights !== null ? inclOccupancyPct(totalNights, ownerNights, availableNights) : null
 
   const monthlyData = useMemo(() => MONTH_LABELS.map((month, idx) => {
     const inv = filtered.filter(i => i.cr9b5_date && new Date(i.cr9b5_date).getMonth() === idx)
@@ -386,9 +389,9 @@ function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps
             sub={`${expenses.length} invoice${expenses.length!==1?'s':''}`} accent="red" />
           <KpiCard label="Net Profit" value={formatMoney(netProfitGross)} value2={formatMoney(netProfitNet)}
             sub={formatMoney(vatComponent)} subLabel="VAT total:" accent={netProfitGross>=0?'blue':'red'} />
-          <KpiCard label="Occupancy" value={occupancyPct!==null?fmtPct(occupancyPct):'—'}
+          <KpiCard label="Occupancy" value={occupancyInclPct!==null?fmtPct(occupancyInclPct):'—'}
             value2={occupancyExclPct!==null?fmtPct(occupancyExclPct):undefined} value2Label="Excl. Owner"
-            sub={occupancyPct!==null?`${totalNights} / ${availableNights} nights`:filterYear==='all'?'Select a year':'No properties'} accent="blue" />
+            sub={occupancyExclPct!==null?`${totalNights} / ${availableNights} nights`:filterYear==='all'?'Select a year':'No properties'} accent="blue" />
         </div>
       </div>
       <div>
@@ -480,7 +483,7 @@ function DashboardComparison({ invoices, properties, ownerOccupancy }: SharedPro
       prop, color: PROPERTY_COLORS[idx % PROPERTY_COLORS.length],
       income, expenses, profit: income-expenses,
       occupancyPct: avail>0 ? (nights/avail)*100 : 0,
-      occupancyExclPct: exclOccupancyPct(nights, avail, ownerNights),
+      occupancyInclPct: inclOccupancyPct(nights, ownerNights, avail),
       avgNightlyRate: nights>0 ? income/nights : 0,
       avgStayLength: out.length>0 ? nights/out.length : 0,
       busiestMonth: maxN>0 ? MONTH_FULL[nightsByMonth.indexOf(maxN)] : '—',
@@ -506,8 +509,8 @@ function DashboardComparison({ invoices, properties, ownerOccupancy }: SharedPro
                 <StatRow label="Income (gross)"   value={formatMoney(p.income)}   accent="green" />
                 <StatRow label="Expenses (gross)" value={formatMoney(p.expenses)} accent="red" />
                 <StatRow label="Net Profit"       value={formatMoney(p.profit)}   accent={p.profit>=0?'blue':'red'} />
-                <StatRow label="Occupancy"        value={fmtPct(p.occupancyPct)} sub={`${p.nights} nights`} accent="blue" />
-                <StatRow label="Occ. Excl. Owner"  value={p.occupancyExclPct!==null?fmtPct(p.occupancyExclPct):'—'} accent="blue" />
+                <StatRow label="Occupancy"        value={p.occupancyInclPct!==null?fmtPct(p.occupancyInclPct):'—'} sub={`${p.nights} nights`} accent="blue" />
+                <StatRow label="Occ. Excl. Owner"  value={fmtPct(p.occupancyPct)} accent="blue" />
                 <StatRow label="Avg Nightly Rate" value={p.nights>0?formatMoney(p.avgNightlyRate):'—'} />
                 <StatRow label="Avg Stay Length"  value={p.stayCount>0?`${p.avgStayLength.toFixed(1)} nights`:'—'} sub={`${p.stayCount} stays`} />
                 <div style={{ gridColumn: 'span 2' }}><StatRow label="Busiest Month" value={p.busiestMonth} /></div>
@@ -799,15 +802,15 @@ function KeyKpiSidebar({ invoices, properties, ownerOccupancy }: SharedProps & {
   const netProfit      = incomeGross - expensesGross
   const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
   const availableNights = properties.length > 0 ? daysElapsedInYear(currentYear) * properties.length : 0
-  const occupancyPct   = availableNights > 0 ? (totalNights / availableNights) * 100 : null
+  const occupancyExclPct = availableNights > 0 ? (totalNights / availableNights) * 100 : null
   const ownerNights    = ownerNightsForPeriod(ownerOccupancy, '', currentYear)
-  const occupancyExclPct = exclOccupancyPct(totalNights, availableNights, ownerNights)
+  const occupancyInclPct = inclOccupancyPct(totalNights, ownerNights, availableNights)
 
   const items: { label: string; value: string; sub?: string; accent: 'green'|'red'|'blue' }[] = [
     { label: 'Income',     value: formatMoney(incomeGross),   accent: 'green' },
     { label: 'Expenses',   value: formatMoney(expensesGross), accent: 'red' },
     { label: 'Net Profit', value: formatMoney(netProfit),     accent: netProfit>=0 ? 'blue' : 'red' },
-    { label: 'Occupancy',  value: occupancyPct!==null?fmtPct(occupancyPct):'—',
+    { label: 'Occupancy',  value: occupancyInclPct!==null?fmtPct(occupancyInclPct):'—',
       sub: occupancyExclPct!==null ? `excl. owner: ${fmtPct(occupancyExclPct)}` : undefined, accent: 'blue' },
   ]
   const barColor: Record<string,string> = {

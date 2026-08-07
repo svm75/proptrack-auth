@@ -169,8 +169,10 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
       return sum + (nights > 0 ? nights : 0)
     }, 0)
   })()
-  const occupancyExclDenom = daysInPeriod - ownerNightsInPeriod
-  const occupancyExcl = occupancyExclDenom > 0 && totalNights > 0 ? Math.round(totalNights / occupancyExclDenom * 100) : null
+  // "Incl. owner" treats owner-use nights as occupied too (bigger numerator,
+  // same denominator) — the higher figure; `occupancy` above (guest nights
+  // only) is the "excl. owner" figure.
+  const occupancyIncl = daysInPeriod > 0 && totalNights > 0 ? Math.round((totalNights + ownerNightsInPeriod) / daysInPeriod * 100) : null
 
   // Compute SVG lines after DOM renders
   useEffect(() => {
@@ -272,7 +274,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
                 <p className={s.propShortId}>{property.cr9b5_shortid}</p>
                 {occupancy !== null && (
                   <p className={s.propOcc}>
-                    {occupancy}% occupancy{occupancyExcl !== null && occupancyExcl !== occupancy ? ` (${occupancyExcl}% excl. owner)` : ''}
+                    {occupancyIncl}% occupancy{occupancyIncl !== occupancy ? ` (${occupancy}% excl. owner)` : ''}
                   </p>
                 )}
               </div>
