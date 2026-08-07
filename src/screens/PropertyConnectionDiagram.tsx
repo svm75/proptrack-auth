@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { makeStyles, tokens, mergeClasses, Text, Select } from '@fluentui/react-components'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
-import { fmtEur } from '../utils/formatters'
+import { formatMoney } from '@/domain/money'
 import InvoiceForm from './InvoiceForm'
 
 const TYPE_OUTGOING = 233100001 // Income
@@ -30,7 +31,40 @@ function contactId(inv: Cr9b5_pt_invoices): string {
   return ((inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined) ?? '__none__'
 }
 
+const useStyles = makeStyles({
+  overlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' },
+  modal: { backgroundColor: tokens.colorNeutralBackground2, borderRadius: tokens.borderRadiusXLarge, boxShadow: tokens.shadow64, display: 'flex', flexDirection: 'column', overflow: 'hidden', width: '95vw', height: '92vh' },
+  header: { padding: '16px 24px', backgroundColor: tokens.colorNeutralBackground1, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 },
+  headerRight: { display: 'flex', alignItems: 'center', gap: '16px' },
+  yearGroup: { display: 'flex', alignItems: 'center', gap: '8px' },
+  yearLabel: { fontSize: '11px', color: tokens.colorNeutralForeground4, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.03em' },
+  closeBtn: { color: tokens.colorNeutralForeground4, fontSize: '22px', lineHeight: 1, width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: tokens.borderRadiusMedium, cursor: 'pointer', border: 'none', backgroundColor: 'transparent' },
+  body: { flex: 1, overflow: 'auto', padding: '40px' },
+  canvas: { position: 'relative', margin: '0 auto', minWidth: '480px' },
+  svg: { position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' },
+  level1Row: { display: 'flex', justifyContent: 'center', marginBottom: '64px' },
+  propNode: { backgroundColor: '#0F766E', color: '#fff', borderRadius: tokens.borderRadiusXLarge, padding: '16px 24px', boxShadow: tokens.shadow8, textAlign: 'center', userSelect: 'none', minWidth: '200px' },
+  propName: { fontSize: '16px', fontWeight: 700, lineHeight: 1.2 },
+  propShortId: { fontSize: '12px', fontFamily: 'monospace', marginTop: '4px', color: 'rgba(255,255,255,0.75)' },
+  propOcc: { fontSize: '12px', marginTop: '6px', color: 'rgba(255,255,255,0.85)' },
+  emptyMsg: { textAlign: 'center', fontSize: '14px', color: tokens.colorNeutralForeground4 },
+  row: { display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '64px', flexWrap: 'wrap' },
+  rowTight: { display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' },
+  catNode: { borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow4, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '160px', backgroundColor: tokens.colorNeutralBackground3, border: `1px solid ${tokens.colorNeutralStroke2}` },
+  conNode: { backgroundColor: tokens.colorNeutralBackground1, borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow4, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '176px', border: '1px solid #2DD4BF' },
+  invNode: { backgroundColor: tokens.colorNeutralBackground1, borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow2, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '152px' },
+  nodeTitle: { fontSize: '14px', fontWeight: 600, color: tokens.colorNeutralForeground1, lineHeight: 1.2 },
+  nodeSub: { fontSize: '12px', color: tokens.colorNeutralForeground4, marginTop: '4px' },
+  nodeAmt: { fontSize: '12px', fontWeight: 500, color: tokens.colorNeutralForeground2, marginTop: '2px' },
+  badge: { fontSize: '11px', padding: '1px 6px', borderRadius: tokens.borderRadiusCircular, fontWeight: 500, marginTop: '4px', display: 'inline-block' },
+  badgeIncome: { backgroundColor: tokens.colorPaletteGreenBackground1, color: tokens.colorPaletteGreenForeground1 },
+  badgeExpense: { backgroundColor: tokens.colorPaletteRedBackground1, color: tokens.colorPaletteRedForeground1 },
+  invId: { fontSize: '12px', fontFamily: 'monospace', fontWeight: 600, color: tokens.colorBrandForeground1 },
+  tooltip: { position: 'fixed', zIndex: 60, backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground2, fontSize: '12px', borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16, border: `1px solid ${tokens.colorNeutralStroke2}`, padding: '12px', pointerEvents: 'none', maxWidth: '240px' },
+})
+
 export default function PropertyConnectionDiagram({ property, allProperties, invoices, contacts, onClose }: Props) {
+  const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [diagYear, setDiagYear] = useState<string>(String(currentYear))
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
@@ -164,87 +198,53 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
   }, [expandedCategory, expandedContact, diagYear, filtered.length])
 
   return (
-    <div
-      className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <div
-        className="bg-gray-50 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
-        style={{ width: '95vw', height: '92vh' }}
-        onClick={e => e.stopPropagation()}
-      >
+    <div className={s.overlay} onClick={onClose}>
+      <div className={s.modal} onClick={e => e.stopPropagation()}>
         {/* Header */}
-        <div className="px-6 py-4 bg-white border-b border-gray-200 flex items-center justify-between shrink-0">
+        <div className={s.header}>
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">Connection Diagram</h2>
-            <p className="text-sm text-gray-500">{property.cr9b5_name} · {property.cr9b5_shortid}</p>
+            <Text size={500} weight="semibold">Connection Diagram</Text>
+            <Text size={300} block style={{ color: tokens.colorNeutralForeground4 }}>{property.cr9b5_name} · {property.cr9b5_shortid}</Text>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500 font-medium uppercase tracking-wide">Year</label>
-              <select
-                value={diagYear}
-                onChange={e => {
-                  setDiagYear(e.target.value)
-                  setExpandedCategory(null)
-                  setExpandedContact(null)
-                }}
-                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500 bg-white"
-              >
+          <div className={s.headerRight}>
+            <div className={s.yearGroup}>
+              <Text className={s.yearLabel}>Year</Text>
+              <Select value={diagYear} onChange={e => {
+                setDiagYear(e.target.value)
+                setExpandedCategory(null)
+                setExpandedContact(null)
+              }}>
                 <option value="all">All years</option>
                 {years.map(y => <option key={y} value={y}>{y}</option>)}
-              </select>
+              </Select>
             </div>
-            <button
-              onClick={onClose}
-              className="text-gray-400 hover:text-gray-600 text-2xl leading-none w-9 h-9 flex items-center justify-center rounded-lg hover:bg-gray-100 transition-colors"
-            >
-              ×
-            </button>
+            <button onClick={onClose} className={s.closeBtn}>×</button>
           </div>
         </div>
 
         {/* Diagram */}
-        <div className="flex-1 overflow-auto p-10">
-          <div ref={containerRef} className="relative mx-auto" style={{ minWidth: 480 }}>
-            {/* SVG lines — overflow:visible so lines always show */}
-            <svg
-              className="absolute inset-0 pointer-events-none"
-              width="100%"
-              height="100%"
-              style={{ overflow: 'visible' }}
-            >
+        <div className={s.body}>
+          <div ref={containerRef} className={s.canvas}>
+            <svg className={s.svg} width="100%" height="100%">
               {lines.map((l, i) => (
-                <line
-                  key={i}
-                  x1={l.x1} y1={l.y1}
-                  x2={l.x2} y2={l.y2}
-                  stroke="#94a3b8"
-                  strokeWidth={1.5}
-                />
+                <line key={i} x1={l.x1} y1={l.y1} x2={l.x2} y2={l.y2} stroke="#94a3b8" strokeWidth={1.5} />
               ))}
             </svg>
 
             {/* Level 1 — Property */}
-            <div className="flex justify-center mb-16">
-              <div
-                data-node-level="1"
-                className="bg-teal-600 text-white rounded-xl px-6 py-4 shadow-lg text-center select-none"
-                style={{ minWidth: 200 }}
-              >
-                <p className="text-base font-bold leading-tight">{property.cr9b5_name}</p>
-                <p className="text-xs font-mono mt-1 text-teal-200">{property.cr9b5_shortid}</p>
-                {occupancy !== null && (
-                  <p className="text-xs mt-1.5 text-teal-100">{occupancy}% occupancy</p>
-                )}
+            <div className={s.level1Row}>
+              <div data-node-level="1" className={s.propNode}>
+                <p className={s.propName}>{property.cr9b5_name}</p>
+                <p className={s.propShortId}>{property.cr9b5_shortid}</p>
+                {occupancy !== null && <p className={s.propOcc}>{occupancy}% occupancy</p>}
               </div>
             </div>
 
             {/* Level 2 — Categories */}
             {categories.length === 0 ? (
-              <p className="text-center text-sm text-gray-400">No invoices for this period.</p>
+              <p className={s.emptyMsg}>No invoices for this period.</p>
             ) : (
-              <div className="flex justify-center gap-4 mb-16 flex-wrap">
+              <div className={s.row}>
                 {categories.map(cat => {
                   const isExpanded = expandedCategory === cat.name
                   return (
@@ -258,27 +258,22 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
                       onMouseEnter={e => setTooltip({
                         x: e.clientX, y: e.clientY,
                         content: (
-                          <div className="space-y-0.5">
-                            <p className="font-semibold text-gray-900">{cat.name}</p>
-                            <p>Invoices: {cat.count}</p>
-                            <p>Net: {fmtEur(cat.net)}</p>
-                            <p>Gross: {fmtEur(cat.gross)}</p>
-                            <p>VAT: {fmtEur(cat.vat)}</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <Text weight="semibold">{cat.name}</Text>
+                            <Text>Invoices: {cat.count}</Text>
+                            <Text>Net: {formatMoney(cat.net)}</Text>
+                            <Text>Gross: {formatMoney(cat.gross)}</Text>
+                            <Text>VAT: {formatMoney(cat.vat)}</Text>
                           </div>
                         ),
                       })}
                       onMouseLeave={() => setTooltip(null)}
-                      className={[
-                        'rounded-xl px-4 py-3 shadow cursor-pointer transition-all text-center select-none',
-                        isExpanded
-                          ? 'bg-gray-200 border-2 border-gray-500'
-                          : 'bg-gray-100 border border-gray-300 hover:border-gray-400 hover:shadow-md',
-                      ].join(' ')}
-                      style={{ minWidth: 160 }}
+                      className={s.catNode}
+                      style={isExpanded ? { backgroundColor: tokens.colorNeutralBackground4, border: `2px solid ${tokens.colorNeutralStroke1}` } : undefined}
                     >
-                      <p className="text-sm font-semibold text-gray-800 leading-tight">{cat.name}</p>
-                      <p className="text-xs text-gray-500 mt-1">{cat.count} invoice{cat.count !== 1 ? 's' : ''}</p>
-                      <p className="text-xs font-medium text-gray-700 mt-0.5">{fmtEur(cat.net)}</p>
+                      <p className={s.nodeTitle}>{cat.name}</p>
+                      <p className={s.nodeSub}>{cat.count} invoice{cat.count !== 1 ? 's' : ''}</p>
+                      <p className={s.nodeAmt}>{formatMoney(cat.net)}</p>
                     </div>
                   )
                 })}
@@ -287,7 +282,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
 
             {/* Level 3 — Contacts */}
             {expandedCategory && contactNodes.length > 0 && (
-              <div className="flex justify-center gap-4 mb-16 flex-wrap">
+              <div className={s.row}>
                 {contactNodes.map(con => {
                   const isExpanded = expandedContact === con.id
                   const isIncome = con.role === 'Income'
@@ -302,33 +297,25 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
                       onMouseEnter={e => setTooltip({
                         x: e.clientX, y: e.clientY,
                         content: (
-                          <div className="space-y-0.5">
-                            <p className="font-semibold text-gray-900">{con.name}</p>
-                            {con.email && <p className="text-gray-500">{con.email}</p>}
-                            <p>Role: {con.role}</p>
-                            <p>Invoices: {con.count}</p>
-                            <p>Net: {fmtEur(con.net)}</p>
-                            <p>First: {fmtDate(con.firstDate)}</p>
-                            <p>Latest: {fmtDate(con.lastDate)}</p>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <Text weight="semibold">{con.name}</Text>
+                            {con.email && <Text style={{ color: tokens.colorNeutralForeground4 }}>{con.email}</Text>}
+                            <Text>Role: {con.role}</Text>
+                            <Text>Invoices: {con.count}</Text>
+                            <Text>Net: {formatMoney(con.net)}</Text>
+                            <Text>First: {fmtDate(con.firstDate)}</Text>
+                            <Text>Latest: {fmtDate(con.lastDate)}</Text>
                           </div>
                         ),
                       })}
                       onMouseLeave={() => setTooltip(null)}
-                      className={[
-                        'bg-white rounded-xl px-4 py-3 shadow cursor-pointer transition-all text-center select-none',
-                        isExpanded
-                          ? 'border-2 border-teal-600'
-                          : 'border border-teal-400 hover:border-teal-500 hover:shadow-md',
-                      ].join(' ')}
-                      style={{ minWidth: 176 }}
+                      className={s.conNode}
+                      style={isExpanded ? { border: '2px solid #0F766E' } : undefined}
                     >
-                      <p className="text-sm font-semibold text-gray-800 leading-tight">{con.name}</p>
-                      <span className={[
-                        'text-xs px-1.5 py-0.5 rounded-full font-medium mt-1 inline-block',
-                        isIncome ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700',
-                      ].join(' ')}>{con.role}</span>
-                      <p className="text-xs text-gray-500 mt-1">{con.count} invoice{con.count !== 1 ? 's' : ''}</p>
-                      <p className="text-xs font-medium text-gray-700 mt-0.5">{fmtEur(con.net)}</p>
+                      <p className={s.nodeTitle}>{con.name}</p>
+                      <span className={s.badge} style={isIncome ? { backgroundColor: tokens.colorPaletteGreenBackground1, color: tokens.colorPaletteGreenForeground1 } : { backgroundColor: tokens.colorPaletteBlueBackground2, color: tokens.colorPaletteBlueForeground2 }}>{con.role}</span>
+                      <p className={s.nodeSub}>{con.count} invoice{con.count !== 1 ? 's' : ''}</p>
+                      <p className={s.nodeAmt}>{formatMoney(con.net)}</p>
                     </div>
                   )
                 })}
@@ -337,7 +324,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
 
             {/* Level 4 — Invoices */}
             {expandedContact && invoiceNodes.length > 0 && (
-              <div className="flex justify-center gap-3 flex-wrap">
+              <div className={s.rowTight}>
                 {invoiceNodes.map(inv => {
                   const isIncome = invType(inv) === 'Income'
                   const raw = inv as unknown as Record<string, unknown>
@@ -351,37 +338,29 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
                       onMouseEnter={e => setTooltip({
                         x: e.clientX, y: e.clientY,
                         content: (
-                          <div className="space-y-0.5">
-                            <p className="font-semibold text-gray-900">{inv.cr9b5_internalid}</p>
-                            <p>Date: {fmtDate(inv.cr9b5_date)}</p>
-                            <p>Type: {invType(inv)}</p>
-                            {con && <p>Contact: {con.cr9b5_name}</p>}
-                            {inv.cr9b5_description && <p>Desc: {inv.cr9b5_description}</p>}
-                            <p>Net: {fmtEur((raw['cr9b5_baseamount'] as number) ?? 0)}</p>
-                            <p>VAT: {fmtEur((raw['cr9b5_taxamount'] as number) ?? 0)}</p>
-                            <p>Gross: {fmtEur(inv.cr9b5_totalgross ?? 0)}</p>
-                            {inv.cr9b5_checkin && <p>Check-in: {fmtDate(inv.cr9b5_checkin)}</p>}
-                            {inv.cr9b5_checkout && <p>Check-out: {fmtDate(inv.cr9b5_checkout)}</p>}
-                            {inv.cr9b5_nights != null && isIncome && <p>Nights: {inv.cr9b5_nights}</p>}
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                            <Text weight="semibold">{inv.cr9b5_internalid}</Text>
+                            <Text>Date: {fmtDate(inv.cr9b5_date)}</Text>
+                            <Text>Type: {invType(inv)}</Text>
+                            {con && <Text>Contact: {con.cr9b5_name}</Text>}
+                            {inv.cr9b5_description && <Text>Desc: {inv.cr9b5_description}</Text>}
+                            <Text>Net: {formatMoney((raw['cr9b5_baseamount'] as number) ?? 0)}</Text>
+                            <Text>VAT: {formatMoney((raw['cr9b5_taxamount'] as number) ?? 0)}</Text>
+                            <Text>Gross: {formatMoney(inv.cr9b5_totalgross ?? 0)}</Text>
+                            {inv.cr9b5_checkin && <Text>Check-in: {fmtDate(inv.cr9b5_checkin)}</Text>}
+                            {inv.cr9b5_checkout && <Text>Check-out: {fmtDate(inv.cr9b5_checkout)}</Text>}
+                            {inv.cr9b5_nights != null && isIncome && <Text>Nights: {inv.cr9b5_nights}</Text>}
                           </div>
                         ),
                       })}
                       onMouseLeave={() => setTooltip(null)}
-                      className={[
-                        'bg-white rounded-xl px-4 py-3 shadow-sm cursor-pointer transition-all text-center select-none',
-                        isIncome
-                          ? 'border border-green-400 hover:border-green-600 hover:shadow-md'
-                          : 'border border-red-300 hover:border-red-500 hover:shadow-md',
-                      ].join(' ')}
-                      style={{ minWidth: 152 }}
+                      className={s.invNode}
+                      style={{ border: `1px solid ${isIncome ? tokens.colorPaletteGreenBorder1 : tokens.colorPaletteRedBorder1}` }}
                     >
-                      <p className="text-xs font-mono font-semibold text-indigo-700">{inv.cr9b5_internalid}</p>
-                      <p className="text-xs text-gray-400 mt-0.5">{fmtDate(inv.cr9b5_date)}</p>
-                      <span className={[
-                        'text-xs px-1.5 py-0.5 rounded-full font-medium mt-1 inline-block',
-                        isIncome ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700',
-                      ].join(' ')}>{isIncome ? 'Income' : 'Expense'}</span>
-                      <p className="text-xs font-semibold text-gray-800 mt-1">{fmtEur(inv.cr9b5_totalgross ?? 0)}</p>
+                      <p className={s.invId}>{inv.cr9b5_internalid}</p>
+                      <p className={s.nodeSub} style={{ marginTop: '2px' }}>{fmtDate(inv.cr9b5_date)}</p>
+                      <span className={mergeClasses(s.badge, isIncome ? s.badgeIncome : s.badgeExpense)}>{isIncome ? 'Income' : 'Expense'}</span>
+                      <p className={s.nodeTitle} style={{ fontSize: '13px', marginTop: '4px' }}>{formatMoney(inv.cr9b5_totalgross ?? 0)}</p>
                     </div>
                   )
                 })}
@@ -393,10 +372,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
 
       {/* Tooltip */}
       {tooltip && (
-        <div
-          className="fixed z-[60] bg-white text-gray-700 text-xs rounded-lg shadow-xl border border-gray-200 p-3 pointer-events-none"
-          style={{ left: tooltip.x + 14, top: tooltip.y + 14, maxWidth: 240 }}
-        >
+        <div className={s.tooltip} style={{ left: tooltip.x + 14, top: tooltip.y + 14 }}>
           {tooltip.content}
         </div>
       )}
