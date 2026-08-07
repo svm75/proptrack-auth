@@ -13,8 +13,10 @@ export * as Cr9b5_pt_forecastflowsModel from './models/Cr9b5_pt_forecastflowsMod
 export * as Cr9b5_pt_invoicesModel from './models/Cr9b5_pt_invoicesModel';
 export * as Cr9b5_pt_propertiesModel from './models/Cr9b5_pt_propertiesModel';
 export * as Cr9b5_pt_referencesModel from './models/Cr9b5_pt_referencesModel';
+export * as MicrosoftDataverseModel from './models/MicrosoftDataverseModel';
 export * as Svm_pt_invoicecommentsModel from './models/Svm_pt_invoicecommentsModel';
 export * as Svm_pt_invoicetemplatesModel from './models/Svm_pt_invoicetemplatesModel';
+export * as Svm_pt_owneroccupanciesModel from './models/Svm_pt_owneroccupanciesModel';
 export * as Svm_pt_suppliercontractsModel from './models/Svm_pt_suppliercontractsModel';
 
 // Services
@@ -26,6 +28,8 @@ export * from './services/Cr9b5_pt_forecastflowsService';
 export * from './services/Cr9b5_pt_invoicesService';
 export * from './services/Cr9b5_pt_propertiesService';
 export * from './services/Cr9b5_pt_referencesService';
+export * from './services/MicrosoftDataverseService';
 export * from './services/Svm_pt_invoicecommentsService';
 export * from './services/Svm_pt_invoicetemplatesService';
+export * from './services/Svm_pt_owneroccupanciesService';
 export * from './services/Svm_pt_suppliercontractsService';

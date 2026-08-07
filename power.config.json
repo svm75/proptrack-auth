@@ -9,7 +9,16 @@
   "buildEntryPoint": "index.html",
   "localAppUrl": "http://localhost:3000",
   "logoPath": "Default",
-  "connectionReferences": {},
+  "connectionReferences": {
+    "54b5be6b-0dfd-43de-8d9a-e448e7fead80": {
+      "id": "/providers/Microsoft.PowerApps/apis/shared_commondataserviceforapps",
+      "displayName": "Microsoft Dataverse",
+      "dataSources": [
+        "commondataserviceforapps"
+      ],
+      "dataSets": {}
+    }
+  },
   "databaseReferences": {
     "default.cds": {
       "databaseDetails": null,
@@ -59,6 +68,10 @@
         "invoicetemplates": {
           "entitySetName": "svm_pt_invoicetemplates",
           "logicalName": "svm_pt_invoicetemplate"
+        },
+        "owneroccupancies": {
+          "entitySetName": "svm_pt_owneroccupancies",
+          "logicalName": "svm_pt_owneroccupancy"
         }
       },
       "actions": null
