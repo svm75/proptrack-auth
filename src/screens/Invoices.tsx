@@ -34,6 +34,8 @@ const useStyles = makeStyles({
   tableWrap: { flex: 1, overflow: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '860px' },
   th: { position: 'sticky', top: 0, backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left', padding: '10px 10px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground3, textTransform: 'uppercase' },
+  thSortBtn: { display: 'inline-flex', alignItems: 'center', gap: '4px', border: 'none', background: 'transparent', cursor: 'pointer', padding: 0, font: 'inherit', color: 'inherit', textTransform: 'inherit' },
+  sortArrow: { fontSize: '10px', color: tokens.colorBrandForeground1 },
   td: { padding: '8px 10px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
   summary: { padding: '10px 24px', borderTop: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2, display: 'flex', gap: '24px', fontSize: '14px', color: tokens.colorNeutralForeground2 },
 })
@@ -63,7 +65,13 @@ export default function Invoices() {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
-  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'id_asc' | 'id_desc' | 'total_desc' | 'total_asc'>('date_desc')
+  const [sortField, setSortField] = useState<'date' | 'id' | 'total'>('date')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
+  function toggleSort(field: 'date' | 'id' | 'total') {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('desc') }
+  }
 
   const [formOpen, setFormOpen] = useState(false)
   const [editInvoice, setEditInvoice] = useState<Cr9b5_pt_invoices | null>(null)
@@ -149,14 +157,13 @@ export default function Invoices() {
     }
     return true
   }).sort((a, b) => {
-    switch (sortBy) {
-      case 'date_asc': return (a.cr9b5_date ?? '') < (b.cr9b5_date ?? '') ? -1 : 1
-      case 'date_desc': return (a.cr9b5_date ?? '') > (b.cr9b5_date ?? '') ? -1 : 1
-      case 'id_asc': return internalIdSortKey(a.cr9b5_internalid) - internalIdSortKey(b.cr9b5_internalid)
-      case 'id_desc': return internalIdSortKey(b.cr9b5_internalid) - internalIdSortKey(a.cr9b5_internalid)
-      case 'total_asc': return (a.cr9b5_totalgross ?? 0) - (b.cr9b5_totalgross ?? 0)
-      case 'total_desc': return (b.cr9b5_totalgross ?? 0) - (a.cr9b5_totalgross ?? 0)
+    let cmp = 0
+    switch (sortField) {
+      case 'date': cmp = (a.cr9b5_date ?? '') < (b.cr9b5_date ?? '') ? -1 : (a.cr9b5_date ?? '') > (b.cr9b5_date ?? '') ? 1 : 0; break
+      case 'id': cmp = internalIdSortKey(a.cr9b5_internalid) - internalIdSortKey(b.cr9b5_internalid); break
+      case 'total': cmp = (a.cr9b5_totalgross ?? 0) - (b.cr9b5_totalgross ?? 0); break
     }
+    return sortDir === 'asc' ? cmp : -cmp
   })
 
   function openNew() { setEditInvoice(null); setFormOpen(true) }
@@ -256,13 +263,6 @@ export default function Invoices() {
     }
   }
 
-  function totalGuests(inv: Cr9b5_pt_invoices): { display: string; title: string } {
-    const a = inv.cr9b5_adults ?? 0, c = inv.cr9b5_children ?? 0, b = inv.cr9b5_babies ?? 0
-    const total = a + c + b
-    if (total === 0) return { display: '—', title: '' }
-    return { display: `${a} / ${c} / ${b}`, title: `${a} adult${a !== 1 ? 's' : ''}, ${c} child${c !== 1 ? 'ren' : ''}, ${b} bab${b !== 1 ? 'ies' : 'y'}` }
-  }
-
   return (
     <div className={s.root}>
       <div className={s.toolbar}>
@@ -289,16 +289,8 @@ export default function Invoices() {
           <Text style={{ color: tokens.colorNeutralForeground4 }}>—</Text>
           <Input type="date" value={filterTo} onChange={(_, d) => setFilterTo(d.value)} title="To date" />
           <Input type="search" value={search} onChange={(_, d) => setSearch(d.value)} placeholder="Search ID, description, contact…" style={{ minWidth: '220px' }} />
-          <Select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)}>
-            <option value="date_desc">Date (newest first)</option>
-            <option value="date_asc">Date (oldest first)</option>
-            <option value="id_asc">Internal ID (asc)</option>
-            <option value="id_desc">Internal ID (desc)</option>
-            <option value="total_desc">Total (highest first)</option>
-            <option value="total_asc">Total (lowest first)</option>
-          </Select>
-          {(filterType !== 'all' || filterPropId || filterFrom || filterTo || search || sortBy !== 'date_desc') && (
-            <Button appearance="transparent" size="small" onClick={() => { setFilterType('all'); setFilterPropId(''); setFilterFrom(''); setFilterTo(''); setSearch(''); setSortBy('date_desc') }}>
+          {(filterType !== 'all' || filterPropId || filterFrom || filterTo || search || sortField !== 'date' || sortDir !== 'desc') && (
+            <Button appearance="transparent" size="small" onClick={() => { setFilterType('all'); setFilterPropId(''); setFilterFrom(''); setFilterTo(''); setSearch(''); setSortField('date'); setSortDir('desc') }}>
               Clear filters
             </Button>
           )}
@@ -329,19 +321,28 @@ export default function Invoices() {
             <thead>
               <tr>
                 <th className={s.th}><Checkbox checked={allSelected} onChange={toggleSelectAll} /></th>
-                <th className={s.th}>Internal ID</th>
+                <th className={s.th}>
+                  <button className={s.thSortBtn} onClick={() => toggleSort('date')}>
+                    Date {sortField === 'date' && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                  </button>
+                </th>
+                <th className={s.th} style={{ minWidth: '92px' }}>
+                  <button className={s.thSortBtn} onClick={() => toggleSort('id')}>
+                    Internal ID {sortField === 'id' && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                  </button>
+                </th>
                 <th className={s.th}>Type</th>
                 <th className={s.th}>Category</th>
                 <th className={s.th}>Property</th>
                 <th className={s.th}>Contact</th>
-                <th className={s.th}>Date</th>
-                <th className={s.th}>Booking Ref</th>
-                <th className={s.th}>Nights</th>
-                <th className={s.th}>Guests</th>
                 <th className={s.th}>Base</th>
                 <th className={s.th}>Tax %</th>
                 <th className={s.th}>Tax €</th>
-                <th className={s.th}>Total Gross</th>
+                <th className={s.th}>
+                  <button className={s.thSortBtn} onClick={() => toggleSort('total')}>
+                    Total Gross {sortField === 'total' && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                  </button>
+                </th>
                 <th className={s.th} />
               </tr>
             </thead>
@@ -352,18 +353,15 @@ export default function Invoices() {
                 return (
                   <tr key={inv.cr9b5_pt_invoiceid} style={{ opacity: cancelled ? 0.6 : 1 }}>
                     <td className={s.td}>{!cancelled && <Checkbox checked={selectedIds.has(inv.cr9b5_pt_invoiceid)} onChange={() => toggleSelect(inv.cr9b5_pt_invoiceid)} />}</td>
-                    <td className={s.td} style={{ fontFamily: 'monospace', fontWeight: 600, whiteSpace: 'nowrap' }}>
-                      <a href="#" onClick={e => { e.preventDefault(); setViewInvoice(inv) }} style={{ color: cancelled ? tokens.colorNeutralForeground4 : tokens.colorBrandForegroundLink, textDecoration: cancelled ? 'line-through' : 'none' }}>{inv.cr9b5_internalid}</a>
+                    <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{fmtDate(inv.cr9b5_date)}</td>
+                    <td className={s.td} style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: '13px', whiteSpace: 'nowrap' }}>
+                      <a href="#" onClick={e => { e.preventDefault(); setViewInvoice(inv) }} style={{ color: cancelled ? tokens.colorNeutralForeground4 : tokens.colorBrandForegroundLink, textDecoration: cancelled ? 'line-through' : 'none' }}>{inv.cr9b5_internalid || '—'}</a>
                       {cancelled && <span style={{ marginLeft: 6, fontSize: '11px', color: tokens.colorPaletteRedForeground1, fontWeight: 400 }}>cancelled</span>}
                     </td>
                     <td className={s.td}><Badge appearance="tint" color={isOut ? 'success' : 'danger'}>{isOut ? 'Income' : 'Expense'}</Badge></td>
                     <td className={s.td} style={{ whiteSpace: 'nowrap', color: tokens.colorNeutralForeground3, fontSize: '12px' }}>{categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '—'}</td>
                     <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{(inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? <Text weight="semibold" style={{ color: tokens.colorBrandForeground1, fontSize: '12px' }}>All</Text> : propName(inv)}</td>
                     <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{contactName(inv)}</td>
-                    <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{fmtDate(inv.cr9b5_date)}</td>
-                    <td className={s.td} style={{ color: tokens.colorNeutralForeground4, fontSize: '12px' }}>{inv.cr9b5_bookingreference ?? '—'}</td>
-                    <td className={s.td} style={{ textAlign: 'right' }}>{inv.cr9b5_nights ?? '—'}</td>
-                    <td className={s.td} style={{ textAlign: 'right' }}>{(() => { const g = totalGuests(inv); return <span title={g.title}>{g.display}</span> })()}</td>
                     <td className={s.td} style={{ textAlign: 'right' }}>{formatMoney(inv.cr9b5_baseamount)}</td>
                     <td className={s.td} style={{ textAlign: 'right' }}>{inv.cr9b5_taxismanual ? <span style={{ color: tokens.colorPaletteMarigoldForeground1, fontSize: '12px', fontWeight: 600 }}>n/a</span> : (inv.cr9b5_taxrate ? `${inv.cr9b5_taxrate}%` : '—')}</td>
                     <td className={s.td} style={{ textAlign: 'right' }}>{formatMoney(inv.cr9b5_taxamount)}</td>

@@ -85,10 +85,11 @@ interface InvoiceFormState {
   type: number; propertyId: string; allProperties: boolean; categoryId: string; contactId: string
   date: string; description: string; baseAmount: string; taxRate: string; taxAmount: string; taxIsManual: boolean
   bookingRef: string; checkIn: string; checkOut: string; adults: string; children: string; babies: string
+  skipInternalId: boolean
 }
 
 function emptyForm(): InvoiceFormState {
-  return { type: TYPE_INCOMING, propertyId: '', allProperties: false, categoryId: '', contactId: '', date: new Date().toISOString().slice(0, 10), description: '', baseAmount: '', taxRate: '7', taxAmount: '', taxIsManual: false, bookingRef: '', checkIn: '', checkOut: '', adults: '', children: '', babies: '' }
+  return { type: TYPE_INCOMING, propertyId: '', allProperties: false, categoryId: '', contactId: '', date: new Date().toISOString().slice(0, 10), description: '', baseAmount: '', taxRate: '7', taxAmount: '', taxIsManual: false, bookingRef: '', checkIn: '', checkOut: '', adults: '', children: '', babies: '', skipInternalId: false }
 }
 function invoiceToFormState(inv: Cr9b5_pt_invoices): InvoiceFormState {
   const raw = inv as unknown as Record<string, unknown>
@@ -110,6 +111,7 @@ function invoiceToFormState(inv: Cr9b5_pt_invoices): InvoiceFormState {
     adults: inv.cr9b5_adults?.toString() ?? '',
     children: inv.cr9b5_children?.toString() ?? '',
     babies: inv.cr9b5_babies?.toString() ?? '',
+    skipInternalId: !inv.cr9b5_internalid,
   }
 }
 
@@ -253,7 +255,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       const property = properties.find(p => p.cr9b5_pt_propertyid === form.propertyId)
       let internalId = invoice?.cr9b5_internalid ?? ''
       let globalSequence = invoice?.cr9b5_globalsequence ?? 0
-      if (!isEdit) {
+      if (!isEdit && !form.skipInternalId) {
         globalSequence = await getNextSequence(invoiceYear)
         if (form.allProperties) internalId = buildInternalId('All', globalSequence, invoiceYear)
         else {
@@ -306,7 +308,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         onSaved(updated as unknown as Cr9b5_pt_invoices)
       } else {
         const created = result.data!
-        logActivity('Created', 'Invoice', internalId)
+        logActivity('Created', 'Invoice', internalId || '(no internal ID)')
         setCreatedInvoice(created)
         await loadAttachments(created.cr9b5_pt_invoiceid, form.type)
       }
@@ -358,7 +360,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   async function handleFileSelect(file: File) {
     if (!activeInvoice) return
     const prop = properties.find(p => p.cr9b5_pt_propertyid === form.propertyId)
-    const internalId = activeInvoice.cr9b5_internalid
+    const internalId = activeInvoice.cr9b5_internalid || activeInvoice.cr9b5_pt_invoiceid
     setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
     setAttachError(null)
     try {
@@ -434,6 +436,14 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                 ))}
               </div>
             </div>
+
+            {!isEdit && !readOnly && (
+              <Checkbox
+                label="No Internal ID (skip auto-generated sequence number)"
+                checked={form.skipInternalId}
+                onChange={(_, d) => setForm(f => ({ ...f, skipInternalId: !!d.checked }))}
+              />
+            )}
 
             {!isEdit && !readOnly && templates.length > 0 && (
               <Field label="Use Template" hint="Pre-fills category, description and default amount below.">
@@ -569,7 +579,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
               <div className={s.section} style={{ borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: '16px' }}>
                 {createdInvoice && (
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center', color: tokens.colorPaletteGreenForeground1, backgroundColor: tokens.colorPaletteGreenBackground1, border: `1px solid ${tokens.colorPaletteGreenBorder1}`, borderRadius: tokens.borderRadiusMedium, padding: '8px 12px', fontSize: '14px' }}>
-                    ✓ Invoice <strong>{createdInvoice.cr9b5_internalid}</strong> created. Add attachments below or click Done.
+                    ✓ Invoice {createdInvoice.cr9b5_internalid ? <>&nbsp;<strong>{createdInvoice.cr9b5_internalid}</strong>&nbsp;</> : ' (no internal ID) '}created. Add attachments below or click Done.
                   </div>
                 )}
                 <Text size={200} weight="semibold" style={{ textTransform: 'uppercase', color: tokens.colorNeutralForeground3 }}>Attachments</Text>
