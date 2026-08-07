@@ -13,7 +13,8 @@ export const Cr9b5_pt_activitylogscr9b5_tablemame = {
   233100000: 'Invoice',
   233100001: 'Contact',
   233100002: 'Property',
-  233100003: 'Attachment'
+  233100003: 'Attachment',
+  925060001: 'OwnerOccupancy'
 } as const;
 export type Cr9b5_pt_activitylogscr9b5_tablemame = keyof typeof Cr9b5_pt_activitylogscr9b5_tablemame;
 export const Cr9b5_pt_activitylogsstatecode = {

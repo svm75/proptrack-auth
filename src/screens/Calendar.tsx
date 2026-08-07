@@ -13,6 +13,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Svm_pt_owneroccupancies } from '../generated/models/Svm_pt_owneroccupanciesModel'
 import InvoiceForm from './InvoiceForm'
+import { OwnerOccupancyFormDialog } from '@/components/OwnerOccupancyFormDialog'
 
 const TYPE_OUTGOING = 233100001
 const OWNER_COLOR = '#9CA3AF'
@@ -39,6 +40,7 @@ interface CalEvent {
   start: Date
   end: Date
   resource: Cr9b5_pt_invoices | null
+  ownerRecord: Svm_pt_owneroccupancies | null
   color: string
   kind: 'invoice' | 'owner'
 }
@@ -88,7 +90,7 @@ const useStyles = makeStyles({
 
 function MiniMonth({ year, month, events, onSelectEvent }: {
   year: number; month: number; events: CalEvent[]
-  onSelectEvent: (inv: Cr9b5_pt_invoices) => void
+  onSelectEvent: (event: CalEvent) => void
 }) {
   const s = useStyles()
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7
@@ -120,7 +122,7 @@ function MiniMonth({ year, month, events, onSelectEvent }: {
               key={i}
               className={mergeClasses(s.miniCell, evts.length > 0 && s.miniCellClickable)}
               style={{ backgroundColor: bg, color: bg ? 'white' : tokens.colorNeutralForeground4 }}
-              onClick={() => { if (evts.length === 1 && evts[0].kind === 'invoice' && evts[0].resource) onSelectEvent(evts[0].resource) }}
+              onClick={() => { if (evts.length === 1) onSelectEvent(evts[0]) }}
               title={evts.map(e => e.title).join(', ')}
             >
               {day}
@@ -168,26 +170,25 @@ export default function CalendarScreen() {
   const [loading,    setLoading]    = useState(true)
   const [filterPropId, setFilterPropId] = useState('')
   const [viewInvoice,  setViewInvoice]  = useState<Cr9b5_pt_invoices | null>(null)
+  const [editOwnerRecord, setEditOwnerRecord] = useState<Svm_pt_owneroccupancies | null>(null)
   const [currentDate,  setCurrentDate]  = useState(new Date())
   const [viewMode,     setViewMode]     = useState<ViewMode>('monthly')
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
-      const [invRes, propRes, conRes, occRes] = await Promise.all([
-        Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_checkin asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
-      ])
-      setInvoices(invRes.data ?? [])
-      setProperties(propRes.data ?? [])
-      setContacts(conRes.data ?? [])
-      setOwnerOccupancy(occRes.data ?? [])
-      setLoading(false)
-    }
-    load()
-  }, [])
+  async function load() {
+    setLoading(true)
+    const [invRes, propRes, conRes, occRes] = await Promise.all([
+      Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_checkin asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+      Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
+    ])
+    setInvoices(invRes.data ?? [])
+    setProperties(propRes.data ?? [])
+    setContacts(conRes.data ?? [])
+    setOwnerOccupancy(occRes.data ?? [])
+    setLoading(false)
+  }
+  useEffect(() => { load() }, [])
 
   const colorMap = useMemo(() => {
     const map: Record<string, string> = {}
@@ -213,6 +214,7 @@ export default function CalendarScreen() {
           start: new Date(inv.cr9b5_checkin!),
           end:   addDays(new Date(inv.cr9b5_checkout!), 1),
           resource: inv,
+          ownerRecord: null,
           color: propId ? (colorMap[propId] ?? '#6b7280') : '#6b7280',
           kind: 'invoice' as const,
         }
@@ -234,6 +236,7 @@ export default function CalendarScreen() {
           start: new Date(r.svm_pt_fromdate!),
           end:   new Date(r.svm_pt_todate!),
           resource: null,
+          ownerRecord: r,
           color: OWNER_COLOR,
           kind: 'owner' as const,
         }
@@ -250,6 +253,11 @@ export default function CalendarScreen() {
   const eventPropGetter = (event: object) => ({
     style: { backgroundColor: (event as CalEvent).color, opacity: 0.92 },
   })
+
+  function selectEvent(event: CalEvent) {
+    if (event.kind === 'invoice' && event.resource) setViewInvoice(event.resource)
+    else if (event.kind === 'owner' && event.ownerRecord) setEditOwnerRecord(event.ownerRecord)
+  }
 
   return (
     <div className={s.root}>
@@ -314,7 +322,7 @@ export default function CalendarScreen() {
               onNavigate={d => setCurrentDate(d)}
               style={{ height: '100%', minHeight: 520 }}
               eventPropGetter={eventPropGetter}
-              onSelectEvent={e => { const ev = e as CalEvent; if (ev.kind === 'invoice' && ev.resource) setViewInvoice(ev.resource) }}
+              onSelectEvent={e => selectEvent(e as CalEvent)}
               tooltipAccessor={e => (e as CalEvent).title}
             />
           )}
@@ -336,7 +344,7 @@ export default function CalendarScreen() {
                     toolbar={false}
                     style={{ height: 440 }}
                     eventPropGetter={eventPropGetter}
-                    onSelectEvent={e => { const ev = e as CalEvent; if (ev.kind === 'invoice' && ev.resource) setViewInvoice(ev.resource) }}
+                    onSelectEvent={e => selectEvent(e as CalEvent)}
                     tooltipAccessor={e => (e as CalEvent).title}
                   />
                 </div>
@@ -348,7 +356,7 @@ export default function CalendarScreen() {
             <div className={s.annualGrid}>
               {Array.from({ length: 12 }, (_, m) => (
                 <MiniMonth key={m} year={year} month={m} events={events}
-                  onSelectEvent={inv => setViewInvoice(inv)} />
+                  onSelectEvent={selectEvent} />
               ))}
             </div>
           )}
@@ -358,6 +366,15 @@ export default function CalendarScreen() {
       {viewInvoice && (
         <InvoiceForm invoice={viewInvoice} properties={properties} contacts={contacts}
           readOnly onSaved={() => {}} onClose={() => setViewInvoice(null)} />
+      )}
+      {editOwnerRecord && (
+        <OwnerOccupancyFormDialog
+          record={editOwnerRecord}
+          properties={properties}
+          onSaved={async () => { setEditOwnerRecord(null); await load() }}
+          onClose={() => setEditOwnerRecord(null)}
+          onDeleted={async () => { setEditOwnerRecord(null); await load() }}
+        />
       )}
     </div>
   )

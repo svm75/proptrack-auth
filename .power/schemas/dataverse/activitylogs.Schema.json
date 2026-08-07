@@ -95,15 +95,18 @@
             "Invoice",
             "Contact",
             "Property",
-            "Attachment"
+            "Attachment",
+            "Owner Occupancy"
           ],
           "x-ms-enum-values": [
             233100000,
             233100001,
             233100002,
-            233100003
+            233100003,
+            925060001
           ],
           "Color": [
+            null,
             null,
             null,
             null,

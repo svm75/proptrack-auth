@@ -19,6 +19,8 @@ import type { Svm_pt_invoicecomments } from '@/generated/models/Svm_pt_invoiceco
 import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath, isAuthorized, authorizeWithPopup } from '@/services/googledrive'
 import { logActivity } from '@/services/activitylog'
 import { formatMoney } from '@/domain/money'
+import { nightsOverlap } from '@/domain/dateRanges'
+import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
 
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
@@ -215,6 +217,44 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   const baseNum = parseAmount(form.baseAmount)
   const taxNum = parseAmount(form.taxAmount)
   const totalGross = baseNum + taxNum
+
+  // Non-blocking conflict check: does this stay overlap another guest
+  // booking or an owner-occupancy block on the same property?
+  const [conflictWarnings, setConflictWarnings] = useState<string[]>([])
+  useEffect(() => {
+    let cancelled = false
+    async function check() {
+      if (readOnly || !isOutgoing || form.allProperties || !form.propertyId || !form.checkIn || !form.checkOut) {
+        setConflictWarnings([])
+        return
+      }
+      const [invRes, occRes] = await Promise.all([
+        Cr9b5_pt_invoicesService.getAll({
+          filter: `_cr9b5_property_value eq '${form.propertyId}' and cr9b5_type eq ${TYPE_OUTGOING} and statecode eq 0`,
+          select: ['cr9b5_pt_invoiceid', 'cr9b5_internalid', 'cr9b5_checkin', 'cr9b5_checkout'],
+        }),
+        Svm_pt_owneroccupanciesService.getAll({ filter: `_svm_pt_property_value eq '${form.propertyId}'` }),
+      ])
+      if (cancelled) return
+      const found: string[] = []
+      for (const other of invRes.data ?? []) {
+        if (invoice && other.cr9b5_pt_invoiceid === invoice.cr9b5_pt_invoiceid) continue
+        if (!other.cr9b5_checkin || !other.cr9b5_checkout) continue
+        if (nightsOverlap(form.checkIn, form.checkOut, other.cr9b5_checkin, other.cr9b5_checkout)) {
+          found.push(`Overlaps guest booking ${other.cr9b5_internalid ?? '(no internal ID)'}`)
+        }
+      }
+      for (const occ of occRes.data ?? []) {
+        if (!occ.svm_pt_fromdate || !occ.svm_pt_todate) continue
+        if (nightsOverlap(form.checkIn, form.checkOut, occ.svm_pt_fromdate, occ.svm_pt_todate)) {
+          found.push(`Overlaps owner occupancy block (${occ.svm_pt_fromdate.slice(0, 10)} – ${occ.svm_pt_todate.slice(0, 10)})`)
+        }
+      }
+      if (!cancelled) setConflictWarnings(found)
+    }
+    check()
+    return () => { cancelled = true }
+  }, [readOnly, isOutgoing, form.allProperties, form.propertyId, form.checkIn, form.checkOut, invoice])
 
   function setField<K extends keyof InvoiceFormState>(key: K, val: InvoiceFormState[K]) {
     setForm(f => ({ ...f, [key]: val }))
@@ -538,6 +578,12 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                     <Input type="date" value={form.checkOut} disabled={readOnly} onChange={(_, d) => setField('checkOut', d.value)} />
                   </Field>
                 </div>
+                {conflictWarnings.length > 0 && (
+                  <div style={{ backgroundColor: tokens.colorPaletteMarigoldBackground1, border: `1px solid ${tokens.colorPaletteMarigoldBorder1}`, borderRadius: tokens.borderRadiusMedium, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                    <Text weight="semibold" size={200} style={{ color: tokens.colorPaletteMarigoldForeground1 }}>⚠ Possible conflicts (not blocking):</Text>
+                    {conflictWarnings.map((w, i) => <Text key={i} size={200} style={{ color: tokens.colorPaletteMarigoldForeground1 }}>{w}</Text>)}
+                  </div>
+                )}
                 <div className={s.grid2}>
                   <Field label="Nights"><Input readOnly value={form.checkIn && form.checkOut ? String(nights) : ''} placeholder="auto" /></Field>
                   <Field label="Days"><Input readOnly value={form.checkIn && form.checkOut ? String(days) : ''} placeholder="auto" /></Field>
