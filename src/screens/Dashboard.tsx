@@ -17,6 +17,7 @@ import type { Svm_pt_owneroccupancies } from '../generated/models/Svm_pt_owneroc
 import CalendarScreen from './Calendar'
 import CategoryPnL from './CategoryPnL'
 import CategoryTrend from './CategoryTrend'
+import OccupancyTrend from './OccupancyTrend'
 import ExpenseBreakdown from './ExpenseBreakdown'
 import IncomevsForecast from './IncomevsForecast'
 import { formatMoney, formatMoneyShort } from '@/domain/money'
@@ -774,7 +775,7 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
 // MAIN DASHBOARD — tab shell
 // ============================================================
 
-type DashTab = 'overview' | 'comparison' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'expense-breakdown' | 'income-vs-forecast'
+type DashTab = 'overview' | 'comparison' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'occupancy-trend' | 'expense-breakdown' | 'income-vs-forecast'
 
 const TABS: { id: DashTab; label: string; printName: string }[] = [
   { id: 'overview',            label: 'Overview',            printName: 'overview' },
@@ -784,6 +785,7 @@ const TABS: { id: DashTab; label: string; printName: string }[] = [
   { id: 'calendar',            label: 'Calendar',             printName: 'calendar' },
   { id: 'cat-pnl',             label: 'Category P&L',         printName: 'category-pnl' },
   { id: 'cat-trend',           label: 'Category Trend',       printName: 'category-trend' },
+  { id: 'occupancy-trend',     label: 'Occupancy Trend',      printName: 'occupancy-trend' },
   { id: 'expense-breakdown',   label: 'Expense Breakdown',    printName: 'expense-breakdown' },
   { id: 'income-vs-forecast',  label: 'Income vs Forecast',   printName: 'income-vs-forecast' },
 ]
@@ -903,6 +905,7 @@ export default function Dashboard() {
             {tab==='calendar'            && <div style={{ flex: 1, minHeight: 0 }}><CalendarScreen /></div>}
             {tab==='cat-pnl'             && <CategoryPnL          invoices={invoices} properties={properties} references={references} contacts={contacts} />}
             {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
+            {tab==='occupancy-trend'     && <OccupancyTrend       invoices={invoices} properties={properties} ownerOccupancy={ownerOccupancy} />}
             {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
             {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} references={references} />}
           </div>

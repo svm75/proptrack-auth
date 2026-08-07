@@ -7,12 +7,15 @@ import { makeStyles, tokens, mergeClasses, Select, Text } from '@fluentui/react-
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
+import { Svm_pt_owneroccupanciesService } from '../generated/services/Svm_pt_owneroccupanciesService'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
+import type { Svm_pt_owneroccupancies } from '../generated/models/Svm_pt_owneroccupanciesModel'
 import InvoiceForm from './InvoiceForm'
 
 const TYPE_OUTGOING = 233100001
+const OWNER_COLOR = '#9CA3AF'
 
 const PROPERTY_COLORS = [
   '#4f46e5', '#059669', '#d97706', '#dc2626',
@@ -35,8 +38,9 @@ interface CalEvent {
   title: string
   start: Date
   end: Date
-  resource: Cr9b5_pt_invoices
+  resource: Cr9b5_pt_invoices | null
   color: string
+  kind: 'invoice' | 'owner'
 }
 
 function isActive(inv: Cr9b5_pt_invoices): boolean {
@@ -116,7 +120,7 @@ function MiniMonth({ year, month, events, onSelectEvent }: {
               key={i}
               className={mergeClasses(s.miniCell, evts.length > 0 && s.miniCellClickable)}
               style={{ backgroundColor: bg, color: bg ? 'white' : tokens.colorNeutralForeground4 }}
-              onClick={() => evts.length === 1 ? onSelectEvent(evts[0].resource) : undefined}
+              onClick={() => { if (evts.length === 1 && evts[0].kind === 'invoice' && evts[0].resource) onSelectEvent(evts[0].resource) }}
               title={evts.map(e => e.title).join(', ')}
             >
               {day}
@@ -160,6 +164,7 @@ export default function CalendarScreen() {
   const [invoices,   setInvoices]   = useState<Cr9b5_pt_invoices[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
+  const [ownerOccupancy, setOwnerOccupancy] = useState<Svm_pt_owneroccupancies[]>([])
   const [loading,    setLoading]    = useState(true)
   const [filterPropId, setFilterPropId] = useState('')
   const [viewInvoice,  setViewInvoice]  = useState<Cr9b5_pt_invoices | null>(null)
@@ -169,14 +174,16 @@ export default function CalendarScreen() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [invRes, propRes, conRes] = await Promise.all([
+      const [invRes, propRes, conRes, occRes] = await Promise.all([
         Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_checkin asc'], maxPageSize: 5000 }),
         Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
         Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+        Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
       ])
       setInvoices(invRes.data ?? [])
       setProperties(propRes.data ?? [])
       setContacts(conRes.data ?? [])
+      setOwnerOccupancy(occRes.data ?? [])
       setLoading(false)
     }
     load()
@@ -189,7 +196,7 @@ export default function CalendarScreen() {
   }, [properties])
 
   const events = useMemo<CalEvent[]>(() => {
-    return invoices
+    const guestEvents: CalEvent[] = invoices
       .filter(inv => {
         if (!isActive(inv)) return false
         if ((inv.cr9b5_type as unknown as number) !== TYPE_OUTGOING) return false
@@ -207,9 +214,33 @@ export default function CalendarScreen() {
           end:   addDays(new Date(inv.cr9b5_checkout!), 1),
           resource: inv,
           color: propId ? (colorMap[propId] ?? '#6b7280') : '#6b7280',
+          kind: 'invoice' as const,
         }
       })
-  }, [invoices, properties, colorMap, filterPropId])
+
+    const ownerEvents: CalEvent[] = ownerOccupancy
+      .filter(r => {
+        const raw = r as unknown as Record<string, unknown>
+        if (!r.svm_pt_fromdate || !r.svm_pt_todate) return false
+        if (filterPropId && (raw['_svm_pt_property_value'] as string) !== filterPropId) return false
+        return true
+      })
+      .map(r => {
+        const raw = r as unknown as Record<string, unknown>
+        const propId = raw['_svm_pt_property_value'] as string | undefined
+        const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
+        return {
+          title: ['Owner', prop?.cr9b5_name].filter(Boolean).join(' · '),
+          start: new Date(r.svm_pt_fromdate!),
+          end:   new Date(r.svm_pt_todate!),
+          resource: null,
+          color: OWNER_COLOR,
+          kind: 'owner' as const,
+        }
+      })
+
+    return [...guestEvents, ...ownerEvents]
+  }, [invoices, properties, colorMap, filterPropId, ownerOccupancy])
 
   const visibleProps = properties.filter(p => !filterPropId || p.cr9b5_pt_propertyid === filterPropId)
   const quarter      = Math.floor(currentDate.getMonth() / 3)
@@ -248,6 +279,10 @@ export default function CalendarScreen() {
                 {p.cr9b5_name}
               </span>
             ))}
+            <span className={s.legendItem}>
+              <span className={s.legendDot} style={{ backgroundColor: OWNER_COLOR }} />
+              Owner Occupancy
+            </span>
           </div>
         </div>
 
@@ -279,7 +314,7 @@ export default function CalendarScreen() {
               onNavigate={d => setCurrentDate(d)}
               style={{ height: '100%', minHeight: 520 }}
               eventPropGetter={eventPropGetter}
-              onSelectEvent={e => setViewInvoice((e as CalEvent).resource)}
+              onSelectEvent={e => { const ev = e as CalEvent; if (ev.kind === 'invoice' && ev.resource) setViewInvoice(ev.resource) }}
               tooltipAccessor={e => (e as CalEvent).title}
             />
           )}
@@ -301,7 +336,7 @@ export default function CalendarScreen() {
                     toolbar={false}
                     style={{ height: 440 }}
                     eventPropGetter={eventPropGetter}
-                    onSelectEvent={e => setViewInvoice((e as CalEvent).resource)}
+                    onSelectEvent={e => { const ev = e as CalEvent; if (ev.kind === 'invoice' && ev.resource) setViewInvoice(ev.resource) }}
                     tooltipAccessor={e => (e as CalEvent).title}
                   />
                 </div>
