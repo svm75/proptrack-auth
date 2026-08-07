@@ -1,18 +1,24 @@
-import { useEffect, useState } from 'react'
-import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
-import { Svm_pt_suppliercontractsService } from '../generated/services/Svm_pt_suppliercontractsService'
-import type { Cr9b5_pt_contacts, Cr9b5_pt_contactscr9b5_role } from '../generated/models/Cr9b5_pt_contactsModel'
-import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
-import { logActivity } from '../services/activitylog'
-
-const ROLE_CLIENT: Cr9b5_pt_contactscr9b5_role = 233100001
-const ROLE_SUPPLIER: Cr9b5_pt_contactscr9b5_role = 233100000
-const REF_CAT_EXPENSE = 233100006
+import { useState } from 'react'
+import {
+  makeStyles, tokens, Button, Input, Textarea, Field, Select, Checkbox, Text, Spinner, Badge,
+  TabList, Tab, type SelectTabData, type SelectTabEvent,
+  Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
+  Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
+} from '@fluentui/react-components'
+import {
+  useContacts, useProperties, useCategories, useSupplierContracts,
+  useSaveContact, useDeleteContact, useSaveSupplierContract, useDeleteSupplierContract, useRecordActivity,
+} from '@/hooks/data'
+import { ContactRole, ActivityAction, ActivityTable, type Contact, type SupplierContract } from '@/domain/types'
 
 type Tab = 'clients' | 'suppliers'
+
+const useStyles = makeStyles({
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '20px' },
+  search: { marginBottom: '16px', maxWidth: '360px' },
+  contractRow: { border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium, padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '8px' },
+  grid2: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' },
+})
 
 interface ContactForm {
   id: string | null
@@ -20,7 +26,7 @@ interface ContactForm {
   email: string
   taxid: string
   defaultdesc: string
-  role: Cr9b5_pt_contactscr9b5_role
+  role: ContactRole
   defaultCategoryId: string
 }
 
@@ -34,218 +40,122 @@ interface ContractRow {
   active: boolean
 }
 
-function emptyForm(role: Cr9b5_pt_contactscr9b5_role): ContactForm {
+function emptyForm(role: ContactRole): ContactForm {
   return { id: null, name: '', email: '', taxid: '', defaultdesc: '', role, defaultCategoryId: '' }
 }
-
 function emptyContractRow(): ContractRow {
   return { id: null, propertyId: '', allProperties: false, contractCount: 1, categoryId: '', description: '', active: true }
 }
+function contractToRow(c: SupplierContract): ContractRow {
+  return {
+    id: c.id, propertyId: c.propertyId ?? '', allProperties: c.allProperties,
+    contractCount: c.contractCount > 0 ? c.contractCount : 1,
+    categoryId: c.defaultCategoryId ?? '', description: c.defaultDescription ?? '', active: c.active,
+  }
+}
 
 export default function Contacts() {
-  const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [categories, setCategories] = useState<Cr9b5_pt_references[]>([])
-  const [contractInfo, setContractInfo] = useState<Record<string, { count: number; propertyCount: number }>>({})
-  const [loading, setLoading] = useState(true)
+  const s = useStyles()
+  const contactsQ = useContacts()
+  const propertiesQ = useProperties()
+  const categoriesQ = useCategories()
+  const contractsQ = useSupplierContracts()
+  const saveContact = useSaveContact()
+  const deleteContact = useDeleteContact()
+  const saveContract = useSaveSupplierContract()
+  const deleteContract = useDeleteSupplierContract()
+  const recordActivity = useRecordActivity()
+
+  const contacts = contactsQ.data ?? []
+  const properties = propertiesQ.data ?? []
+  const categories = (categoriesQ.data ?? []).filter(c => c.type === 233100006) // Expense categories
+  const allContracts = contractsQ.data ?? []
+
   const [tab, setTab] = useState<Tab>('clients')
   const [search, setSearch] = useState('')
-
   const [formOpen, setFormOpen] = useState(false)
-  const [form, setForm] = useState<ContactForm>(emptyForm(ROLE_CLIENT))
+  const [form, setForm] = useState<ContactForm>(emptyForm(ContactRole.Client))
   const [contractRows, setContractRows] = useState<ContractRow[]>([])
-  const [contractsLoading, setContractsLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
-  async function load() {
-    setLoading(true)
-    const [contactRes, propRes, catRes, contractRes] = await Promise.all([
-      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_referencesService.getAll({
-        filter: `cr9b5_referencetype eq ${REF_CAT_EXPENSE}`,
-        orderBy: ['cr9b5_sortorder asc'],
-        maxPageSize: 500,
-      }),
-      Svm_pt_suppliercontractsService.getAll({
-        filter: 'svm_pt_active eq true',
-        select: ['svm_pt_suppliercontractid', 'svm_pt_allproperties', '_svm_pt_contact_value', '_svm_property_value'],
-        maxPageSize: 5000,
-      }),
-    ])
-    setContacts(contactRes.data ?? [])
-    setProperties(propRes.data ?? [])
-    setCategories(catRes.data ?? [])
-
-    const propsByContact: Record<string, Set<string>> = {}
-    const countByContact: Record<string, number> = {}
-    for (const row of contractRes.data ?? []) {
-      const contactId = row._svm_pt_contact_value
-      if (!contactId) continue
-      countByContact[contactId] = (countByContact[contactId] ?? 0) + 1
-      const propKey = row.svm_pt_allproperties ? 'ALL' : (row._svm_property_value ?? '?')
-      ;(propsByContact[contactId] ??= new Set()).add(propKey)
-    }
-    const info: Record<string, { count: number; propertyCount: number }> = {}
-    for (const contactId of Object.keys(countByContact)) {
-      info[contactId] = { count: countByContact[contactId], propertyCount: propsByContact[contactId]?.size ?? 0 }
-    }
-    setContractInfo(info)
-    setLoading(false)
-  }
-
-  useEffect(() => { load() }, [])
-
-  const roleForTab = tab === 'clients' ? ROLE_CLIENT : ROLE_SUPPLIER
+  const roleForTab = tab === 'clients' ? ContactRole.Client : ContactRole.Supplier
   const searchLower = search.trim().toLowerCase()
   const visible = contacts
-    .filter(c => c.cr9b5_role === roleForTab)
-    .filter(c => {
-      if (!searchLower) return true
-      return [c.cr9b5_name, c.cr9b5_email, c.cr9b5_taxid, c.cr9b5_defaultdescription]
-        .some(v => v?.toLowerCase().includes(searchLower))
-    })
+    .filter(c => c.role === roleForTab)
+    .filter(c => !searchLower || [c.name, c.email, c.taxId, c.defaultDescription].some(v => v?.toLowerCase().includes(searchLower)))
+
+  const contractInfo = new Map<string, { count: number; propertyCount: number }>()
+  for (const c of allContracts.filter(c => c.active)) {
+    const entry = contractInfo.get(c.contactId) ?? { count: 0, propertyCount: 0 }
+    entry.count++
+    contractInfo.set(c.contactId, entry)
+  }
+  for (const contactId of contractInfo.keys()) {
+    const props = new Set(allContracts.filter(c => c.active && c.contactId === contactId).map(c => c.allProperties ? 'ALL' : c.propertyId))
+    contractInfo.get(contactId)!.propertyCount = props.size
+  }
 
   function openNew() {
     setForm(emptyForm(roleForTab))
-    setContractRows(roleForTab === ROLE_SUPPLIER ? [emptyContractRow()] : [])
+    setContractRows(roleForTab === ContactRole.Supplier ? [emptyContractRow()] : [])
     setFormError(null)
     setFormOpen(true)
   }
 
-  async function openEdit(c: Cr9b5_pt_contacts) {
-    setForm({
-      id: c.cr9b5_pt_contactid,
-      name: c.cr9b5_name,
-      email: c.cr9b5_email ?? '',
-      taxid: c.cr9b5_taxid ?? '',
-      defaultdesc: c.cr9b5_defaultdescription ?? '',
-      role: c.cr9b5_role ?? roleForTab,
-      defaultCategoryId: c._svm_defaultcategory_value ?? '',
-    })
+  function openEdit(c: Contact) {
+    setForm({ id: c.id, name: c.name, email: c.email ?? '', taxid: c.taxId ?? '', defaultdesc: c.defaultDescription ?? '', role: c.role, defaultCategoryId: c.defaultCategoryId ?? '' })
     setFormError(null)
-    setContractRows([])
-    setFormOpen(true)
-
-    if (c.cr9b5_role === ROLE_SUPPLIER) {
-      setContractsLoading(true)
-      const res = await Svm_pt_suppliercontractsService.getAll({
-        filter: `_svm_pt_contact_value eq '${c.cr9b5_pt_contactid}'`,
-        maxPageSize: 500,
-      })
-      const rows: ContractRow[] = (res.data ?? []).map(row => ({
-        id: row.svm_pt_suppliercontractid,
-        propertyId: row._svm_property_value ?? '',
-        allProperties: !!row.svm_pt_allproperties,
-        contractCount: row.svm_pt_contractcount && row.svm_pt_contractcount > 0 ? row.svm_pt_contractcount : 1,
-        categoryId: row._svm_defaultcategory_value ?? '',
-        description: row.svm_pt_defaultdescription ?? '',
-        active: row.svm_pt_active ?? true,
-      }))
+    if (c.role === ContactRole.Supplier) {
+      const rows = allContracts.filter(sc => sc.contactId === c.id).map(contractToRow)
       setContractRows(rows.length > 0 ? rows : [emptyContractRow()])
-      setContractsLoading(false)
+    } else {
+      setContractRows([])
     }
+    setFormOpen(true)
   }
 
-  function closeForm() {
-    setFormOpen(false)
-    setFormError(null)
-    setContractRows([])
-  }
-
-  function addContractRow() {
-    setContractRows(rs => [...rs, emptyContractRow()])
-  }
-
-  function updateContractRow(idx: number, patch: Partial<ContractRow>) {
-    setContractRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r))
-  }
-
-  function removeContractRow(idx: number) {
-    setContractRows(rs => rs.filter((_, i) => i !== idx))
-  }
+  function closeForm() { setFormOpen(false); setFormError(null); setContractRows([]) }
+  function addContractRow() { setContractRows(rs => [...rs, emptyContractRow()]) }
+  function updateContractRow(idx: number, patch: Partial<ContractRow>) { setContractRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r)) }
+  function removeContractRow(idx: number) { setContractRows(rs => rs.filter((_, i) => i !== idx)) }
 
   async function save() {
-    if (!form.name.trim()) {
-      setFormError('Name is required.')
-      return
-    }
+    if (!form.name.trim()) { setFormError('Name is required.'); return }
     const activeRows = contractRows.filter(r => r.propertyId || r.allProperties)
-    if (form.role === ROLE_SUPPLIER && contractRows.some(r => !r.propertyId && !r.allProperties)) {
+    if (form.role === ContactRole.Supplier && contractRows.some(r => !r.propertyId && !r.allProperties)) {
       setFormError('Every contract row needs a property, or "All properties" checked.')
       return
     }
-
     setSaving(true)
     setFormError(null)
-    const payload: Record<string, unknown> = {
-      cr9b5_name: form.name.trim(),
-      cr9b5_role: form.role,
-      cr9b5_email: form.email.trim() || undefined,
-      cr9b5_taxid: form.taxid.trim() || undefined,
-      cr9b5_defaultdescription: form.defaultdesc.trim() || undefined,
-    }
-    if (form.role === ROLE_SUPPLIER) {
-      payload.cr9b5_regularsupplier = activeRows.some(r => r.active)
-      if (form.defaultCategoryId) {
-        payload['svm_DefaultCategory@odata.bind'] = `/cr9b5_pt_references(${form.defaultCategoryId})`
-      }
-    }
-
     try {
-      let contactId = form.id
-      if (contactId) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Cr9b5_pt_contactsService.update(contactId, payload as any)
-        logActivity('Updated', 'Contact', form.name.trim())
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result = await Cr9b5_pt_contactsService.create(payload as any)
-        if (!result.success || !result.data) throw (result.error as Error) ?? new Error('Failed to create contact.')
-        contactId = result.data.cr9b5_pt_contactid
-        logActivity('Created', 'Contact', form.name.trim())
-      }
+      const contactPayload: Contact | Omit<Contact, 'id'> = {
+        ...(form.id ? { id: form.id } : {}),
+        name: form.name.trim(), role: form.role,
+        email: form.email.trim() || undefined, taxId: form.taxid.trim() || undefined,
+        defaultDescription: form.defaultdesc.trim() || undefined,
+        regularSupplier: form.role === ContactRole.Supplier ? activeRows.some(r => r.active) : undefined,
+        defaultCategoryId: form.defaultCategoryId || undefined,
+      } as Contact | Omit<Contact, 'id'>
+      const saved = await saveContact.mutateAsync(contactPayload)
+      recordActivity.mutate({ action: form.id ? ActivityAction.Updated : ActivityAction.Created, table: ActivityTable.Contact, recordName: form.name.trim() })
 
-      if (form.role === ROLE_SUPPLIER && contactId) {
-        const originalIds = new Set(
-          contractRows.filter(r => r.id).map(r => r.id as string)
-        )
-        // Rows the user removed from the form need to be deleted server-side.
+      if (form.role === ContactRole.Supplier) {
+        const originalIds = new Set(contractRows.filter(r => r.id).map(r => r.id as string))
         const keptIds = new Set(activeRows.filter(r => r.id).map(r => r.id as string))
-        const deletedIds = [...originalIds].filter(id => !keptIds.has(id))
-
-        for (const id of deletedIds) {
-          await Svm_pt_suppliercontractsService.delete(id)
-        }
-
+        for (const id of [...originalIds].filter(id => !keptIds.has(id))) await deleteContract.mutateAsync(id)
         for (const row of activeRows) {
-          const contractPayload: Record<string, unknown> = {
-            svm_pt_allproperties: row.allProperties,
-            svm_pt_contractcount: row.contractCount > 0 ? row.contractCount : 1,
-            svm_pt_defaultdescription: row.description.trim() || undefined,
-            svm_pt_active: row.active,
-            'svm_pt_contact@odata.bind': `/cr9b5_pt_contacts(${contactId})`,
-          }
-          if (!row.allProperties && row.propertyId) {
-            contractPayload['svm_Property@odata.bind'] = `/cr9b5_pt_properties(${row.propertyId})`
-          }
-          if (row.categoryId) {
-            contractPayload['svm_DefaultCategory@odata.bind'] = `/cr9b5_pt_references(${row.categoryId})`
-          }
-
-          if (row.id) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await Svm_pt_suppliercontractsService.update(row.id, contractPayload as any)
-          } else {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            await Svm_pt_suppliercontractsService.create(contractPayload as any)
-          }
+          await saveContract.mutateAsync({
+            ...(row.id ? { id: row.id } : {}),
+            contactId: saved.id, propertyId: row.allProperties ? undefined : row.propertyId,
+            allProperties: row.allProperties, contractCount: row.contractCount > 0 ? row.contractCount : 1,
+            defaultCategoryId: row.categoryId || undefined, defaultDescription: row.description.trim() || undefined,
+            active: row.active,
+          } as SupplierContract | Omit<SupplierContract, 'id'>)
         }
       }
-
       closeForm()
-      await load()
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Save failed.')
     } finally {
@@ -253,348 +163,161 @@ export default function Contacts() {
     }
   }
 
-  async function del(c: Cr9b5_pt_contacts) {
-    if (!confirm(`Delete "${c.cr9b5_name}"?`)) return
-    if (c.cr9b5_role === ROLE_SUPPLIER) {
-      const res = await Svm_pt_suppliercontractsService.getAll({
-        filter: `_svm_pt_contact_value eq '${c.cr9b5_pt_contactid}'`,
-        select: ['svm_pt_suppliercontractid'],
-        maxPageSize: 500,
-      })
-      for (const row of res.data ?? []) {
-        await Svm_pt_suppliercontractsService.delete(row.svm_pt_suppliercontractid)
-      }
+  async function del(c: Contact) {
+    if (!confirm(`Delete "${c.name}"?`)) return
+    if (c.role === ContactRole.Supplier) {
+      for (const sc of allContracts.filter(sc => sc.contactId === c.id)) await deleteContract.mutateAsync(sc.id)
     }
-    await Cr9b5_pt_contactsService.delete(c.cr9b5_pt_contactid)
-    logActivity('Deleted', 'Contact', c.cr9b5_name)
-    await load()
+    await deleteContact.mutateAsync(c.id)
+    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Contact, recordName: c.name })
   }
 
+  const loading = contactsQ.isLoading || propertiesQ.isLoading || categoriesQ.isLoading || contractsQ.isLoading
+
   return (
-    <div className="p-6 max-w-4xl">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold text-gray-900">Contacts</h1>
-        <button
-          onClick={openNew}
-          className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-        >
-          + Add {tab === 'clients' ? 'Client' : 'Supplier'}
-        </button>
+    <div style={{ maxWidth: '1000px' }}>
+      <div className={s.header}>
+        <Text size={600} weight="semibold">Contacts</Text>
+        <Button appearance="primary" onClick={openNew}>+ Add {tab === 'clients' ? 'Client' : 'Supplier'}</Button>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-5 border-b border-gray-200">
-        {(['clients', 'suppliers'] as Tab[]).map(t => {
-          const count = contacts.filter(c => c.cr9b5_role === (t === 'clients' ? ROLE_CLIENT : ROLE_SUPPLIER)).length
-          return (
-            <button
-              key={t}
-              onClick={() => setTab(t)}
-              className={[
-                'px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors capitalize',
-                tab === t
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700',
-              ].join(' ')}
-            >
-              {t} <span className="ml-1 text-xs text-gray-400">({count})</span>
-            </button>
-          )
-        })}
+      <TabList selectedValue={tab} onTabSelect={(_: SelectTabEvent, d: SelectTabData) => setTab(d.value as Tab)} style={{ marginBottom: '16px' }}>
+        <Tab value="clients">Clients ({contacts.filter(c => c.role === ContactRole.Client).length})</Tab>
+        <Tab value="suppliers">Suppliers ({contacts.filter(c => c.role === ContactRole.Supplier).length})</Tab>
+      </TabList>
+
+      <div className={s.search}>
+        <Input value={search} onChange={(_, d) => setSearch(d.value)} placeholder={`Search ${tab} by name, email, tax ID or description…`} style={{ width: '100%' }} />
       </div>
 
-      {/* Search */}
-      <div className="mb-4">
-        <input
-          type="text"
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder={`Search ${tab} by name, email, tax ID or description…`}
-          className="w-full max-w-sm border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-      </div>
-
-      {/* Table */}
-      {loading ? (
-        <p className="text-gray-500">Loading…</p>
-      ) : visible.length === 0 ? (
-        <p className="text-gray-400 text-sm">
-          {searchLower ? `No ${tab} match "${search}".` : `No ${tab} yet. Add one above.`}
-        </p>
+      {loading ? <Spinner label="Loading…" /> : visible.length === 0 ? (
+        <Text style={{ color: tokens.colorNeutralForeground4 }}>{searchLower ? `No ${tab} match "${search}".` : `No ${tab} yet. Add one above.`}</Text>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-left text-xs text-gray-400 bg-gray-50 border-b border-gray-200">
-                <th className="px-4 py-2.5 font-medium">Name</th>
-                <th className="px-4 py-2.5 font-medium">Email</th>
-                <th className="px-4 py-2.5 font-medium">Tax ID</th>
-                <th className="px-4 py-2.5 font-medium">Default Description</th>
-                {tab === 'suppliers' && <th className="px-4 py-2.5 font-medium">Default Category</th>}
-                {tab === 'suppliers' && <th className="px-4 py-2.5 font-medium">Regular</th>}
-                <th className="px-4 py-2.5 w-20"></th>
-              </tr>
-            </thead>
-            <tbody>
-              {visible.map(c => (
-                <tr key={c.cr9b5_pt_contactid} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
-                  <td className="px-4 py-3 font-medium text-gray-900">{c.cr9b5_name}</td>
-                  <td className="px-4 py-3 text-gray-500">
-                    {c.cr9b5_email
-                      ? <a href={`mailto:${c.cr9b5_email}`} className="hover:text-indigo-600">{c.cr9b5_email}</a>
-                      : <span className="text-gray-300">—</span>
-                    }
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 font-mono text-xs">
-                    {c.cr9b5_taxid ?? <span className="text-gray-300 font-sans">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 max-w-xs truncate">
-                    {c.cr9b5_defaultdescription ?? <span className="text-gray-300">—</span>}
-                  </td>
+        <Table size="small">
+          <TableHeader>
+            <TableRow>
+              <TableHeaderCell>Name</TableHeaderCell>
+              <TableHeaderCell>Email</TableHeaderCell>
+              <TableHeaderCell>Tax ID</TableHeaderCell>
+              <TableHeaderCell>Default Description</TableHeaderCell>
+              {tab === 'suppliers' && <TableHeaderCell>Default Category</TableHeaderCell>}
+              {tab === 'suppliers' && <TableHeaderCell>Regular</TableHeaderCell>}
+              <TableHeaderCell />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {visible.map(c => {
+              const info = contractInfo.get(c.id)
+              const catName = categories.find(cat => cat.id === c.defaultCategoryId)?.value
+              return (
+                <TableRow key={c.id}>
+                  <TableCell style={{ fontWeight: 600 }}>{c.name}</TableCell>
+                  <TableCell>{c.email ? <a href={`mailto:${c.email}`}>{c.email}</a> : '—'}</TableCell>
+                  <TableCell style={{ fontFamily: 'monospace' }}>{c.taxId ?? '—'}</TableCell>
+                  <TableCell>{c.defaultDescription ?? '—'}</TableCell>
+                  {tab === 'suppliers' && <TableCell>{catName ?? '—'}</TableCell>}
                   {tab === 'suppliers' && (
-                    <td className="px-4 py-3 text-gray-500">
-                      {c.svm_defaultcategoryname ?? <span className="text-gray-300">—</span>}
-                    </td>
+                    <TableCell>
+                      {info && info.count > 0 ? (
+                        <Badge appearance="tint" color="success">Yes · {info.propertyCount} propert{info.propertyCount === 1 ? 'y' : 'ies'}</Badge>
+                      ) : <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>No</Text>}
+                    </TableCell>
                   )}
-                  {tab === 'suppliers' && (
-                    <td className="px-4 py-3">
-                      {(contractInfo[c.cr9b5_pt_contactid]?.count ?? 0) > 0 ? (
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-teal-50 text-teal-700">
-                          Yes · {contractInfo[c.cr9b5_pt_contactid].propertyCount} propert{contractInfo[c.cr9b5_pt_contactid].propertyCount === 1 ? 'y' : 'ies'}
-                        </span>
-                      ) : (
-                        <span className="text-gray-300 text-xs">No</span>
-                      )}
-                    </td>
-                  )}
-                  <td className="px-4 py-3">
-                    <div className="flex gap-2 justify-end">
-                      <button
-                        onClick={() => openEdit(c)}
-                        className="text-indigo-600 hover:text-indigo-800 text-xs font-medium"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => del(c)}
-                        className="text-red-500 hover:text-red-700 text-xs font-medium"
-                      >
-                        Delete
-                      </button>
+                  <TableCell>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <Button size="small" appearance="subtle" onClick={() => openEdit(c)}>Edit</Button>
+                      <Button size="small" appearance="subtle" onClick={() => del(c)}>Delete</Button>
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                  </TableCell>
+                </TableRow>
+              )
+            })}
+          </TableBody>
+        </Table>
       )}
 
-      {/* Modal */}
-      {formOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl mx-4 p-6 max-h-[90vh] overflow-y-auto">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              {form.id ? 'Edit Contact' : `Add ${form.role === ROLE_CLIENT ? 'Client' : 'Supplier'}`}
-            </h2>
+      <Dialog open={formOpen} onOpenChange={(_, d) => !d.open && closeForm()}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{form.id ? 'Edit Contact' : `Add ${form.role === ContactRole.Client ? 'Client' : 'Supplier'}`}</DialogTitle>
+            <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '65vh', overflowY: 'auto' }}>
+              <Field label="Name" required>
+                <Input value={form.name} onChange={(_, d) => setForm(f => ({ ...f, name: d.value }))} placeholder="Full name or company name" />
+              </Field>
+              <Field label="Email">
+                <Input type="email" value={form.email} onChange={(_, d) => setForm(f => ({ ...f, email: d.value }))} placeholder="Optional" />
+              </Field>
+              <Field label="Tax ID">
+                <Input value={form.taxid} onChange={(_, d) => setForm(f => ({ ...f, taxid: d.value }))} placeholder="Optional" />
+              </Field>
+              <Field label="Default Description">
+                <Textarea value={form.defaultdesc} onChange={(_, d) => setForm(f => ({ ...f, defaultdesc: d.value }))} rows={3} placeholder="Pre-fills the Description field on new invoices for this contact" />
+              </Field>
 
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Full name or company name"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Email</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Optional"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Tax ID</label>
-                <input
-                  type="text"
-                  value={form.taxid}
-                  onChange={e => setForm(f => ({ ...f, taxid: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Optional"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Default Description</label>
-                <textarea
-                  value={form.defaultdesc}
-                  onChange={e => setForm(f => ({ ...f, defaultdesc: e.target.value }))}
-                  rows={3}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                  placeholder="Pre-fills the Description field on new invoices for this contact"
-                />
-              </div>
-
-              {form.role === ROLE_SUPPLIER && (
+              {form.role === ContactRole.Supplier && (
                 <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Default Category</label>
-                    <select
-                      value={form.defaultCategoryId}
-                      onChange={e => setForm(f => ({ ...f, defaultCategoryId: e.target.value }))}
-                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    >
+                  <Field label="Default Category" hint="Falls back into every property contract below unless overridden there.">
+                    <Select value={form.defaultCategoryId} onChange={e => setForm(f => ({ ...f, defaultCategoryId: e.target.value }))}>
                       <option value="">No default category</option>
-                      {categories.map(cat => (
-                        <option key={cat.cr9b5_pt_referenceid} value={cat.cr9b5_pt_referenceid}>{cat.cr9b5_value}</option>
-                      ))}
-                    </select>
-                    <p className="mt-1 text-xs text-gray-400">Falls back into every property contract below unless overridden there.</p>
-                  </div>
+                      {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.value}</option>)}
+                    </Select>
+                  </Field>
 
                   <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block text-sm font-medium text-gray-700">Property Contracts</label>
-                      <button
-                        type="button"
-                        onClick={addContractRow}
-                        className="text-xs font-medium text-indigo-600 hover:text-indigo-800"
-                      >
-                        + Add contract
-                      </button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <Text weight="semibold" size={300}>Property Contracts</Text>
+                      <Button size="small" appearance="transparent" onClick={addContractRow}>+ Add contract</Button>
                     </div>
-                    <p className="text-xs text-gray-400 mb-2">
+                    <Text size={200} style={{ color: tokens.colorNeutralForeground4, display: 'block', marginBottom: '8px' }}>
                       One row per recurring contract. A supplier with two contracts on a property will produce two rows in Regular Invoices.
-                    </p>
+                    </Text>
 
-                    {contractsLoading ? (
-                      <p className="text-sm text-gray-400">Loading contracts…</p>
-                    ) : (
-                      <div className="space-y-2">
-                        {contractRows.map((row, idx) => (
-                          <div key={idx} className="border border-gray-200 rounded-lg p-3 space-y-2">
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-1">Property</label>
-                                <select
-                                  value={row.propertyId}
-                                  onChange={e => updateContractRow(idx, { propertyId: e.target.value })}
-                                  disabled={row.allProperties}
-                                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                  <option value="">Select property…</option>
-                                  {properties.map(p => (
-                                    <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-1">Contract count</label>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  step="1"
-                                  value={row.contractCount}
-                                  onChange={e => updateContractRow(idx, { contractCount: parseInt(e.target.value, 10) || 1 })}
-                                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-2">
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-1">Category override</label>
-                                <select
-                                  value={row.categoryId}
-                                  onChange={e => updateContractRow(idx, { categoryId: e.target.value })}
-                                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                >
-                                  <option value="">Use supplier default</option>
-                                  {categories.map(cat => (
-                                    <option key={cat.cr9b5_pt_referenceid} value={cat.cr9b5_pt_referenceid}>{cat.cr9b5_value}</option>
-                                  ))}
-                                </select>
-                              </div>
-                              <div>
-                                <label className="block text-xs text-gray-500 mb-1">Description override</label>
-                                <input
-                                  type="text"
-                                  value={row.description}
-                                  onChange={e => updateContractRow(idx, { description: e.target.value })}
-                                  className="w-full border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                  placeholder="Optional"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="flex items-center justify-between">
-                              <div className="flex items-center gap-4">
-                                <label className="flex items-center gap-1.5 text-xs text-gray-600">
-                                  <input
-                                    type="checkbox"
-                                    checked={row.allProperties}
-                                    onChange={e => updateContractRow(idx, { allProperties: e.target.checked, propertyId: e.target.checked ? '' : row.propertyId })}
-                                  />
-                                  All properties
-                                </label>
-                                <label className="flex items-center gap-1.5 text-xs text-gray-600">
-                                  <input
-                                    type="checkbox"
-                                    checked={row.active}
-                                    onChange={e => updateContractRow(idx, { active: e.target.checked })}
-                                  />
-                                  Active
-                                </label>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => removeContractRow(idx)}
-                                className="text-red-500 hover:text-red-700 text-xs font-medium"
-                              >
-                                Remove
-                              </button>
-                            </div>
+                    {contractRows.map((row, idx) => (
+                      <div key={idx} className={s.contractRow}>
+                        <div className={s.grid2}>
+                          <Field label="Property">
+                            <Select value={row.propertyId} disabled={row.allProperties} onChange={e => updateContractRow(idx, { propertyId: e.target.value })}>
+                              <option value="">Select property…</option>
+                              {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </Select>
+                          </Field>
+                          <Field label="Contract count">
+                            <Input type="number" min={1} value={String(row.contractCount)} onChange={(_, d) => updateContractRow(idx, { contractCount: parseInt(d.value, 10) || 1 })} />
+                          </Field>
+                        </div>
+                        <div className={s.grid2}>
+                          <Field label="Category override">
+                            <Select value={row.categoryId} onChange={e => updateContractRow(idx, { categoryId: e.target.value })}>
+                              <option value="">Use supplier default</option>
+                              {categories.map(cat => <option key={cat.id} value={cat.id}>{cat.value}</option>)}
+                            </Select>
+                          </Field>
+                          <Field label="Description override">
+                            <Input value={row.description} onChange={(_, d) => updateContractRow(idx, { description: d.value })} placeholder="Optional" />
+                          </Field>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', gap: '16px' }}>
+                            <Checkbox label="All properties" checked={row.allProperties} onChange={(_, d) => updateContractRow(idx, { allProperties: !!d.checked, propertyId: d.checked ? '' : row.propertyId })} />
+                            <Checkbox label="Active" checked={row.active} onChange={(_, d) => updateContractRow(idx, { active: !!d.checked })} />
                           </div>
-                        ))}
-                        {contractRows.length === 0 && (
-                          <p className="text-sm text-gray-400">No contracts yet. Add one so this supplier appears in Regular Invoices.</p>
-                        )}
+                          <Button size="small" appearance="subtle" onClick={() => removeContractRow(idx)}>Remove</Button>
+                        </div>
                       </div>
-                    )}
+                    ))}
+                    {contractRows.length === 0 && <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>No contracts yet. Add one so this supplier appears in Regular Invoices.</Text>}
                   </div>
                 </>
               )}
-            </div>
-
-            {formError && <p className="mt-3 text-sm text-red-600">{formError}</p>}
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button
-                onClick={closeForm}
-                className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={save}
-                disabled={saving}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-              >
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              {formError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{formError}</Text>}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={closeForm}>Cancel</Button>
+              <Button appearance="primary" disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </div>
   )
 }
