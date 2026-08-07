@@ -1,70 +1,97 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_attachmentsService } from '../generated/services/Cr9b5_pt_attachmentsService'
-import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
-import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
-import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
-import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
-import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
-import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
-import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
-import { logActivity } from '../services/activitylog'
+import {
+  makeStyles, tokens, Button, Input, Field, Textarea, Text, Spinner, Badge,
+  Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
+  Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
+} from '@fluentui/react-components'
+import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
+import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
+import { Cr9b5_pt_attachmentsService } from '@/generated/services/Cr9b5_pt_attachmentsService'
+import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
+import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
+import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
+import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
+import type { Cr9b5_pt_attachments } from '@/generated/models/Cr9b5_pt_attachmentsModel'
+import type { Cr9b5_pt_references } from '@/generated/models/Cr9b5_pt_referencesModel'
+import type { Cr9b5_pt_invoices } from '@/generated/models/Cr9b5_pt_invoicesModel'
+import { useRecordActivity } from '@/hooks/data'
+import { ActivityAction, ActivityTable } from '@/domain/types'
+import { formatMoney } from '@/domain/money'
+import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath, isAuthorized, authorizeWithPopup } from '@/services/googledrive'
 import InvoiceForm from './InvoiceForm'
 import PropertyConnectionDiagram from './PropertyConnectionDiagram'
-import { fmtEur } from '../utils/formatters'
+
+// NOTE: InvoiceForm and PropertyConnectionDiagram haven't been migrated to the domain-typed
+// hooks yet, so this screen still fetches raw Cr9b5_pt_* records directly (like the
+// pre-migration version) rather than via `useProperties()`/`useContacts()` — the Fluent UI
+// rewrite here is presentation-only. Revisit once those two are migrated.
 
 const PROP_REF_TYPE = 233100000
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
 
-interface PropForm {
-  id: string | null
-  name: string
-  shortid: string
-  address: string
-  notes: string
-}
-
-const EMPTY_FORM: PropForm = { id: null, name: '', shortid: '', address: '', notes: '' }
-
-interface AttachForm {
-  typeRefId: string
-  fileName: string
-  file: File | null
-  uploading: boolean
-  driveId: string
-  driveUrl: string
-}
-
-const EMPTY_ATTACH: AttachForm = { typeRefId: '', fileName: '', file: null, uploading: false, driveId: '', driveUrl: '' }
-
-interface YearSummary {
-  year: number
-  income: number
-  expenses: number
-}
-
+const useStyles = makeStyles({
+  root: { display: 'flex', height: '100%', overflow: 'hidden', gap: '0' },
+  left: { width: '50%', flexShrink: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden', borderRight: `1px solid ${tokens.colorNeutralStroke2}` },
+  leftHeader: { padding: '16px 24px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' },
+  grid: { flex: 1, overflowY: 'auto', padding: '24px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' },
+  card: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px', cursor: 'pointer' },
+  right: { flex: 1, position: 'relative', overflow: 'hidden', backgroundColor: tokens.colorNeutralBackground2 },
+  emptyState: { display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%' },
+  overlay: { position: 'absolute', inset: 0, display: 'flex' },
+  clickOutside: { flex: 1, cursor: 'pointer' },
+  panel: { flex: '0 0 66%', backgroundColor: tokens.colorNeutralBackground1, borderLeft: `1px solid ${tokens.colorNeutralStroke2}`, boxShadow: tokens.shadow28, display: 'flex', flexDirection: 'column', overflow: 'hidden' },
+  panelHeader: { padding: '12px 16px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' },
+  sectionHeader: { padding: '8px 16px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  scrollSection: { overflowY: 'auto', flex: 1 },
+})
 
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
-export default function Properties() {
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
-  const [invoiceCounts, setInvoiceCounts] = useState<Record<string, number>>({})
-  const [loading, setLoading] = useState(true)
+interface PropForm { id: string | null; name: string; shortid: string; address: string; notes: string }
+const EMPTY_FORM: PropForm = { id: null, name: '', shortid: '', address: '', notes: '' }
 
-  // Property form modal
+interface AttachForm { typeRefId: string; fileName: string; file: File | null; uploading: boolean; driveId: string; driveUrl: string }
+const EMPTY_ATTACH: AttachForm = { typeRefId: '', fileName: '', file: null, uploading: false, driveId: '', driveUrl: '' }
+
+interface YearSummary { year: number; income: number; expenses: number }
+
+export default function Properties() {
+  const s = useStyles()
+  const recordActivity = useRecordActivity()
+
+  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
+  const [contactsList, setContactsList] = useState<Cr9b5_pt_contacts[]>([])
+  const [loading, setLoading] = useState(true)
+  const [invoiceCounts, setInvoiceCounts] = useState<Record<string, number>>({})
+  const [saving, setSaving] = useState(false)
+
+  async function load() {
+    setLoading(true)
+    const [propsRes, invRes, conRes] = await Promise.all([
+      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_invoicesService.getAll({ select: ['cr9b5_pt_invoiceid', '_cr9b5_property_value'], maxPageSize: 5000 }),
+      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
+    ])
+    const counts: Record<string, number> = {}
+    for (const inv of (invRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
+      const pid = inv['_cr9b5_property_value'] as string | undefined
+      if (pid) counts[pid] = (counts[pid] ?? 0) + 1
+    }
+    setProperties(propsRes.data ?? [])
+    setContactsList(conRes.data ?? [])
+    setInvoiceCounts(counts)
+    setLoading(false)
+  }
+  useEffect(() => { load() }, [])
+
   const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState<PropForm>(EMPTY_FORM)
-  const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
-  // Diagram overlay
   const [diagramPropId, setDiagramPropId] = useState<string | null>(null)
   const [diagramInvoices, setDiagramInvoices] = useState<Cr9b5_pt_invoices[]>([])
   const [diagramLoading, setDiagramLoading] = useState(false)
@@ -73,22 +100,18 @@ export default function Properties() {
     setDiagramLoading(true)
     setDiagramPropId(propId)
     const res = await Cr9b5_pt_invoicesService.getAll({
-      filter: `_cr9b5_property_value eq '${propId}'`,
-      orderBy: ['cr9b5_date desc'],
-      maxPageSize: 5000,
+      filter: `_cr9b5_property_value eq '${propId}'`, orderBy: ['cr9b5_date desc'], maxPageSize: 5000,
     })
     setDiagramInvoices(res.data ?? [])
     setDiagramLoading(false)
   }
 
-  // Detail panel
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null)
   const [propInvoices, setPropInvoices] = useState<Cr9b5_pt_invoices[]>([])
   const [propInvLoading, setPropInvLoading] = useState(false)
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
   const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
 
-  // Attachments sub-panel (inside detail panel)
   const [attachOpen, setAttachOpen] = useState(false)
   const [attachments, setAttachments] = useState<Cr9b5_pt_attachments[]>([])
   const [attachRefTypes, setAttachRefTypes] = useState<Cr9b5_pt_references[]>([])
@@ -99,85 +122,40 @@ export default function Properties() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [gdConnected, setGdConnected] = useState(isAuthorized())
 
-  async function load() {
-    setLoading(true)
-    const [propsRes, invRes, conRes] = await Promise.all([
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_invoicesService.getAll({ select: ['cr9b5_pt_invoiceid', '_cr9b5_property_value'], maxPageSize: 5000 }),
-      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-    ])
-    const allProps = propsRes.data ?? []
-    const allInv = (invRes.data ?? []) as unknown as Array<Record<string, unknown>>
+  const contactById = useMemo(() => new Map(contactsList.map(c => [c.cr9b5_pt_contactid, c])), [contactsList])
 
-    const counts: Record<string, number> = {}
-    for (const inv of allInv) {
-      const pid = inv['_cr9b5_property_value'] as string | undefined
-      if (pid) counts[pid] = (counts[pid] ?? 0) + 1
-    }
-    setProperties(allProps)
-    setContacts(conRes.data ?? [])
-    setInvoiceCounts(counts)
-    setLoading(false)
-  }
-
-  useEffect(() => { load() }, [])
-
-  // Id → contact index, built once per data load instead of Array.find()
-  // scanning the full contact list for every invoice row on every render.
-  const contactById = useMemo(
-    () => new Map(contacts.map(c => [c.cr9b5_pt_contactid, c])),
-    [contacts]
-  )
-
-  // --- Property CRUD ---
-
-  function openNew() {
-    setForm(EMPTY_FORM)
-    setFormError(null)
-    setFormOpen(true)
-  }
-
+  function openNew() { setForm(EMPTY_FORM); setFormError(null); setFormOpen(true) }
   function openEdit(p: Cr9b5_pt_properties) {
     setForm({ id: p.cr9b5_pt_propertyid, name: p.cr9b5_name, shortid: p.cr9b5_shortid, address: p.cr9b5_address, notes: p.cr9b5_notes ?? '' })
-    setFormError(null)
-    setFormOpen(true)
+    setFormError(null); setFormOpen(true)
   }
+  function closeForm() { setFormOpen(false); setForm(EMPTY_FORM); setFormError(null) }
 
-  function closeForm() {
-    setFormOpen(false)
-    setForm(EMPTY_FORM)
-    setFormError(null)
-  }
-
-  async function saveProperty() {
+  async function handleSaveProperty() {
     if (!form.name.trim() || !form.shortid.trim() || !form.address.trim()) {
       setFormError('Name, Short ID, and Address are required.')
       return
     }
     const shortIdUpper = form.shortid.trim().toUpperCase()
-    const duplicate = properties.find(
-      p => p.cr9b5_shortid.toUpperCase() === shortIdUpper && p.cr9b5_pt_propertyid !== form.id
-    )
+    const duplicate = properties.find(p => p.cr9b5_shortid.toUpperCase() === shortIdUpper && p.cr9b5_pt_propertyid !== form.id)
     if (duplicate) {
       setFormError(`Short ID "${shortIdUpper}" is already used by "${duplicate.cr9b5_name}".`)
       return
     }
-    setSaving(true)
     setFormError(null)
-    const payload = {
-      cr9b5_name: form.name.trim(),
-      cr9b5_shortid: shortIdUpper,
-      cr9b5_address: form.address.trim(),
-      cr9b5_notes: form.notes.trim() || undefined,
-    }
+    setSaving(true)
     try {
+      const payload = {
+        cr9b5_name: form.name.trim(), cr9b5_shortid: shortIdUpper,
+        cr9b5_address: form.address.trim(), cr9b5_notes: form.notes.trim() || undefined,
+      }
       if (form.id) {
         await Cr9b5_pt_propertiesService.update(form.id, payload)
-        logActivity('Updated', 'Property', form.name.trim())
+        recordActivity.mutate({ action: ActivityAction.Updated, table: ActivityTable.Property, recordName: form.name.trim() })
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Cr9b5_pt_propertiesService.create(payload as any)
-        logActivity('Created', 'Property', form.name.trim())
+        recordActivity.mutate({ action: ActivityAction.Created, table: ActivityTable.Property, recordName: form.name.trim() })
       }
       closeForm()
       await load()
@@ -188,106 +166,63 @@ export default function Properties() {
     }
   }
 
-  async function deleteProperty(p: Cr9b5_pt_properties) {
+  async function handleDeleteProperty(p: Cr9b5_pt_properties) {
     const count = invoiceCounts[p.cr9b5_pt_propertyid] ?? 0
-    if (count > 0) {
-      alert(`Cannot delete — "${p.cr9b5_name}" has ${count} invoice(s).`)
-      return
-    }
+    if (count > 0) { alert(`Cannot delete — "${p.cr9b5_name}" has ${count} invoice(s).`); return }
     if (!confirm(`Delete property "${p.cr9b5_name}"?`)) return
     await Cr9b5_pt_propertiesService.delete(p.cr9b5_pt_propertyid)
-    logActivity('Deleted', 'Property', p.cr9b5_name)
+    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Property, recordName: p.cr9b5_name })
     if (selectedPropId === p.cr9b5_pt_propertyid) setSelectedPropId(null)
     await load()
   }
 
-  // --- Detail panel ---
-
   async function openDetail(propId: string) {
-    if (selectedPropId === propId) {
-      setSelectedPropId(null)
-      return
-    }
-    setSelectedPropId(propId)
-    setAttachOpen(false)
-    setPropInvLoading(true)
-    setSelectedYear(null)
-    setPropInvoices([])
-
+    if (selectedPropId === propId) { setSelectedPropId(null); return }
+    setSelectedPropId(propId); setAttachOpen(false); setPropInvLoading(true); setSelectedYear(null); setPropInvoices([])
     const res = await Cr9b5_pt_invoicesService.getAll({
-      filter: `_cr9b5_property_value eq '${propId}'`,
-      orderBy: ['cr9b5_date desc'],
-      maxPageSize: 5000,
+      filter: `_cr9b5_property_value eq '${propId}'`, orderBy: ['cr9b5_date desc'], maxPageSize: 5000,
     })
     const invs = res.data ?? []
     setPropInvoices(invs)
-
-    // default to most recent year > 2020
     const years = Array.from(new Set(
-      invs
-        .map(i => i.cr9b5_date ? new Date(i.cr9b5_date).getFullYear() : null)
-        .filter((y): y is number => y !== null && y > 2020)
+      invs.map(i => i.cr9b5_date ? new Date(i.cr9b5_date).getFullYear() : null).filter((y): y is number => y !== null && y > 2020)
     )).sort((a, b) => b - a)
     setSelectedYear(years[0] ?? null)
     setPropInvLoading(false)
   }
+  function closeDetail() { setSelectedPropId(null); setAttachOpen(false) }
 
-  function closeDetail() {
-    setSelectedPropId(null)
-    setAttachOpen(false)
-  }
-
-  // Year summaries
-  const yearSummaries: YearSummary[] = (() => {
+  const yearSummaries: YearSummary[] = useMemo(() => {
     const map = new Map<number, YearSummary>()
     for (const inv of propInvoices) {
       if (!inv.cr9b5_date) continue
       const y = new Date(inv.cr9b5_date).getFullYear()
       if (y <= 2020) continue
       if (!map.has(y)) map.set(y, { year: y, income: 0, expenses: 0 })
-      const s = map.get(y)!
-      const raw = inv as unknown as Record<string, unknown>
-      const type = raw['cr9b5_type'] as number | undefined ?? (inv.cr9b5_type as unknown as number)
+      const summary = map.get(y)!
+      const type = (inv.cr9b5_type as unknown as number)
       const gross = inv.cr9b5_totalgross ?? 0
-      if (type === TYPE_OUTGOING) s.income += gross
-      else if (type === TYPE_INCOMING) s.expenses += gross
+      if (type === TYPE_OUTGOING) summary.income += gross
+      else if (type === TYPE_INCOMING) summary.expenses += gross
     }
     return Array.from(map.values()).sort((a, b) => b.year - a.year)
-  })()
+  }, [propInvoices])
 
-  const yearInvoices = propInvoices.filter(inv => {
-    if (!inv.cr9b5_date || !selectedYear) return false
-    return new Date(inv.cr9b5_date).getFullYear() === selectedYear
-  })
+  const yearInvoices = propInvoices.filter(inv => inv.cr9b5_date && selectedYear && new Date(inv.cr9b5_date).getFullYear() === selectedYear)
 
   function contactName(inv: Cr9b5_pt_invoices): string {
-    const raw = inv as unknown as Record<string, unknown>
-    const id = raw['_cr9b5_contact_value'] as string | undefined
+    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined
     return (id && contactById.get(id)?.cr9b5_name) ?? '—'
   }
-
   function invType(inv: Cr9b5_pt_invoices): string {
-    const raw = inv as unknown as Record<string, unknown>
-    const type = raw['cr9b5_type'] as number | undefined ?? (inv.cr9b5_type as unknown as number)
-    return type === TYPE_OUTGOING ? 'Income' : 'Expense'
+    return (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense'
   }
 
-  // --- Attachments ---
-
   async function openAttachments(propId: string) {
-    setAttachOpen(true)
-    setAttachForm(EMPTY_ATTACH)
-    setAttachError(null)
-    setAttachLoading(true)
+    setAttachOpen(true); setAttachForm(EMPTY_ATTACH); setAttachError(null); setAttachLoading(true)
     const [attachRes, refRes] = await Promise.all([
-      Cr9b5_pt_attachmentsService.getAll({
-        filter: `_cr9b5_propertyid_value eq '${propId}'`,
-        orderBy: ['cr9b5_uploadedon desc'],
-      }),
-      Cr9b5_pt_referencesService.getAll({
-        filter: `cr9b5_referencetype eq ${PROP_REF_TYPE}`,
-        orderBy: ['cr9b5_sortorder asc'],
-      }),
+      Cr9b5_pt_attachmentsService.getAll({ filter: `_cr9b5_propertyid_value eq '${propId}'`, orderBy: ['cr9b5_uploadedon desc'] }),
+      Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${PROP_REF_TYPE}`, orderBy: ['cr9b5_sortorder asc'] }),
     ])
     setAttachments(attachRes.data ?? [])
     setAttachRefTypes(refRes.data ?? [])
@@ -300,14 +235,11 @@ export default function Properties() {
     setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
     setAttachError(null)
     try {
-      // Reuse the cached Drive folder id instead of re-walking the folder
-      // path (Property → Property Docs) on every upload.
       let folderId = prop.svm_pt_googledrivefolderid
       if (!folderId) {
         folderId = await getOrCreateFolder(propertyFolderPath(prop.cr9b5_name, prop.cr9b5_shortid))
-        setProperties(ps => ps.map(p => p.cr9b5_pt_propertyid === propId ? { ...p, svm_pt_googledrivefolderid: folderId } : p))
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        Cr9b5_pt_propertiesService.update(propId, { svm_pt_googledrivefolderid: folderId } as any).catch(() => { /* cache is best-effort */ })
+        Cr9b5_pt_propertiesService.update(propId, { svm_pt_googledrivefolderid: folderId } as any).catch(() => {})
       }
       const { id, webViewLink } = await uploadFile(file, folderId)
       setAttachForm(f => ({ ...f, uploading: false, driveId: id, driveUrl: webViewLink }))
@@ -320,14 +252,11 @@ export default function Properties() {
   async function addAttachment(propId: string) {
     if (!attachForm.fileName.trim()) { setAttachError('Choose a file first.'); return }
     if (attachForm.uploading) return
-    setAttachSaving(true)
-    setAttachError(null)
+    setAttachSaving(true); setAttachError(null)
     try {
       const payload: Record<string, unknown> = {
-        cr9b5_filename: attachForm.fileName.trim(),
-        cr9b5_referencetype: PROP_REF_TYPE,
-        cr9b5_uploadedon: new Date().toISOString(),
-        'cr9b5_PropertyId@odata.bind': `/cr9b5_pt_properties(${propId})`,
+        cr9b5_filename: attachForm.fileName.trim(), cr9b5_referencetype: PROP_REF_TYPE,
+        cr9b5_uploadedon: new Date().toISOString(), 'cr9b5_PropertyId@odata.bind': `/cr9b5_pt_properties(${propId})`,
       }
       if (attachForm.typeRefId) payload['cr9b5_AttachType@odata.bind'] = `/cr9b5_pt_references(${attachForm.typeRefId})`
       if (attachForm.driveId) payload.cr9b5_googledriveid = attachForm.driveId
@@ -335,8 +264,7 @@ export default function Properties() {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await Cr9b5_pt_attachmentsService.create(payload as any)
       const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
-      logActivity('Created', 'Attachment', attachForm.fileName.trim(),
-        `Uploaded to: ${prop?.cr9b5_name ?? propId}`)
+      recordActivity.mutate({ action: ActivityAction.Created, table: ActivityTable.Attachment, recordName: attachForm.fileName.trim(), details: `Uploaded to: ${prop?.cr9b5_name ?? propId}` })
       setAttachForm(EMPTY_ATTACH)
       if (fileInputRef.current) fileInputRef.current.value = ''
       await openAttachments(propId)
@@ -349,329 +277,180 @@ export default function Properties() {
 
   async function deleteAttachment(a: Cr9b5_pt_attachments, propId: string) {
     if (!confirm('Delete this attachment?')) return
-    if (a.cr9b5_googledriveid) {
-      try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore */ }
-    }
+    if (a.cr9b5_googledriveid) { try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore */ } }
     await Cr9b5_pt_attachmentsService.delete(a.cr9b5_pt_attachmentid)
-    logActivity('Deleted', 'Attachment', a.cr9b5_filename)
+    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Attachment, recordName: a.cr9b5_filename })
     await openAttachments(propId)
   }
 
   const selectedProp = properties.find(p => p.cr9b5_pt_propertyid === selectedPropId)
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* Left: property tile grid (~50% width) */}
-      <div className="w-1/2 shrink-0 flex flex-col overflow-hidden border-r border-gray-200">
-        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0">
-          <h1 className="text-2xl font-semibold text-gray-900">Properties</h1>
-          <button
-            onClick={openNew}
-            className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
-          >
-            + Add Property
-          </button>
+    <div className={s.root}>
+      <div className={s.left}>
+        <div className={s.leftHeader}>
+          <Text size={600} weight="semibold">Properties</Text>
+          <Button appearance="primary" onClick={openNew}>+ Add Property</Button>
         </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          {loading ? (
-            <p className="text-gray-500">Loading…</p>
-          ) : properties.length === 0 ? (
-            <p className="text-gray-400 text-sm">No properties yet.</p>
-          ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              {properties.map(p => {
-                const invCount = invoiceCounts[p.cr9b5_pt_propertyid] ?? 0
-                const isSelected = selectedPropId === p.cr9b5_pt_propertyid
-                return (
-                  <div
-                    key={p.cr9b5_pt_propertyid}
-                    className={[
-                      'bg-white border rounded-xl p-4 flex flex-col gap-3 transition-shadow cursor-pointer',
-                      isSelected ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-gray-200 hover:shadow-md',
-                    ].join(' ')}
-                    onClick={() => openDetail(p.cr9b5_pt_propertyid)}
-                  >
-                    {/* Header */}
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <h2 className="text-base font-semibold text-gray-900 leading-tight">{p.cr9b5_name}</h2>
-                        <span className="inline-block mt-0.5 text-xs font-mono font-medium bg-indigo-50 text-indigo-700 px-2 py-0.5 rounded">
-                          {p.cr9b5_shortid}
-                        </span>
-                      </div>
-                      <div className="flex gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
-                        <button
-                          onClick={() => openDiagram(p.cr9b5_pt_propertyid)}
-                          className="text-xs text-teal-600 hover:text-teal-800 font-medium px-2 py-1 rounded hover:bg-teal-50"
-                        >
-                          Diagram
-                        </button>
-                        <button
-                          onClick={() => openEdit(p)}
-                          className="text-xs text-indigo-600 hover:text-indigo-800 font-medium px-2 py-1 rounded hover:bg-indigo-50"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => deleteProperty(p)}
-                          className="text-xs text-red-500 hover:text-red-700 font-medium px-2 py-1 rounded hover:bg-red-50"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Address */}
-                    <p className="text-sm text-gray-500 leading-snug">{p.cr9b5_address}</p>
-
-                    {/* Notes */}
-                    {p.cr9b5_notes && (
-                      <p className="text-xs text-gray-400 leading-snug line-clamp-2">{p.cr9b5_notes}</p>
-                    )}
-
-                    {/* Footer */}
-                    <div className="flex items-center mt-auto pt-2 border-t border-gray-100">
-                      <span className="text-xs text-gray-400">{invCount} invoice{invCount !== 1 ? 's' : ''}</span>
-                    </div>
+        <div className={s.grid}>
+          {loading ? <Spinner label="Loading…" /> : properties.length === 0 ? (
+            <Text style={{ color: tokens.colorNeutralForeground3 }}>No properties yet.</Text>
+          ) : properties.map(p => {
+            const invCount = invoiceCounts[p.cr9b5_pt_propertyid] ?? 0
+            const isSelected = selectedPropId === p.cr9b5_pt_propertyid
+            return (
+              <div
+                key={p.cr9b5_pt_propertyid}
+                className={s.card}
+                style={isSelected ? { borderColor: tokens.colorBrandStroke1, boxShadow: `0 0 0 2px ${tokens.colorBrandBackground2}` } : undefined}
+                onClick={() => openDetail(p.cr9b5_pt_propertyid)}
+              >
+                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
+                  <div>
+                    <Text weight="semibold">{p.cr9b5_name}</Text>
+                    <div><Badge appearance="tint" color="brand" style={{ marginTop: 4, fontFamily: 'monospace' }}>{p.cr9b5_shortid}</Badge></div>
                   </div>
-                )
-              })}
-            </div>
-          )}
+                  <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
+                    <Button size="small" appearance="subtle" onClick={() => openDiagram(p.cr9b5_pt_propertyid)}>Diagram</Button>
+                    <Button size="small" appearance="subtle" onClick={() => openEdit(p)}>Edit</Button>
+                    <Button size="small" appearance="subtle" onClick={() => handleDeleteProperty(p)}>Delete</Button>
+                  </div>
+                </div>
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>{p.cr9b5_address}</Text>
+                {p.cr9b5_notes && <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>{p.cr9b5_notes}</Text>}
+                <Text size={200} style={{ color: tokens.colorNeutralForeground4, borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: '6px' }}>
+                  {invCount} invoice{invCount !== 1 ? 's' : ''}
+                </Text>
+              </div>
+            )
+          })}
         </div>
       </div>
 
-      {/* Right: content area with overlay panel */}
-      <div className="flex-1 relative overflow-hidden bg-gray-50">
-        {/* Empty state */}
+      <div className={s.right}>
         {!selectedPropId && (
-          <div className="flex items-center justify-center h-full">
-            <p className="text-sm text-gray-400">Select a property to view details</p>
-          </div>
+          <div className={s.emptyState}><Text style={{ color: tokens.colorNeutralForeground4 }}>Select a property to view details</Text></div>
         )}
-
-        {/* Overlay: click-outside zone + panel */}
         {selectedPropId && selectedProp && (
-          <div className="absolute inset-0 flex">
-            {/* Click outside to close */}
-            <div className="flex-1 cursor-pointer" onClick={closeDetail} />
-
-            {/* Detail panel — fills right 2/3 of the right half */}
-            <div className="flex-[2] bg-white border-l border-gray-200 shadow-xl flex flex-col overflow-hidden">
-              {/* Panel header */}
-              <div className="px-4 py-3 border-b border-gray-200 flex items-start justify-between gap-2 shrink-0">
-                <div className="min-w-0">
-                  <p className="text-xs text-gray-400 uppercase tracking-wide font-semibold">Property</p>
-                  <p className="text-sm font-semibold text-gray-900 truncate">{selectedProp.cr9b5_name}</p>
-                  <p className="text-xs font-mono text-gray-400">{selectedProp.cr9b5_shortid}</p>
+          <div className={s.overlay}>
+            <div className={s.clickOutside} onClick={closeDetail} />
+            <div className={s.panel}>
+              <div className={s.panelHeader}>
+                <div style={{ minWidth: 0 }}>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3, textTransform: 'uppercase' }}>Property</Text>
+                  <div><Text weight="semibold">{selectedProp.cr9b5_name}</Text></div>
+                  <Text size={200} style={{ fontFamily: 'monospace', color: tokens.colorNeutralForeground4 }}>{selectedProp.cr9b5_shortid}</Text>
                 </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={() => attachOpen ? setAttachOpen(false) : openAttachments(selectedPropId)}
-                    className={[
-                      'text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors',
-                      attachOpen
-                        ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
-                        : 'border-gray-200 text-gray-600 hover:bg-gray-50',
-                    ].join(' ')}
-                  >
-                    Attachments
-                  </button>
-                  <button onClick={closeDetail} className="text-gray-400 hover:text-gray-600 text-xl leading-none px-1">×</button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <Button size="small" appearance={attachOpen ? 'primary' : 'outline'} onClick={() => attachOpen ? setAttachOpen(false) : openAttachments(selectedPropId)}>Attachments</Button>
+                  <Button size="small" appearance="subtle" onClick={closeDetail}>×</Button>
                 </div>
               </div>
 
-              {/* Attachments sub-panel */}
               {attachOpen && (
-                <div className="border-b border-gray-200 bg-gray-50 flex flex-col shrink-0" style={{ maxHeight: '50%' }}>
-                  <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
-                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Attachments</p>
-                    <button onClick={() => setAttachOpen(false)} className="text-gray-400 hover:text-gray-600 text-sm">×</button>
-                  </div>
-
-                  {/* Add form */}
-                  <div className="px-4 py-2 space-y-1.5 border-b border-gray-100">
-                    <select
-                      value={attachForm.typeRefId}
-                      onChange={e => setAttachForm(f => ({ ...f, typeRefId: e.target.value }))}
-                      className="w-full border border-gray-300 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
-                    >
+                <div style={{ borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, maxHeight: '50%', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: '6px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+                    <select value={attachForm.typeRefId} onChange={e => setAttachForm(f => ({ ...f, typeRefId: e.target.value }))}
+                      style={{ padding: '6px 8px', fontSize: '12px', borderRadius: 4, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
                       <option value="">Type (optional)…</option>
-                      {attachRefTypes.map(r => (
-                        <option key={r.cr9b5_pt_referenceid} value={r.cr9b5_pt_referenceid}>{r.cr9b5_value}</option>
-                      ))}
+                      {attachRefTypes.map(r => <option key={r.cr9b5_pt_referenceid} value={r.cr9b5_pt_referenceid}>{r.cr9b5_value}</option>)}
                     </select>
-                    <input ref={fileInputRef} type="file" className="hidden"
-                      onChange={e => {
-                        const f = e.target.files?.[0]
-                        if (f && selectedPropId) handleFileSelect(f, selectedPropId)
-                      }}
-                    />
+                    <input ref={fileInputRef} type="file" style={{ display: 'none' }}
+                      onChange={e => { const f = e.target.files?.[0]; if (f && selectedPropId) handleFileSelect(f, selectedPropId) }} />
                     {gdConnected ? (
-                      <button type="button" onClick={() => fileInputRef.current?.click()}
-                        className="w-full border border-dashed border-gray-300 rounded-lg px-2 py-1.5 text-xs text-gray-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors text-left"
-                      >
+                      <Button size="small" appearance="outline" onClick={() => fileInputRef.current?.click()}>
                         {attachForm.uploading ? '⏳ Uploading…' : attachForm.driveId ? `✓ ${attachForm.fileName}` : '📎 Choose file…'}
-                      </button>
+                      </Button>
                     ) : (
-                      <button type="button"
-                        onClick={async () => {
-                          try { await authorizeWithPopup(); setGdConnected(true) }
-                          catch (e) { setAttachError(e instanceof Error ? e.message : 'Google Drive sign-in failed.') }
-                        }}
-                        className="w-full border border-dashed border-indigo-300 rounded-lg px-2 py-1.5 text-xs text-indigo-600 hover:border-indigo-500 hover:bg-indigo-50 transition-colors text-left"
-                      >
-                        🔗 Connect Google Drive
-                      </button>
+                      <Button size="small" appearance="outline" onClick={async () => {
+                        try { await authorizeWithPopup(); setGdConnected(true) }
+                        catch (e) { setAttachError(e instanceof Error ? e.message : 'Google Drive sign-in failed.') }
+                      }}>🔗 Connect Google Drive</Button>
                     )}
-                    {attachError && <p className="text-xs text-red-600">{attachError}</p>}
-                    <button
-                      onClick={() => addAttachment(selectedPropId!)}
-                      disabled={attachSaving || attachForm.uploading || !attachForm.driveId}
-                      className="w-full py-1.5 bg-indigo-600 text-white text-xs font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-                    >
+                    {attachError && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{attachError}</Text>}
+                    <Button size="small" appearance="primary" disabled={attachSaving || attachForm.uploading || !attachForm.driveId} onClick={() => addAttachment(selectedPropId!)}>
                       {attachSaving ? 'Adding…' : '+ Add'}
-                    </button>
+                    </Button>
                   </div>
-
-                  {/* List */}
-                  <div className="overflow-y-auto flex-1">
-                    {attachLoading ? (
-                      <p className="text-xs text-gray-400 p-3">Loading…</p>
-                    ) : attachments.length === 0 ? (
-                      <p className="text-xs text-gray-400 p-3">No attachments yet.</p>
-                    ) : (
-                      <ul className="divide-y divide-gray-100">
-                        {attachments.map(a => (
-                          <li key={a.cr9b5_pt_attachmentid} className="px-4 py-2 flex items-start gap-2">
-                            <div className="flex-1 min-w-0">
-                              {a.cr9b5_googledriveurl ? (
-                                <a href={a.cr9b5_googledriveurl} target="_blank" rel="noreferrer"
-                                  className="text-xs text-indigo-600 hover:underline font-medium truncate block"
-                                >{a.cr9b5_filename}</a>
-                              ) : (
-                                <span className="text-xs text-gray-800 font-medium truncate block">{a.cr9b5_filename}</span>
-                              )}
-                              {a.cr9b5_attachtypename && <span className="text-xs text-gray-400">{a.cr9b5_attachtypename}</span>}
-                            </div>
-                            <button onClick={() => deleteAttachment(a, selectedPropId!)}
-                              className="text-red-400 hover:text-red-600 text-xs shrink-0 mt-0.5"
-                            >✕</button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                  <div className={s.scrollSection}>
+                    {attachLoading ? <Spinner size="tiny" label="Loading…" /> : attachments.length === 0 ? (
+                      <Text size={200} style={{ padding: '12px', color: tokens.colorNeutralForeground4 }}>No attachments yet.</Text>
+                    ) : attachments.map(a => (
+                      <div key={a.cr9b5_pt_attachmentid} style={{ padding: '8px 16px', display: 'flex', gap: '8px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          {a.cr9b5_googledriveurl ? (
+                            <a href={a.cr9b5_googledriveurl} target="_blank" rel="noreferrer" style={{ color: tokens.colorBrandForegroundLink, fontSize: '12px', fontWeight: 600 }}>{a.cr9b5_filename}</a>
+                          ) : <Text size={200} weight="semibold">{a.cr9b5_filename}</Text>}
+                        </div>
+                        <Button size="small" appearance="subtle" onClick={() => deleteAttachment(a, selectedPropId!)}>✕</Button>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
 
-              {/* Year summary table — ~35% */}
-              <div className="flex flex-col border-b border-gray-200 shrink-0" style={{ flex: '0 0 35%' }}>
-                <div className="px-4 py-2 border-b border-gray-100 shrink-0">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Income & Expenses by Year</p>
-                </div>
-                {propInvLoading ? (
-                  <p className="text-xs text-gray-400 px-4 py-3">Loading…</p>
-                ) : yearSummaries.length === 0 ? (
-                  <p className="text-xs text-gray-400 px-4 py-3">No data (2021 onwards).</p>
+              <div style={{ flex: '0 0 35%', display: 'flex', flexDirection: 'column', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, overflow: 'hidden' }}>
+                <div className={s.sectionHeader}><Text size={200} weight="semibold" style={{ textTransform: 'uppercase', color: tokens.colorNeutralForeground3 }}>Income & Expenses by Year</Text></div>
+                {propInvLoading ? <Spinner size="tiny" label="Loading…" /> : yearSummaries.length === 0 ? (
+                  <Text size={200} style={{ padding: '12px 16px', color: tokens.colorNeutralForeground4 }}>No data (2021 onwards).</Text>
                 ) : (
-                  <div className="overflow-y-auto flex-1">
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
-                        <tr className="text-left text-gray-400 font-semibold uppercase tracking-wide">
-                          <th className="px-4 py-2">Year</th>
-                          <th className="px-4 py-2 text-right">Expenses</th>
-                          <th className="px-4 py-2 text-right">Income</th>
-                          <th className="px-4 py-2 text-right">Net</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {yearSummaries.map(s => {
-                          const net = s.income - s.expenses
-                          const isSelected = selectedYear === s.year
+                  <div className={s.scrollSection}>
+                    <Table size="small">
+                      <TableHeader><TableRow>
+                        <TableHeaderCell>Year</TableHeaderCell>
+                        <TableHeaderCell>Expenses</TableHeaderCell>
+                        <TableHeaderCell>Income</TableHeaderCell>
+                        <TableHeaderCell>Net</TableHeaderCell>
+                      </TableRow></TableHeader>
+                      <TableBody>
+                        {yearSummaries.map(y => {
+                          const net = y.income - y.expenses
                           return (
-                            <tr
-                              key={s.year}
-                              onClick={() => setSelectedYear(s.year)}
-                              className={[
-                                'cursor-pointer transition-colors',
-                                isSelected ? 'bg-indigo-50' : 'hover:bg-gray-50',
-                              ].join(' ')}
-                            >
-                              <td className={['px-4 py-2 font-semibold', isSelected ? 'text-indigo-700' : 'text-gray-700'].join(' ')}>
-                                {s.year}
-                              </td>
-                              <td className="px-4 py-2 text-right text-red-600">{fmtEur(s.expenses)}</td>
-                              <td className="px-4 py-2 text-right text-green-700">{fmtEur(s.income)}</td>
-                              <td className={['px-4 py-2 text-right font-semibold', net >= 0 ? 'text-gray-900' : 'text-red-600'].join(' ')}>
-                                {fmtEur(net)}
-                              </td>
-                            </tr>
+                            <TableRow key={y.year} onClick={() => setSelectedYear(y.year)} style={{ cursor: 'pointer', backgroundColor: selectedYear === y.year ? tokens.colorBrandBackground2 : undefined }}>
+                              <TableCell>{y.year}</TableCell>
+                              <TableCell style={{ color: tokens.colorPaletteRedForeground1 }}>{formatMoney(y.expenses)}</TableCell>
+                              <TableCell style={{ color: tokens.colorPaletteGreenForeground1 }}>{formatMoney(y.income)}</TableCell>
+                              <TableCell style={{ fontWeight: 600, color: net >= 0 ? undefined : tokens.colorPaletteRedForeground1 }}>{formatMoney(net)}</TableCell>
+                            </TableRow>
                           )
                         })}
-                      </tbody>
-                    </table>
+                      </TableBody>
+                    </Table>
                   </div>
                 )}
               </div>
 
-              {/* Invoice list — ~65% */}
-              <div className="flex flex-col flex-1 overflow-hidden">
-                <div className="px-4 py-2 border-b border-gray-100 shrink-0 flex items-center justify-between">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                    Invoices{selectedYear ? ` — ${selectedYear}` : ''}
-                  </p>
-                  <p className="text-xs text-gray-400">{yearInvoices.length} invoice{yearInvoices.length !== 1 ? 's' : ''}</p>
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                <div className={s.sectionHeader} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <Text size={200} weight="semibold" style={{ textTransform: 'uppercase', color: tokens.colorNeutralForeground3 }}>Invoices{selectedYear ? ` — ${selectedYear}` : ''}</Text>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>{yearInvoices.length} invoice{yearInvoices.length !== 1 ? 's' : ''}</Text>
                 </div>
-                <div className="overflow-y-auto flex-1">
-                  {propInvLoading ? (
-                    <p className="text-xs text-gray-400 px-4 py-3">Loading…</p>
-                  ) : !selectedYear ? (
-                    <p className="text-xs text-gray-400 px-4 py-3">Select a year above.</p>
+                <div className={s.scrollSection}>
+                  {propInvLoading ? <Spinner size="tiny" label="Loading…" /> : !selectedYear ? (
+                    <Text size={200} style={{ padding: '12px 16px', color: tokens.colorNeutralForeground4 }}>Select a year above.</Text>
                   ) : yearInvoices.length === 0 ? (
-                    <p className="text-xs text-gray-400 px-4 py-3">No invoices for {selectedYear}.</p>
+                    <Text size={200} style={{ padding: '12px 16px', color: tokens.colorNeutralForeground4 }}>No invoices for {selectedYear}.</Text>
                   ) : (
-                    <table className="w-full text-xs">
-                      <thead className="sticky top-0 bg-gray-50 border-b border-gray-100">
-                        <tr className="text-left text-gray-400 font-semibold uppercase tracking-wide">
-                          <th className="px-3 py-2">ID</th>
-                          <th className="px-3 py-2">Type</th>
-                          <th className="px-3 py-2">Contact</th>
-                          <th className="px-3 py-2">Date</th>
-                          <th className="px-3 py-2 text-right">Total</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50">
-                        {yearInvoices.map(inv => {
-                          const isOut = (inv as unknown as Record<string, unknown>)['cr9b5_type'] === TYPE_OUTGOING
-                          return (
-                            <tr
-                              key={inv.cr9b5_pt_invoiceid}
-                              onClick={() => setViewInvoice(inv)}
-                              className="cursor-pointer hover:bg-gray-50 transition-colors"
-                            >
-                              <td className="px-3 py-2 font-mono font-medium text-indigo-700 whitespace-nowrap">
-                                {inv.cr9b5_internalid}
-                              </td>
-                              <td className="px-3 py-2">
-                                <span className={[
-                                  'inline-flex px-1.5 py-0.5 rounded-full text-xs font-medium',
-                                  isOut ? 'bg-green-50 text-green-700' : 'bg-blue-50 text-blue-700',
-                                ].join(' ')}>
-                                  {invType(inv)}
-                                </span>
-                              </td>
-                              <td className="px-3 py-2 text-gray-500 truncate max-w-[100px]">{contactName(inv)}</td>
-                              <td className="px-3 py-2 text-gray-400 whitespace-nowrap">{fmtDate(inv.cr9b5_date)}</td>
-                              <td className="px-3 py-2 text-right font-semibold text-gray-800 whitespace-nowrap">
-                                {inv.cr9b5_totalgross != null ? fmtEur(inv.cr9b5_totalgross) : '—'}
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                    <Table size="small">
+                      <TableHeader><TableRow>
+                        <TableHeaderCell>ID</TableHeaderCell>
+                        <TableHeaderCell>Type</TableHeaderCell>
+                        <TableHeaderCell>Contact</TableHeaderCell>
+                        <TableHeaderCell>Date</TableHeaderCell>
+                        <TableHeaderCell>Total</TableHeaderCell>
+                      </TableRow></TableHeader>
+                      <TableBody>
+                        {yearInvoices.map(inv => (
+                          <TableRow key={inv.cr9b5_pt_invoiceid} onClick={() => setViewInvoice(inv)} style={{ cursor: 'pointer' }}>
+                            <TableCell style={{ fontFamily: 'monospace', fontWeight: 600, color: tokens.colorBrandForegroundLink }}>{inv.cr9b5_internalid}</TableCell>
+                            <TableCell><Badge appearance="tint" color={invType(inv) === 'Income' ? 'success' : 'informative'}>{invType(inv)}</Badge></TableCell>
+                            <TableCell>{contactName(inv)}</TableCell>
+                            <TableCell>{fmtDate(inv.cr9b5_date)}</TableCell>
+                            <TableCell style={{ fontWeight: 600 }}>{inv.cr9b5_totalgross != null ? formatMoney(inv.cr9b5_totalgross) : '—'}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   )}
                 </div>
               </div>
@@ -680,109 +459,51 @@ export default function Properties() {
         )}
       </div>
 
-      {/* Property form modal */}
-      {formOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              {form.id ? 'Edit Property' : 'Add Property'}
-            </h2>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="e.g. Lake Villa"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Short ID *</label>
-                <input
-                  type="text"
-                  value={form.shortid}
-                  onChange={e => setForm(f => ({ ...f, shortid: e.target.value.toUpperCase() }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="e.g. LV"
-                  maxLength={10}
-                />
-                <p className="mt-1 text-xs text-gray-400">Used in invoice IDs, e.g. LV001/2026. Must be unique.</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Address *</label>
-                <input
-                  type="text"
-                  value={form.address}
-                  onChange={e => setForm(f => ({ ...f, address: e.target.value }))}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="Full address"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Notes</label>
-                <textarea
-                  value={form.notes}
-                  onChange={e => setForm(f => ({ ...f, notes: e.target.value }))}
-                  rows={3}
-                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
-                  placeholder="Optional notes…"
-                />
-              </div>
-            </div>
-
-            {formError && <p className="mt-3 text-sm text-red-600">{formError}</p>}
-
-            <div className="flex justify-end gap-3 mt-6">
-              <button onClick={closeForm} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900">
-                Cancel
-              </button>
-              <button
-                onClick={saveProperty}
-                disabled={saving}
-                className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
-              >
+      <Dialog open={formOpen} onOpenChange={(_, d) => !d.open && closeForm()}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{form.id ? 'Edit Property' : 'Add Property'}</DialogTitle>
+            <DialogContent style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              <Field label="Name" required>
+                <Input value={form.name} onChange={(_, d) => setForm(f => ({ ...f, name: d.value }))} placeholder="e.g. Lake Villa" />
+              </Field>
+              <Field label="Short ID" required hint="Used in invoice IDs, e.g. LV001/2026. Must be unique.">
+                <Input value={form.shortid} onChange={(_, d) => setForm(f => ({ ...f, shortid: d.value.toUpperCase() }))} placeholder="e.g. LV" maxLength={10} />
+              </Field>
+              <Field label="Address" required>
+                <Input value={form.address} onChange={(_, d) => setForm(f => ({ ...f, address: d.value }))} placeholder="Full address" />
+              </Field>
+              <Field label="Notes">
+                <Textarea value={form.notes} onChange={(_, d) => setForm(f => ({ ...f, notes: d.value }))} rows={3} placeholder="Optional notes…" />
+              </Field>
+              {formError && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{formError}</Text>}
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={closeForm}>Cancel</Button>
+              <Button appearance="primary" disabled={saving} onClick={handleSaveProperty}>
                 {saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
-      {/* Connection Diagram overlay */}
       {diagramPropId && (() => {
         const diagramProp = properties.find(p => p.cr9b5_pt_propertyid === diagramPropId)
         if (!diagramProp) return null
         if (diagramLoading) {
-          return (
-            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
-              <p className="text-white text-sm">Loading…</p>
-            </div>
-          )
+          return <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner label="Loading…" /></div>
         }
         return (
           <PropertyConnectionDiagram
-            property={diagramProp}
-            allProperties={properties}
-            invoices={diagramInvoices}
-            contacts={contacts}
+            property={diagramProp} allProperties={properties} invoices={diagramInvoices} contacts={contactsList}
             onClose={() => { setDiagramPropId(null); setDiagramInvoices([]) }}
           />
         )
       })()}
 
-      {/* Invoice detail popup */}
       {viewInvoice && (
-        <InvoiceForm
-          invoice={viewInvoice}
-          properties={properties}
-          contacts={contacts}
-          readOnly
-          onSaved={() => {}}
-          onClose={() => setViewInvoice(null)}
-        />
+        <InvoiceForm invoice={viewInvoice} properties={properties} contacts={contactsList} readOnly onSaved={() => undefined} onClose={() => setViewInvoice(null)} />
       )}
     </div>
   )
