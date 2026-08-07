@@ -7,6 +7,7 @@ import { AppErrorBoundary } from '@/components/AppErrorBoundary'
 import { QueryErrorBanner } from '@/components/QueryErrorBanner'
 import { GlobalSearch } from '@/components/GlobalSearch'
 import { QuickAdd } from '@/components/QuickAdd'
+import { AlertsBell } from '@/components/AlertsBell'
 
 const useStyles = makeStyles({
   root: { display: 'grid', gridTemplateColumns: '224px 1fr', height: '100vh' },
@@ -66,6 +67,7 @@ function Topbar() {
       {displayName && <span style={{ fontSize: '13px', color: tokens.colorNeutralForeground2, marginRight: 'auto' }}>{displayName}</span>}
       <GlobalSearch />
       <QuickAdd />
+      <AlertsBell />
       <Button
         appearance="subtle" size="small" icon={dark ? <WeatherSunnyRegular /> : <WeatherMoonRegular />}
         onClick={toggle} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
