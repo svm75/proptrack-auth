@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import {
   makeStyles, tokens, Button, Input, Select, Text, Spinner, Badge, Checkbox,
@@ -44,6 +45,7 @@ function fmtDate(iso: string | undefined): string {
 
 export default function Invoices() {
   const s = useStyles()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [invoices, setInvoices] = useState<Cr9b5_pt_invoices[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
@@ -60,7 +62,7 @@ export default function Invoices() {
   const [filterPropId, setFilterPropId] = useState('')
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
   const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'id_asc' | 'id_desc' | 'total_desc' | 'total_asc'>('date_desc')
 
   const [formOpen, setFormOpen] = useState(false)
@@ -106,6 +108,15 @@ export default function Invoices() {
 
   useEffect(() => { loadRefData() }, [])
   useEffect(() => { loadInvoices() }, [filterType, filterPropId, filterFrom, filterTo])
+
+  // Deep-link support from the global Quick Add menu / search (?new=1, ?search=...)
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      setEditInvoice(null)
+      setFormOpen(true)
+      setSearchParams(p => { p.delete('new'); return p }, { replace: true })
+    }
+  }, [searchParams, setSearchParams])
 
   const propertyById = useMemo(() => new Map(properties.map(p => [p.cr9b5_pt_propertyid, p])), [properties])
   const contactById = useMemo(() => new Map(contacts.map(c => [c.cr9b5_pt_contactid, c])), [contacts])

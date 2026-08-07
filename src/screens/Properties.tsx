@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   makeStyles, tokens, Button, Input, Field, Textarea, Text, Spinner, Badge,
   Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
@@ -62,6 +63,7 @@ interface YearSummary { year: number; income: number; expenses: number }
 export default function Properties() {
   const s = useStyles()
   const recordActivity = useRecordActivity()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contactsList, setContactsList] = useState<Cr9b5_pt_contacts[]>([])
@@ -123,6 +125,15 @@ export default function Properties() {
   const [gdConnected, setGdConnected] = useState(isAuthorized())
 
   const contactById = useMemo(() => new Map(contactsList.map(c => [c.cr9b5_pt_contactid, c])), [contactsList])
+
+  // Deep-link support from the global Quick Add menu (?new=1)
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openNew()
+      setSearchParams(p => { p.delete('new'); return p }, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams])
 
   function openNew() { setForm(EMPTY_FORM); setFormError(null); setFormOpen(true) }
   function openEdit(p: Cr9b5_pt_properties) {

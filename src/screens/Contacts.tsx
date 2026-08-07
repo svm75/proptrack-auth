@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   makeStyles, tokens, Button, Input, Textarea, Field, Select, Checkbox, Text, Spinner, Badge,
   TabList, Tab, type SelectTabData, type SelectTabEvent,
@@ -56,6 +57,7 @@ function contractToRow(c: SupplierContract): ContractRow {
 
 export default function Contacts() {
   const s = useStyles()
+  const [searchParams, setSearchParams] = useSearchParams()
   const contactsQ = useContacts()
   const propertiesQ = useProperties()
   const categoriesQ = useCategories()
@@ -102,6 +104,15 @@ export default function Contacts() {
     setFormError(null)
     setFormOpen(true)
   }
+
+  // Deep-link support from the global Quick Add menu (?new=1)
+  useEffect(() => {
+    if (searchParams.get('new') === '1') {
+      openNew()
+      setSearchParams(p => { p.delete('new'); return p }, { replace: true })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, setSearchParams])
 
   function openEdit(c: Contact) {
     setForm({ id: c.id, name: c.name, email: c.email ?? '', taxid: c.taxId ?? '', defaultdesc: c.defaultDescription ?? '', role: c.role, defaultCategoryId: c.defaultCategoryId ?? '' })

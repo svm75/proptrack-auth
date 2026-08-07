@@ -5,6 +5,8 @@ import { WeatherMoonRegular, WeatherSunnyRegular } from '@fluentui/react-icons'
 import { useDarkMode } from './darkMode'
 import { AppErrorBoundary } from '@/components/AppErrorBoundary'
 import { QueryErrorBanner } from '@/components/QueryErrorBanner'
+import { GlobalSearch } from '@/components/GlobalSearch'
+import { QuickAdd } from '@/components/QuickAdd'
 
 const useStyles = makeStyles({
   root: { display: 'grid', gridTemplateColumns: '224px 1fr', minHeight: '100vh' },
@@ -57,6 +59,8 @@ function Topbar() {
   return (
     <div className={s.topbar}>
       {displayName && <span style={{ fontSize: '13px', color: tokens.colorNeutralForeground2, marginRight: 'auto' }}>{displayName}</span>}
+      <GlobalSearch />
+      <QuickAdd />
       <Button
         appearance="subtle" size="small" icon={dark ? <WeatherSunnyRegular /> : <WeatherMoonRegular />}
         onClick={toggle} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
