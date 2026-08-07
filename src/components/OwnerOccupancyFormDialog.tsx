@@ -106,11 +106,11 @@ export function OwnerOccupancyFormDialog({ record, properties, defaultPropertyId
       if (form.id) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Svm_pt_owneroccupanciesService.update(form.id, payload as any)
-        await logActivity('Updated', 'Owner Occupancy', payload.svm_pt_name)
+        await logActivity('Updated', 'Property', payload.svm_pt_name)
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await Svm_pt_owneroccupanciesService.create(payload as any)
-        await logActivity('Created', 'Owner Occupancy', payload.svm_pt_name)
+        await logActivity('Created', 'Property', payload.svm_pt_name)
       }
       onSaved()
     } catch (e: unknown) {
@@ -125,7 +125,7 @@ export function OwnerOccupancyFormDialog({ record, properties, defaultPropertyId
     setDeleting(true)
     try {
       await Svm_pt_owneroccupanciesService.delete(form.id)
-      await logActivity('Deleted', 'Owner Occupancy', record?.svm_pt_name ?? '')
+      await logActivity('Deleted', 'Property', record?.svm_pt_name ?? '')
       onDeleted?.()
     } finally {
       setDeleting(false)
