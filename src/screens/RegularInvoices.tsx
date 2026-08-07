@@ -61,6 +61,7 @@ interface Row {
   baseAmount: string
   taxAmount: string
   taxIsManual: boolean
+  skipInternalId: boolean
 }
 
 export default function RegularInvoices() {
@@ -103,7 +104,7 @@ export default function RegularInvoices() {
       const categoryId = contract._svm_defaultcategory_value ?? supplier._svm_defaultcategory_value ?? ''
       const description = contract.svm_pt_defaultdescription || supplier.cr9b5_defaultdescription || ''
       for (let i = 0; i < count; i++) {
-        newRows.push({ key: `${contract.svm_pt_suppliercontractid}-${i}`, supplier, description, date: '', propertyId, allProperties, categoryId, baseAmount: '', taxAmount: '', taxIsManual: false })
+        newRows.push({ key: `${contract.svm_pt_suppliercontractid}-${i}`, supplier, description, date: '', propertyId, allProperties, categoryId, baseAmount: '', taxAmount: '', taxIsManual: false, skipInternalId: false })
       }
     }
     setRows(newRows)
@@ -134,7 +135,8 @@ export default function RegularInvoices() {
     return rows.map(row => {
       const ready = !!(row.date && (row.propertyId || row.allProperties) && row.baseAmount && parseFloat(row.baseAmount) > 0)
       if (!ready) return null
-      const year = new Date(row.date).getFullYear()
+      if (row.skipInternalId) return '(no ID)'
+      const year = new Date(row.date).getFullYear() // note: counters only advance for non-skip rows below
       if (!(year in counters)) return null
       const property = row.allProperties ? null : properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
       const shortId = row.allProperties ? 'ALL' : (property?.cr9b5_shortid ?? '')
@@ -175,7 +177,7 @@ export default function RegularInvoices() {
     setSummary(null); setError(null)
   }
   function resetAll() {
-    setRows(rs => rs.map(r => ({ ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false })))
+    setRows(rs => rs.map(r => ({ ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false, skipInternalId: false })))
     setSummary(null); setError(null)
   }
   function handleTax(idx: number, val: string) {
@@ -195,9 +197,13 @@ export default function RegularInvoices() {
         const rowYear = new Date(row.date).getFullYear()
         const property = row.allProperties ? null : properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
         if (!row.allProperties && !property) throw new Error(`Property not found for ${row.supplier.cr9b5_name}.`)
-        const seq = await getNextSequence(rowYear)
-        const shortId = property?.cr9b5_shortid ?? 'ALL'
-        const internalId = buildInternalId(shortId, seq, rowYear)
+        let internalId = ''
+        let seq = 0
+        if (!row.skipInternalId) {
+          seq = await getNextSequence(rowYear)
+          const shortId = property?.cr9b5_shortid ?? 'ALL'
+          internalId = buildInternalId(shortId, seq, rowYear)
+        }
         const base = parseAmount(row.baseAmount)
         const tax = parseAmount(row.taxAmount) || 0
         const payload: Record<string, unknown> = {
@@ -214,7 +220,7 @@ export default function RegularInvoices() {
         if (!result.success) throw (result.error as Error) ?? new Error(`Failed to create invoice for ${row.supplier.cr9b5_name}.`)
       }
       const savedKeys = new Set(toSave.map(r => r.key))
-      setRows(rs => rs.map(r => savedKeys.has(r.key) ? { ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false } : r))
+      setRows(rs => rs.map(r => savedKeys.has(r.key) ? { ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false, skipInternalId: false } : r))
       setNextSeqByYear({}); pendingYearsRef.current.clear()
       setSummary(`${toSave.length} invoice${toSave.length !== 1 ? 's' : ''} created.`)
     } catch (e: unknown) {
@@ -264,6 +270,7 @@ export default function RegularInvoices() {
           <thead>
             <tr>
               <th className={s.th}>Next ID</th>
+              <th className={s.th}>No ID</th>
               <th className={s.th}>Supplier</th>
               <th className={s.th}>Description</th>
               <th className={s.th}>Date</th>
@@ -292,6 +299,9 @@ export default function RegularInvoices() {
                         <span style={{ fontSize: '10px', fontFamily: 'monospace', color: tokens.colorPaletteGreenForeground1 }}>{previewId ?? '…'}</span>
                       </div>
                     )}
+                  </td>
+                  <td className={s.td} style={{ textAlign: 'center' }}>
+                    <input type="checkbox" checked={row.skipInternalId} onChange={e => updateRow(idx, { skipInternalId: e.target.checked })} title="Don't auto-generate an Internal ID for this invoice" />
                   </td>
                   <td className={s.td} style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{row.supplier.cr9b5_name}</td>
                   <td className={s.td}><input className={s.input} value={row.description} onChange={e => updateRow(idx, { description: e.target.value })} placeholder="Description" /></td>

@@ -27,13 +27,20 @@ interface ExistingRecord {
 
 interface ImportRow {
   index: number; status: RowStatus; statusNote: string; checked: boolean; existingId: string | null
-  date: string; internalId: string; propertyId: string | null; propertyName: string
+  date: string; internalId: string; autoId: boolean; propertyId: string | null; propertyName: string
   contactId: string | null; contactName: string; contactTaxId: string; contactRole: number; isNewContact: boolean
   type: number; baseAmount: number; taxAmount: number; totalGross: number; taxRate: string; taxIsManual: boolean
   globalSequence: number; year: number; checkIn: string; checkOut: string; nights: number; days: number
   adults: number; children: number; babies: number; bookingRef: string; allProperties: boolean
   categoryId: string; categoryName: string
 }
+
+async function getNextSequence(year: number): Promise<number> {
+  const res = await Cr9b5_pt_invoicesService.getAll({ filter: `cr9b5_year eq ${year}`, select: ['cr9b5_globalsequence'], orderBy: ['cr9b5_globalsequence desc'], top: 1 })
+  const records = res.data ?? []
+  return records.length === 0 ? 1 : (records[0].cr9b5_globalsequence ?? 0) + 1
+}
+function buildInternalId(shortId: string, seq: number, year: number): string { return `${shortId}${String(seq).padStart(3, '0')}/${year}` }
 
 function toIsoDate(y: number, mo: number, d: number): string {
   if (y < 1900 || y > 2100 || mo < 1 || mo > 12 || d < 1 || d > 31) return ''
@@ -99,7 +106,7 @@ function detectChanges(row: ImportRow, ex: ExistingRecord): boolean {
 
 type ColMap = Record<string, number>
 const HEADER_ALIASES: Record<string, string> = {
-  'internal id': 'internalId', 'type': 'type', 'category': 'category', 'property': 'property',
+  'internal id': 'internalId', 'auto internal id': 'autoId', 'type': 'type', 'category': 'category', 'property': 'property',
   'all properties': 'allProperties', 'contact': 'contact', 'date': 'date', 'description': 'description',
   'booking ref': 'bookingNumber', 'check-in': 'rentStart', 'check-out': 'rentEnd', 'nights': 'nights', 'days': 'days',
   'adults': 'adults', 'children': 'children', 'babies': 'babies', 'base amount': 'baseNet', 'tax rate': 'taxRate',
@@ -107,11 +114,31 @@ const HEADER_ALIASES: Record<string, string> = {
 }
 const FULL_COLS = ['internalId', 'type', 'property', 'contact', 'date', 'baseNet', 'taxRate', 'baseGross']
 
+// Column order + human labels for the downloadable blank template — kept in
+// sync with HEADER_ALIASES so a filled-in template round-trips cleanly.
+const TEMPLATE_COLUMNS: [string, string][] = [
+  ['Internal ID', 'internalId'], ['Auto Internal ID', 'autoId'], ['Type', 'type'], ['Category', 'category'],
+  ['Property', 'property'], ['All Properties', 'allProperties'], ['Contact', 'contact'], ['Date', 'date'],
+  ['Description', 'description'], ['Booking Ref', 'bookingNumber'], ['Check-in', 'rentStart'], ['Check-out', 'rentEnd'],
+  ['Nights', 'nights'], ['Days', 'days'], ['Adults', 'adults'], ['Children', 'children'], ['Babies', 'babies'],
+  ['Base Amount', 'baseNet'], ['Tax Rate', 'taxRate'], ['Tax Amount', 'baseIgic'], ['Total Gross', 'baseGross'],
+]
+
 function buildColMap(headerRow: unknown[]): { col: ColMap; isPartial: boolean } {
   const map: ColMap = {}
   headerRow.forEach((cell, i) => { const key = HEADER_ALIASES[String(cell ?? '').trim().toLowerCase()]; if (key) map[key] = i })
-  if (!('internalId' in map)) throw new Error('Missing required column: Internal ID')
+  if (!('internalId' in map) && !('autoId' in map)) throw new Error('Missing required column: Internal ID (or Auto Internal ID)')
   return { col: map, isPartial: FULL_COLS.some(k => !(k in map)) }
+}
+
+function downloadTemplate() {
+  const headers = TEMPLATE_COLUMNS.map(([label]) => label)
+  const example = ['', 'Yes', 'Income', 'Cleaning Fee', 'Sunset Villa', 'No', 'Jane Doe', '15.03.2026', 'Example row — delete me', 'ABC123', '15.03.2026', '18.03.2026', '3', '4', '2', '1', '0', '250.00', '7', '17.50', '267.50']
+  const ws = XLSX.utils.aoa_to_sheet([headers, example])
+  ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length, 14) + 2 }))
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
+  XLSX.writeFile(wb, 'proptrack-invoice-import-template.xlsx')
 }
 
 const useStyles = makeStyles({
@@ -218,6 +245,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   function mapRow(r: unknown[], idx: number, col: ColMap, props: Cr9b5_pt_properties[], cons: Cr9b5_pt_contacts[], cats: Cr9b5_pt_references[], existingMap: Map<string, ExistingRecord>, partial = false): ImportRow {
     const errors: string[] = []; const warnings: string[] = []
     const rawInternalId = String(r[col.internalId] ?? '').trim()
+    const rawAutoIdStr = String(r[col.autoId] ?? '').trim().toLowerCase()
+    const autoId = rawAutoIdStr === 'yes' || rawAutoIdStr === 'true' || rawAutoIdStr === '1'
     const rawDate = r[col.date]
     const rawName = String(r[col.contact] ?? '').trim()
     const rawType = String(r[col.type] ?? '').trim()
@@ -254,13 +283,13 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const baseStatus: RowStatus = errors.length > 0 ? 'error' : warnings.length > 0 ? 'warning' : 'ready'
     const partialRow: ImportRow = {
       index: idx, status: baseStatus, statusNote: [...errors, ...warnings].join('; '), checked: baseStatus !== 'error', existingId: null,
-      date, internalId: rawInternalId, propertyId: property?.cr9b5_pt_propertyid ?? null, propertyName: property?.cr9b5_name ?? rawProperty,
+      date, internalId: rawInternalId, autoId, propertyId: property?.cr9b5_pt_propertyid ?? null, propertyName: property?.cr9b5_name ?? rawProperty,
       contactId: contact?.cr9b5_pt_contactid ?? null, contactName: rawName, contactTaxId: '', contactRole: ROLE_CLIENT, isNewContact,
       type: typeVal, baseAmount, taxAmount, totalGross, taxRate, taxIsManual, globalSequence: 0, year: 0, checkIn, checkOut,
       nights: parseInt2(rawNights), days: parseInt2(rawDays), adults: parseInt2(rawAdults), children: parseInt2(rawChildren), babies: parseInt2(rawBabies),
       bookingRef: rawBooking, allProperties, categoryId: category?.cr9b5_pt_referenceid ?? '', categoryName: category?.cr9b5_value ?? rawCategory,
     }
-    if (rawInternalId && baseStatus !== 'error') {
+    if (rawInternalId && !autoId && baseStatus !== 'error') {
       const existing = existingMap.get(rawInternalId.toLowerCase())
       if (existing) {
         const changed = detectChanges(partialRow, existing)
@@ -311,6 +340,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   }
 
   function toggleRow(idx: number) { setRows(rs => rs.map((r, i) => i === idx && r.status !== 'error' ? { ...r, checked: !r.checked } : r)) }
+  function toggleAutoId(idx: number) { setRows(rs => rs.map((r, i) => i === idx ? { ...r, autoId: !r.autoId, internalId: !r.autoId ? '' : r.internalId } : r)) }
   const nonErrorRows = rows.filter(r => r.status !== 'error' && r.status !== 'skipped-new')
   const allChecked = nonErrorRows.length > 0 && nonErrorRows.every(r => r.checked)
   function toggleSelectAll() { const next = !allChecked; setRows(rs => rs.map(r => r.status === 'error' ? r : { ...r, checked: next })) }
@@ -357,14 +387,33 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       } catch { /* invoices for this contact will fail too */ }
     }))
 
+    // Reserve sequence numbers up front for rows using "Auto Internal ID", so
+    // concurrent creates below never collide on the same sequence number.
+    const resolvedAutoIds = new Map<number, { internalId: string; seq: number }>()
+    const autoIdRows = processable.filter(r => r.autoId && r.date)
+    if (autoIdRows.length > 0) {
+      const years = [...new Set(autoIdRows.map(r => new Date(r.date).getFullYear()))]
+      const seqCounters: Record<number, number> = {}
+      await Promise.all(years.map(async y => { seqCounters[y] = await getNextSequence(y) }))
+      for (const row of autoIdRows) {
+        const year = new Date(row.date).getFullYear()
+        const seq = seqCounters[year]++
+        const property = properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
+        const shortId = row.allProperties ? 'All' : (property?.cr9b5_shortid ?? '')
+        resolvedAutoIds.set(row.index, { internalId: buildInternalId(shortId, seq, year), seq })
+      }
+    }
+
     const has = (key: string) => key in colMap
     async function processRow(row: ImportRow) {
       try {
         const contactId = row.contactId ?? createdContactIds.get(row.contactName.toLowerCase())
         const toIso = (d: string) => d ? new Date(`${d}T12:00:00`).toISOString() : undefined
-        const payload: Record<string, unknown> = { cr9b5_internalid: row.internalId }
+        const resolved = resolvedAutoIds.get(row.index)
+        const payload: Record<string, unknown> = { cr9b5_internalid: resolved?.internalId ?? row.internalId }
+        if (resolved) payload.cr9b5_globalsequence = resolved.seq
         if (has('type')) payload.cr9b5_type = row.type
-        if (has('date')) payload.cr9b5_date = toIso(row.date)
+        if (has('date')) { payload.cr9b5_date = toIso(row.date); if (row.date) payload.cr9b5_year = new Date(row.date).getFullYear() }
         if (has('baseNet')) payload.cr9b5_baseamount = row.baseAmount
         if (has('taxRate')) payload.cr9b5_taxrate = row.taxIsManual ? 'n/a' : row.taxRate
         if (has('baseIgic')) { payload.cr9b5_taxamount = row.taxAmount; payload.cr9b5_taxismanual = row.taxIsManual }
@@ -477,7 +526,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         {step === 1 && (
           <div style={{ padding: '32px', maxWidth: '520px', margin: '0 auto' }}>
             <Text size={500} weight="semibold" style={{ display: 'block', marginBottom: 4 }}>Select Excel File</Text>
-            <Text style={{ color: tokens.colorNeutralForeground3, display: 'block', marginBottom: 24 }}>Upload an .xlsx file with the standard import format.</Text>
+            <Text style={{ color: tokens.colorNeutralForeground3, display: 'block', marginBottom: 12 }}>Upload an .xlsx file with the standard import format.</Text>
+            <Button appearance="outline" onClick={downloadTemplate} style={{ marginBottom: 24 }}>↓ Download blank template</Button>
             <div className={s.dropzone} onClick={() => fileRef.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}>
               <span style={{ fontSize: '36px' }}>📂</span>
               <Text weight="medium">Click or drag &amp; drop an Excel file here</Text>
@@ -521,6 +571,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                     </th>
                     <th className={s.th}>Status</th>
                     <th className={s.th}>Internal ID</th>
+                    <th className={s.th}>Auto ID</th>
                     <th className={s.th}>Date</th>
                     <th className={s.th}>Property</th>
                     <th className={s.th}>Contact</th>
@@ -553,7 +604,10 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
                             <div style={{ color: tokens.colorNeutralForeground4, fontSize: '11px', marginTop: 2, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={row.statusNote}>{row.statusNote}</div>
                           )}
                         </td>
-                        <td className={s.td} style={{ fontFamily: 'monospace' }}>{cellProps(row, 'internalId', row.internalId)}</td>
+                        <td className={s.td} style={{ fontFamily: 'monospace' }}>{row.autoId ? <Text size={200} style={{ color: tokens.colorNeutralForeground4, fontStyle: 'italic' }}>auto</Text> : cellProps(row, 'internalId', row.internalId)}</td>
+                        <td className={s.td} style={{ textAlign: 'center' }}>
+                          <input type="checkbox" checked={row.autoId} onChange={() => toggleAutoId(rowIdx)} title="Auto-generate a sequenced Internal ID on import" />
+                        </td>
                         <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{cellProps(row, 'date', fmtDate(row.date), 'date')}</td>
                         <td className={s.td}>{cellProps(row, 'propertyId', row.propertyName)}</td>
                         <td className={s.td}>

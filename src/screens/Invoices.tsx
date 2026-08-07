@@ -45,6 +45,8 @@ function fmtDate(iso: string | undefined): string {
   return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+type SortField = 'date' | 'id' | 'type' | 'category' | 'property' | 'contact' | 'base' | 'taxRate' | 'taxAmount' | 'total'
+
 export default function Invoices() {
   const s = useStyles()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -65,10 +67,10 @@ export default function Invoices() {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
-  const [sortField, setSortField] = useState<'date' | 'id' | 'total'>('date')
+  const [sortField, setSortField] = useState<SortField>('date')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
-  function toggleSort(field: 'date' | 'id' | 'total') {
+  function toggleSort(field: SortField) {
     if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     else { setSortField(field); setSortDir('desc') }
   }
@@ -149,6 +151,22 @@ export default function Invoices() {
     return m ? parseInt(m[0], 10) : 0
   }
 
+  function sortValue(inv: Cr9b5_pt_invoices, field: SortField): string | number {
+    const raw = inv as unknown as Record<string, unknown>
+    switch (field) {
+      case 'date': return inv.cr9b5_date ?? ''
+      case 'id': return internalIdSortKey(inv.cr9b5_internalid)
+      case 'type': return (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense'
+      case 'category': return categoryMap[raw['_cr9b5_categoryid_value'] as string] ?? ''
+      case 'property': return raw['cr9b5_allproperties'] ? 'All' : propName(inv)
+      case 'contact': return contactName(inv)
+      case 'base': return inv.cr9b5_baseamount ?? 0
+      case 'taxRate': return inv.cr9b5_taxismanual ? -1 : parseFloat(inv.cr9b5_taxrate ?? '') || 0
+      case 'taxAmount': return inv.cr9b5_taxamount ?? 0
+      case 'total': return inv.cr9b5_totalgross ?? 0
+    }
+  }
+
   const filtered = invoices.filter(inv => {
     if (search) {
       const q = search.toLowerCase()
@@ -157,12 +175,8 @@ export default function Invoices() {
     }
     return true
   }).sort((a, b) => {
-    let cmp = 0
-    switch (sortField) {
-      case 'date': cmp = (a.cr9b5_date ?? '') < (b.cr9b5_date ?? '') ? -1 : (a.cr9b5_date ?? '') > (b.cr9b5_date ?? '') ? 1 : 0; break
-      case 'id': cmp = internalIdSortKey(a.cr9b5_internalid) - internalIdSortKey(b.cr9b5_internalid); break
-      case 'total': cmp = (a.cr9b5_totalgross ?? 0) - (b.cr9b5_totalgross ?? 0); break
-    }
+    const av = sortValue(a, sortField), bv = sortValue(b, sortField)
+    const cmp = typeof av === 'number' && typeof bv === 'number' ? av - bv : String(av).localeCompare(String(bv))
     return sortDir === 'asc' ? cmp : -cmp
   })
 
@@ -321,28 +335,24 @@ export default function Invoices() {
             <thead>
               <tr>
                 <th className={s.th}><Checkbox checked={allSelected} onChange={toggleSelectAll} /></th>
-                <th className={s.th}>
-                  <button className={s.thSortBtn} onClick={() => toggleSort('date')}>
-                    Date {sortField === 'date' && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
-                  </button>
-                </th>
-                <th className={s.th} style={{ minWidth: '92px' }}>
-                  <button className={s.thSortBtn} onClick={() => toggleSort('id')}>
-                    Internal ID {sortField === 'id' && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
-                  </button>
-                </th>
-                <th className={s.th}>Type</th>
-                <th className={s.th}>Category</th>
-                <th className={s.th}>Property</th>
-                <th className={s.th}>Contact</th>
-                <th className={s.th}>Base</th>
-                <th className={s.th}>Tax %</th>
-                <th className={s.th}>Tax €</th>
-                <th className={s.th}>
-                  <button className={s.thSortBtn} onClick={() => toggleSort('total')}>
-                    Total Gross {sortField === 'total' && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
-                  </button>
-                </th>
+                {([
+                  ['date', 'Date', undefined],
+                  ['id', 'Internal ID', '92px'],
+                  ['type', 'Type', undefined],
+                  ['category', 'Category', undefined],
+                  ['property', 'Property', undefined],
+                  ['contact', 'Contact', undefined],
+                  ['base', 'Base', undefined],
+                  ['taxRate', 'Tax %', undefined],
+                  ['taxAmount', 'Tax €', undefined],
+                  ['total', 'Total Gross', undefined],
+                ] as [SortField, string, string | undefined][]).map(([field, label, minWidth]) => (
+                  <th key={field} className={s.th} style={minWidth ? { minWidth } : undefined}>
+                    <button className={s.thSortBtn} onClick={() => toggleSort(field)}>
+                      {label} {sortField === field && <span className={s.sortArrow}>{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                    </button>
+                  </th>
+                ))}
                 <th className={s.th} />
               </tr>
             </thead>
