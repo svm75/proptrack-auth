@@ -1,61 +1,15 @@
 {
-  "name": "cr9b5_pt_property",
-  "title": "Properties",
+  "name": "svm_pt_invoicetemplate",
+  "title": "Invoice Templates",
   "schema": {
     "type": "array",
     "items": {
       "type": "object",
       "x-ms-dataverse-entity": true,
-      "x-ms-dataverse-entityset": "cr9b5_pt_properties",
-      "x-ms-dataverse-primary-id": "cr9b5_pt_propertyid",
-      "x-ms-dataverse-primary-name": "cr9b5_name",
+      "x-ms-dataverse-entityset": "svm_pt_invoicetemplates",
+      "x-ms-dataverse-primary-id": "svm_pt_invoicetemplateid",
+      "x-ms-dataverse-primary-name": "svm_pt_name",
       "properties": {
-        "cr9b5_address": {
-          "type": "string",
-          "title": "Address",
-          "x-ms-dataverse-attribute": "cr9b5_address",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_Address",
-          "required": true,
-          "maxLength": 100
-        },
-        "cr9b5_name": {
-          "type": "string",
-          "title": "Name",
-          "x-ms-dataverse-attribute": "cr9b5_name",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_Name",
-          "x-ms-dataverse-primary-name": true,
-          "required": true,
-          "maxLength": 850
-        },
-        "cr9b5_notes": {
-          "type": "string",
-          "title": "Notes",
-          "x-ms-dataverse-attribute": "cr9b5_notes",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_Notes",
-          "maxLength": 100
-        },
-        "cr9b5_pt_propertyid": {
-          "type": "string",
-          "title": "Property",
-          "x-ms-dataverse-attribute": "cr9b5_pt_propertyid",
-          "x-ms-dataverse-type": "UniqueidentifierType",
-          "x-ms-schema-name": "cr9b5_pt_propertyId",
-          "x-ms-dataverse-primary-id": true,
-          "required": true,
-          "x-ms-keyType": "primary"
-        },
-        "cr9b5_shortid": {
-          "type": "string",
-          "title": "Short ID",
-          "x-ms-dataverse-attribute": "cr9b5_shortid",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_ShortID",
-          "required": true,
-          "maxLength": 100
-        },
         "createdby": {
           "type": "string",
           "title": "Created By",
@@ -117,6 +71,14 @@
           "x-ms-read-only": true,
           "required": true,
           "maxLength": 100
+        },
+        "exchangerate": {
+          "type": "string",
+          "title": "Exchange Rate",
+          "x-ms-dataverse-attribute": "exchangerate",
+          "x-ms-dataverse-type": "DecimalType",
+          "x-ms-schema-name": "ExchangeRate",
+          "x-ms-read-only": true
         },
         "importsequencenumber": {
           "type": "string",
@@ -283,7 +245,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "4b30ee1d-d624-f111-88b4-7ced8d5ff889",
+          "x-ms-optionsetmetadataid": "8b8e2f64-29e0-4c03-b96e-12e31d3e039f",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status",
           "x-ms-optionSetType": "State"
@@ -314,7 +276,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "5530ee1d-d624-f111-88b4-7ced8d5ff889",
+          "x-ms-optionsetmetadataid": "f23b8798-2da1-4eee-a4af-4aa0b0a41748",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status Reason",
           "x-ms-optionSetType": "Status"
@@ -327,13 +289,94 @@
           "x-ms-schema-name": "statuscodeName",
           "x-ms-read-only": true
         },
-        "svm_pt_googledrivefolderid": {
+        "svm_category": {
           "type": "string",
-          "title": "Google Drive Folder Id",
-          "x-ms-dataverse-attribute": "svm_pt_googledrivefolderid",
+          "title": "Category",
+          "x-ms-dataverse-attribute": "svm_category",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "svm_Category"
+        },
+        "svm_categoryname": {
+          "type": "string",
+          "title": "svm_categoryname",
+          "x-ms-dataverse-attribute": "svm_categoryname",
           "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "svm_pt_GoogleDriveFolderId",
+          "x-ms-schema-name": "svm_CategoryName",
+          "x-ms-read-only": true,
+          "maxLength": 850
+        },
+        "svm_pt_defaultamount": {
+          "type": "string",
+          "title": "Default Amount",
+          "x-ms-dataverse-attribute": "svm_pt_defaultamount",
+          "x-ms-dataverse-type": "MoneyType",
+          "x-ms-schema-name": "svm_pt_DefaultAmount"
+        },
+        "svm_pt_defaultamount_base": {
+          "type": "string",
+          "title": "Default Amount (Base)",
+          "x-ms-dataverse-attribute": "svm_pt_defaultamount_base",
+          "x-ms-dataverse-type": "MoneyType",
+          "x-ms-schema-name": "svm_pt_defaultamount_Base",
+          "x-ms-read-only": true
+        },
+        "svm_pt_description": {
+          "type": "string",
+          "title": "Description",
+          "x-ms-dataverse-attribute": "svm_pt_description",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "svm_pt_Description",
           "maxLength": 100
+        },
+        "svm_pt_invoicetemplateid": {
+          "type": "string",
+          "title": "Invoice Template",
+          "x-ms-dataverse-attribute": "svm_pt_invoicetemplateid",
+          "x-ms-dataverse-type": "UniqueidentifierType",
+          "x-ms-schema-name": "svm_pt_InvoiceTemplateId",
+          "x-ms-dataverse-primary-id": true,
+          "required": true,
+          "x-ms-keyType": "primary"
+        },
+        "svm_pt_name": {
+          "type": "string",
+          "title": "Name",
+          "x-ms-dataverse-attribute": "svm_pt_name",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "svm_pt_Name",
+          "x-ms-dataverse-primary-name": true,
+          "maxLength": 850
+        },
+        "svm_pt_type": {
+          "type": "string",
+          "title": "Type",
+          "x-ms-dataverse-attribute": "svm_pt_type",
+          "x-ms-dataverse-type": "PicklistType",
+          "x-ms-schema-name": "svm_pt_Type",
+          "enum": [
+            "Income",
+            "Expense"
+          ],
+          "x-ms-enum-values": [
+            925060000,
+            925060001
+          ],
+          "Color": [
+            null,
+            null
+          ],
+          "x-ms-optionsetmetadataid": "20a933bc-eb39-43f6-b74c-32dded2cd263",
+          "x-ms-isGlobal": false,
+          "x-ms-optionsetdisplayname": "Type",
+          "x-ms-optionSetType": "Picklist"
+        },
+        "svm_pt_typename": {
+          "type": "string",
+          "title": "svm_pt_typename",
+          "x-ms-dataverse-attribute": "svm_pt_typename",
+          "x-ms-dataverse-type": "VirtualType",
+          "x-ms-schema-name": "svm_pt_typeName",
+          "x-ms-read-only": true
         },
         "timezoneruleversionnumber": {
           "type": "string",
@@ -341,6 +384,22 @@
           "x-ms-dataverse-attribute": "timezoneruleversionnumber",
           "x-ms-dataverse-type": "IntegerType",
           "x-ms-schema-name": "TimeZoneRuleVersionNumber"
+        },
+        "transactioncurrencyid": {
+          "type": "string",
+          "title": "Currency",
+          "x-ms-dataverse-attribute": "transactioncurrencyid",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "TransactionCurrencyId"
+        },
+        "transactioncurrencyidname": {
+          "type": "string",
+          "title": "transactioncurrencyidname",
+          "x-ms-dataverse-attribute": "transactioncurrencyidname",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "TransactionCurrencyIdName",
+          "x-ms-read-only": true,
+          "maxLength": 100
         },
         "utcconversiontimezonecode": {
           "type": "string",
@@ -359,10 +418,6 @@
         }
       },
       "required": [
-        "cr9b5_address",
-        "cr9b5_name",
-        "cr9b5_pt_propertyid",
-        "cr9b5_shortid",
         "createdbyyominame",
         "createdonbehalfbyyominame",
         "modifiedbyyominame",
@@ -372,7 +427,8 @@
         "owneridtype",
         "owneridyominame",
         "owningbusinessunitname",
-        "statecode"
+        "statecode",
+        "svm_pt_invoicetemplateid"
       ]
     }
   }

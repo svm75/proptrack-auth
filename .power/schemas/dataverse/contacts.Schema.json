@@ -387,6 +387,22 @@
           "x-ms-schema-name": "statuscodeName",
           "x-ms-read-only": true
         },
+        "svm_defaultcategory": {
+          "type": "string",
+          "title": "Default Category",
+          "x-ms-dataverse-attribute": "svm_defaultcategory",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "svm_DefaultCategory"
+        },
+        "svm_defaultcategoryname": {
+          "type": "string",
+          "title": "svm_defaultcategoryname",
+          "x-ms-dataverse-attribute": "svm_defaultcategoryname",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "svm_DefaultCategoryName",
+          "x-ms-read-only": true,
+          "maxLength": 850
+        },
         "timezoneruleversionnumber": {
           "type": "string",
           "title": "Time Zone Rule Version Number",

@@ -1,61 +1,15 @@
 {
-  "name": "cr9b5_pt_property",
-  "title": "Properties",
+  "name": "svm_pt_invoicecomment",
+  "title": "Invoice Comments",
   "schema": {
     "type": "array",
     "items": {
       "type": "object",
       "x-ms-dataverse-entity": true,
-      "x-ms-dataverse-entityset": "cr9b5_pt_properties",
-      "x-ms-dataverse-primary-id": "cr9b5_pt_propertyid",
-      "x-ms-dataverse-primary-name": "cr9b5_name",
+      "x-ms-dataverse-entityset": "svm_pt_invoicecomments",
+      "x-ms-dataverse-primary-id": "svm_pt_invoicecommentid",
+      "x-ms-dataverse-primary-name": "svm_pt_name",
       "properties": {
-        "cr9b5_address": {
-          "type": "string",
-          "title": "Address",
-          "x-ms-dataverse-attribute": "cr9b5_address",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_Address",
-          "required": true,
-          "maxLength": 100
-        },
-        "cr9b5_name": {
-          "type": "string",
-          "title": "Name",
-          "x-ms-dataverse-attribute": "cr9b5_name",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_Name",
-          "x-ms-dataverse-primary-name": true,
-          "required": true,
-          "maxLength": 850
-        },
-        "cr9b5_notes": {
-          "type": "string",
-          "title": "Notes",
-          "x-ms-dataverse-attribute": "cr9b5_notes",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_Notes",
-          "maxLength": 100
-        },
-        "cr9b5_pt_propertyid": {
-          "type": "string",
-          "title": "Property",
-          "x-ms-dataverse-attribute": "cr9b5_pt_propertyid",
-          "x-ms-dataverse-type": "UniqueidentifierType",
-          "x-ms-schema-name": "cr9b5_pt_propertyId",
-          "x-ms-dataverse-primary-id": true,
-          "required": true,
-          "x-ms-keyType": "primary"
-        },
-        "cr9b5_shortid": {
-          "type": "string",
-          "title": "Short ID",
-          "x-ms-dataverse-attribute": "cr9b5_shortid",
-          "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "cr9b5_ShortID",
-          "required": true,
-          "maxLength": 100
-        },
         "createdby": {
           "type": "string",
           "title": "Created By",
@@ -283,7 +237,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "4b30ee1d-d624-f111-88b4-7ced8d5ff889",
+          "x-ms-optionsetmetadataid": "77119e3f-638c-4105-b8f8-186f256d82e5",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status",
           "x-ms-optionSetType": "State"
@@ -314,7 +268,7 @@
             null,
             null
           ],
-          "x-ms-optionsetmetadataid": "5530ee1d-d624-f111-88b4-7ced8d5ff889",
+          "x-ms-optionsetmetadataid": "c4e7a40e-3a48-405b-88b0-8901b95c4dfa",
           "x-ms-isGlobal": false,
           "x-ms-optionsetdisplayname": "Status Reason",
           "x-ms-optionSetType": "Status"
@@ -327,13 +281,48 @@
           "x-ms-schema-name": "statuscodeName",
           "x-ms-read-only": true
         },
-        "svm_pt_googledrivefolderid": {
+        "svm_invoice": {
           "type": "string",
-          "title": "Google Drive Folder Id",
-          "x-ms-dataverse-attribute": "svm_pt_googledrivefolderid",
+          "title": "Invoice",
+          "x-ms-dataverse-attribute": "svm_invoice",
+          "x-ms-dataverse-type": "LookupType",
+          "x-ms-schema-name": "svm_Invoice"
+        },
+        "svm_invoicename": {
+          "type": "string",
+          "title": "svm_invoicename",
+          "x-ms-dataverse-attribute": "svm_invoicename",
           "x-ms-dataverse-type": "StringType",
-          "x-ms-schema-name": "svm_pt_GoogleDriveFolderId",
+          "x-ms-schema-name": "svm_InvoiceName",
+          "x-ms-read-only": true,
+          "maxLength": 850
+        },
+        "svm_pt_comment": {
+          "type": "string",
+          "title": "Comment",
+          "x-ms-dataverse-attribute": "svm_pt_comment",
+          "x-ms-dataverse-type": "MemoType",
+          "x-ms-schema-name": "svm_pt_Comment",
           "maxLength": 100
+        },
+        "svm_pt_invoicecommentid": {
+          "type": "string",
+          "title": "Invoice Comment",
+          "x-ms-dataverse-attribute": "svm_pt_invoicecommentid",
+          "x-ms-dataverse-type": "UniqueidentifierType",
+          "x-ms-schema-name": "svm_pt_InvoiceCommentId",
+          "x-ms-dataverse-primary-id": true,
+          "required": true,
+          "x-ms-keyType": "primary"
+        },
+        "svm_pt_name": {
+          "type": "string",
+          "title": "Name",
+          "x-ms-dataverse-attribute": "svm_pt_name",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "svm_pt_Name",
+          "x-ms-dataverse-primary-name": true,
+          "maxLength": 850
         },
         "timezoneruleversionnumber": {
           "type": "string",
@@ -359,10 +348,6 @@
         }
       },
       "required": [
-        "cr9b5_address",
-        "cr9b5_name",
-        "cr9b5_pt_propertyid",
-        "cr9b5_shortid",
         "createdbyyominame",
         "createdonbehalfbyyominame",
         "modifiedbyyominame",
@@ -372,7 +357,8 @@
         "owneridtype",
         "owneridyominame",
         "owningbusinessunitname",
-        "statecode"
+        "statecode",
+        "svm_pt_invoicecommentid"
       ]
     }
   }

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 * {
   box-sizing: border-box;
@@ -13,4 +14,55 @@ body {
 #root {
   width: 100%;
   min-height: 100svh;
+}
+
+/* ── Dark mode ──────────────────────────────────────────────
+   The app's screens are written with fixed Tailwind gray/white utility
+   classes rather than dark: variants throughout. Rather than touching
+   every screen, we override the handful of utility classes that make up
+   the app's surfaces/text/borders whenever the `dark` class is present
+   on <html>, toggled by the theme switch in App.tsx. */
+.dark {
+  color-scheme: dark;
+}
+
+.dark body {
+  background-color: #0f1115;
+}
+
+.dark .bg-white         { background-color: #1a1d24; }
+.dark .bg-gray-50       { background-color: #15171c; }
+.dark .bg-gray-100      { background-color: #20232b; }
+.dark .bg-indigo-50     { background-color: rgba(99, 102, 241, 0.12); }
+.dark .bg-indigo-50\/50 { background-color: rgba(99, 102, 241, 0.08); }
+.dark .bg-teal-50       { background-color: rgba(45, 212, 191, 0.12); }
+.dark .bg-red-50        { background-color: rgba(248, 113, 113, 0.12); }
+.dark .bg-green-50      { background-color: rgba(74, 222, 128, 0.12); }
+.dark .bg-amber-100     { background-color: rgba(245, 158, 11, 0.18); }
+
+.dark .text-gray-900 { color: #f1f3f6; }
+.dark .text-gray-800 { color: #e2e5ea; }
+.dark .text-gray-700 { color: #cbd2db; }
+.dark .text-gray-600 { color: #aab2bd; }
+.dark .text-gray-500 { color: #8b93a1; }
+.dark .text-gray-400 { color: #6c7684; }
+.dark .text-gray-300 { color: #545e6b; }
+
+.dark .border-gray-200 { border-color: #2a2d35; }
+.dark .border-gray-300 { border-color: #3a3f4a; }
+.dark .border-gray-100 { border-color: #23262d; }
+.dark .divide-gray-100 > :not([hidden]) ~ :not([hidden]) { border-color: #23262d; }
+.dark .divide-gray-200 > :not([hidden]) ~ :not([hidden]) { border-color: #2a2d35; }
+
+.dark .hover\:bg-gray-50:hover  { background-color: #20232b; }
+.dark .hover\:bg-gray-100:hover { background-color: #262a33; }
+
+.dark select,
+.dark input,
+.dark textarea {
+  color-scheme: dark;
+}
+
+.dark .shadow-sm, .dark .shadow-xl {
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
 }

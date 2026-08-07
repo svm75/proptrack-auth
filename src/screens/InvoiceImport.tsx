@@ -596,30 +596,50 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       }
     }
     const createdCategoryIds = new Map<string, string>()
-    for (const [key, { name, type }] of newCatNames) {
+
+    // Group the deduplicated names by reference type so existence can be
+    // checked with one query per type (an `or`-chain over all names) instead
+    // of one round trip per individual category name.
+    const namesByRefType = new Map<number, string[]>()
+    for (const { name, type } of newCatNames.values()) {
+      const refType = type === TYPE_OUTGOING ? REF_CAT_INCOME : REF_CAT_EXPENSE
+      const list = namesByRefType.get(refType) ?? []
+      list.push(name)
+      namesByRefType.set(refType, list)
+    }
+    for (const [refType, names] of namesByRefType) {
+      const orFilter = names.map(n => `cr9b5_value eq '${n.replace(/'/g, "''")}'`).join(' or ')
+      let existingByName = new Map<string, string>()
       try {
-        const refType = type === TYPE_OUTGOING ? REF_CAT_INCOME : REF_CAT_EXPENSE
-        // Check server-side before creating to prevent duplicates
         const existing = await Cr9b5_pt_referencesService.getAll({
-          filter: `cr9b5_referencetype eq ${refType} and cr9b5_value eq '${name.replace(/'/g, "''")}'`,
-          select: ['cr9b5_pt_referenceid'],
-          top: 1,
+          filter: `cr9b5_referencetype eq ${refType} and (${orFilter})`,
+          select: ['cr9b5_pt_referenceid', 'cr9b5_value'],
+          maxPageSize: 500,
         })
-        const existingId = existing.data?.[0]?.cr9b5_pt_referenceid
-        if (existingId) {
-          createdCategoryIds.set(key, existingId)
-          continue
-        }
-        const res = await Cr9b5_pt_referencesService.create({
-          cr9b5_value: name,
-          cr9b5_referencetype: refType as never,
-        } as never)
-        if (res.data?.cr9b5_pt_referenceid) {
-          createdCategoryIds.set(key, res.data.cr9b5_pt_referenceid)
-        }
+        existingByName = new Map((existing.data ?? []).map(r => [r.cr9b5_value.toLowerCase(), r.cr9b5_pt_referenceid]))
       } catch {
-        // category creation failed; invoice will be imported without category
+        // if the batched lookup fails, fall through and try to create all of them
       }
+      for (const name of names) {
+        const key = name.toLowerCase()
+        const existingId = existingByName.get(key)
+        if (existingId) createdCategoryIds.set(key, existingId)
+      }
+      // Missing ones are independent creates — safe to run concurrently.
+      const missing = names.filter(n => !createdCategoryIds.has(n.toLowerCase()))
+      await Promise.all(missing.map(async name => {
+        try {
+          const res = await Cr9b5_pt_referencesService.create({
+            cr9b5_value: name,
+            cr9b5_referencetype: refType as never,
+          } as never)
+          if (res.data?.cr9b5_pt_referenceid) {
+            createdCategoryIds.set(name.toLowerCase(), res.data.cr9b5_pt_referenceid)
+          }
+        } catch {
+          // category creation failed; invoice will be imported without category
+        }
+      }))
     }
 
     // Deduplicate new contacts by name
@@ -630,8 +650,9 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       }
     }
 
+    // Independent creates — run concurrently instead of one at a time.
     const createdContactIds = new Map<string, string>()
-    for (const [, row] of newContactNames) {
+    await Promise.all([...newContactNames].map(async ([key, row]) => {
       try {
         const res = await Cr9b5_pt_contactsService.create({
           cr9b5_name:  row.contactName,
@@ -639,16 +660,16 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
           cr9b5_role:  row.contactRole as never,
         } as never)
         if (res.data?.cr9b5_pt_contactid) {
-          createdContactIds.set(row.contactName.toLowerCase(), res.data.cr9b5_pt_contactid)
+          createdContactIds.set(key, res.data.cr9b5_pt_contactid)
         }
       } catch {
         // contact creation failed; invoices for this contact will fail too
       }
-    }
+    }))
 
     const has = (key: string) => key in colMap
 
-    for (const row of processable) {
+    async function processRow(row: ImportRow) {
       try {
         const contactId = row.contactId ?? createdContactIds.get(row.contactName.toLowerCase())
         const toIso = (d: string) => d ? new Date(`${d}T12:00:00`).toISOString() : undefined
@@ -695,6 +716,14 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         failed++
       }
       setImportProgress(p => p + 1)
+    }
+
+    // Rows are independent — save them in bounded-concurrency batches instead
+    // of one sequential network round trip per row (a 500-row import used to
+    // mean 500+ serial awaits).
+    const CONCURRENCY = 8
+    for (let i = 0; i < processable.length; i += CONCURRENCY) {
+      await Promise.all(processable.slice(i, i + CONCURRENCY).map(processRow))
     }
 
     // Unchecked no-change duplicates count as skipped

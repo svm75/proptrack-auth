@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_attachmentsService } from '../generated/services/Cr9b5_pt_attachmentsService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
@@ -12,6 +12,7 @@ import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsMod
 import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
 import { logActivity } from '../services/activitylog'
 import InvoiceForm from './InvoiceForm'
+import PropertyConnectionDiagram from './PropertyConnectionDiagram'
 import { fmtEur } from '../utils/formatters'
 
 const PROP_REF_TYPE = 233100000
@@ -63,6 +64,23 @@ export default function Properties() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
 
+  // Diagram overlay
+  const [diagramPropId, setDiagramPropId] = useState<string | null>(null)
+  const [diagramInvoices, setDiagramInvoices] = useState<Cr9b5_pt_invoices[]>([])
+  const [diagramLoading, setDiagramLoading] = useState(false)
+
+  async function openDiagram(propId: string) {
+    setDiagramLoading(true)
+    setDiagramPropId(propId)
+    const res = await Cr9b5_pt_invoicesService.getAll({
+      filter: `_cr9b5_property_value eq '${propId}'`,
+      orderBy: ['cr9b5_date desc'],
+      maxPageSize: 5000,
+    })
+    setDiagramInvoices(res.data ?? [])
+    setDiagramLoading(false)
+  }
+
   // Detail panel
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null)
   const [propInvoices, setPropInvoices] = useState<Cr9b5_pt_invoices[]>([])
@@ -103,6 +121,13 @@ export default function Properties() {
   }
 
   useEffect(() => { load() }, [])
+
+  // Id → contact index, built once per data load instead of Array.find()
+  // scanning the full contact list for every invoice row on every render.
+  const contactById = useMemo(
+    () => new Map(contacts.map(c => [c.cr9b5_pt_contactid, c])),
+    [contacts]
+  )
 
   // --- Property CRUD ---
 
@@ -238,7 +263,7 @@ export default function Properties() {
   function contactName(inv: Cr9b5_pt_invoices): string {
     const raw = inv as unknown as Record<string, unknown>
     const id = raw['_cr9b5_contact_value'] as string | undefined
-    return contacts.find(c => c.cr9b5_pt_contactid === id)?.cr9b5_name ?? '—'
+    return (id && contactById.get(id)?.cr9b5_name) ?? '—'
   }
 
   function invType(inv: Cr9b5_pt_invoices): string {
@@ -275,7 +300,15 @@ export default function Properties() {
     setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
     setAttachError(null)
     try {
-      const folderId = await getOrCreateFolder(propertyFolderPath(prop.cr9b5_name, prop.cr9b5_shortid))
+      // Reuse the cached Drive folder id instead of re-walking the folder
+      // path (Property → Property Docs) on every upload.
+      let folderId = prop.svm_pt_googledrivefolderid
+      if (!folderId) {
+        folderId = await getOrCreateFolder(propertyFolderPath(prop.cr9b5_name, prop.cr9b5_shortid))
+        setProperties(ps => ps.map(p => p.cr9b5_pt_propertyid === propId ? { ...p, svm_pt_googledrivefolderid: folderId } : p))
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        Cr9b5_pt_propertiesService.update(propId, { svm_pt_googledrivefolderid: folderId } as any).catch(() => { /* cache is best-effort */ })
+      }
       const { id, webViewLink } = await uploadFile(file, folderId)
       setAttachForm(f => ({ ...f, uploading: false, driveId: id, driveUrl: webViewLink }))
     } catch (e: unknown) {
@@ -368,6 +401,12 @@ export default function Properties() {
                         </span>
                       </div>
                       <div className="flex gap-1.5 shrink-0" onClick={e => e.stopPropagation()}>
+                        <button
+                          onClick={() => openDiagram(p.cr9b5_pt_propertyid)}
+                          className="text-xs text-teal-600 hover:text-teal-800 font-medium px-2 py-1 rounded hover:bg-teal-50"
+                        >
+                          Diagram
+                        </button>
                         <button
                           onClick={() => openEdit(p)}
                           className="text-xs text-indigo-600 hover:text-indigo-800 font-medium px-2 py-1 rounded hover:bg-indigo-50"
@@ -711,6 +750,28 @@ export default function Properties() {
           </div>
         </div>
       )}
+
+      {/* Connection Diagram overlay */}
+      {diagramPropId && (() => {
+        const diagramProp = properties.find(p => p.cr9b5_pt_propertyid === diagramPropId)
+        if (!diagramProp) return null
+        if (diagramLoading) {
+          return (
+            <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center">
+              <p className="text-white text-sm">Loading…</p>
+            </div>
+          )
+        }
+        return (
+          <PropertyConnectionDiagram
+            property={diagramProp}
+            allProperties={properties}
+            invoices={diagramInvoices}
+            contacts={contacts}
+            onClose={() => { setDiagramPropId(null); setDiagramInvoices([]) }}
+          />
+        )
+      })()}
 
       {/* Invoice detail popup */}
       {viewInvoice && (

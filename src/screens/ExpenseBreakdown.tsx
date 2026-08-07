@@ -98,7 +98,7 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
         invs:  filtered.filter(i => getCatId(i) === c.cr9b5_pt_referenceid),
         color: CAT_COLORS[idx % CAT_COLORS.length],
       }))
-      .filter(r => r.invs.length > 0)
+      .filter(r => r.invs.length > 0 && !r.label.startsWith('.'))
 
     const uncatInvs = filtered.filter(i => !getCatId(i))
     if (uncatInvs.length > 0) {
@@ -127,8 +127,14 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
       .reduce((s, i) => s + (i.cr9b5_baseamount ?? 0), 0)
   }
 
+  function fmtWhole(n: number): string {
+    if (n === 0) return '—'
+    const int = Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, "'")
+    return `€ ${int}`
+  }
+
   function fmtCell(n: number): string {
-    return n === 0 ? '—' : fmtEur(Math.round(n * 100) / 100)
+    return fmtWhole(n)
   }
 
   function fmtPct(n: number): string {
@@ -206,7 +212,7 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
                         </td>
                       ))}
                       <td className="px-4 py-2 text-right text-xs font-semibold text-gray-900 whitespace-nowrap tabular-nums border-l border-gray-200">
-                        {fmtEur(rowTotal)}
+                        {fmtWhole(rowTotal)}
                       </td>
                       <td className="px-4 py-2 text-right text-xs text-gray-600 whitespace-nowrap tabular-nums">
                         {fmtPct(rowTotal)}
@@ -224,7 +230,7 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
                     </td>
                   ))}
                   <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-900 whitespace-nowrap tabular-nums border-l border-gray-200">
-                    {fmtEur(totalExpenses)}
+                    {fmtWhole(totalExpenses)}
                   </td>
                   <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-500 whitespace-nowrap">100%</td>
                 </tr>

@@ -777,10 +777,273 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
 }
 
 // ============================================================
+// EXPENSE SUNBURST TAB
+// ============================================================
+
+function polarToCartesian(cx: number, cy: number, r: number, angle: number) {
+  return { x: cx + r * Math.cos(angle - Math.PI / 2), y: cy + r * Math.sin(angle - Math.PI / 2) }
+}
+
+function arcPath(cx: number, cy: number, r0: number, r1: number, startAngle: number, endAngle: number): string {
+  const gap = 0.012
+  const s = startAngle + gap / 2
+  const e = endAngle - gap / 2
+  if (e <= s) return ''
+  const p0s = polarToCartesian(cx, cy, r0, s)
+  const p0e = polarToCartesian(cx, cy, r0, e)
+  const p1s = polarToCartesian(cx, cy, r1, s)
+  const p1e = polarToCartesian(cx, cy, r1, e)
+  const large = e - s > Math.PI ? 1 : 0
+  return [
+    `M ${p1s.x.toFixed(2)} ${p1s.y.toFixed(2)}`,
+    `A ${r1} ${r1} 0 ${large} 1 ${p1e.x.toFixed(2)} ${p1e.y.toFixed(2)}`,
+    `L ${p0e.x.toFixed(2)} ${p0e.y.toFixed(2)}`,
+    `A ${r0} ${r0} 0 ${large} 0 ${p0s.x.toFixed(2)} ${p0s.y.toFixed(2)}`,
+    'Z',
+  ].join(' ')
+}
+
+function lighten(hex: string, amount: number): string {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  const lr = Math.min(255, Math.round(r + (255 - r) * amount))
+  const lg = Math.min(255, Math.round(g + (255 - g) * amount))
+  const lb = Math.min(255, Math.round(b + (255 - b) * amount))
+  return `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`
+}
+
+interface SbSegment { path: string; color: string; label: string; value: number; depth: number }
+
+function DashboardExpenseSunburst({ invoices, properties, contacts, references }: SharedProps & { contacts: Cr9b5_pt_contacts[]; references: Cr9b5_pt_references[] }) {
+  const currentYear = new Date().getFullYear()
+  const [filterYear, setFilterYear] = useState<number>(currentYear)
+  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: number; pct: number } | null>(null)
+
+  const years = useMemo(() => {
+    const s = new Set<number>()
+    invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
+    const arr = Array.from(s).sort((a, b) => b - a)
+    return arr.length ? arr : [currentYear]
+  }, [invoices, currentYear])
+
+  const contactById = useMemo(() => {
+    const m: Record<string, string> = {}
+    contacts.forEach(c => { m[c.cr9b5_pt_contactid] = c.cr9b5_name })
+    return m
+  }, [contacts])
+
+  const propById = useMemo(() => {
+    const m: Record<string, string> = {}
+    properties.forEach(p => { m[p.cr9b5_pt_propertyid] = p.cr9b5_name })
+    return m
+  }, [properties])
+
+  const catNameById = useMemo(() => {
+    const m: Record<string, string> = {}
+    references.forEach(ref => {
+      if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) m[ref.cr9b5_pt_referenceid] = ref.cr9b5_value
+    })
+    return m
+  }, [references])
+
+  // Build hierarchy: property → category → contact
+  const hierarchy = useMemo(() => {
+    const expenses = invoices.filter(inv =>
+      isActive(inv) &&
+      (inv.cr9b5_type as unknown as number) === TYPE_INCOMING &&
+      inv.cr9b5_year === filterYear
+    )
+
+    type ContactMap = Map<string, number>
+    type CatMap = Map<string, { value: number; contacts: ContactMap }>
+    type PropMap = Map<string, { value: number; cats: CatMap }>
+
+    const propMap: PropMap = new Map()
+
+    expenses.forEach(inv => {
+      const raw = inv as unknown as Record<string, unknown>
+      const propId  = (raw['_cr9b5_property_value'] as string) ?? '__none__'
+      const catId   = (raw['_cr9b5_categoryid_value'] as string) ?? '__none__'
+      const ctId    = (raw['_cr9b5_contact_value'] as string) ?? '__none__'
+      const amount  = (inv.cr9b5_totalgross ?? 0)
+
+      if (!propMap.has(propId)) propMap.set(propId, { value: 0, cats: new Map() })
+      const propEntry = propMap.get(propId)!
+      propEntry.value += amount
+
+      if (!propEntry.cats.has(catId)) propEntry.cats.set(catId, { value: 0, contacts: new Map() })
+      const catEntry = propEntry.cats.get(catId)!
+      catEntry.value += amount
+
+      catEntry.contacts.set(ctId, (catEntry.contacts.get(ctId) ?? 0) + amount)
+    })
+
+    return propMap
+  }, [invoices, filterYear])
+
+  const total = useMemo(() => {
+    let t = 0
+    hierarchy.forEach(p => { t += p.value })
+    return t
+  }, [hierarchy])
+
+  const segments = useMemo<SbSegment[]>(() => {
+    if (total === 0) return []
+    const cx = 300, cy = 300
+    const R = [
+      { r0: 60,  r1: 140 },  // ring 1: property
+      { r0: 148, r1: 210 },  // ring 2: category
+      { r0: 218, r1: 275 },  // ring 3: contact
+    ]
+    const segs: SbSegment[] = []
+    const TWO_PI = 2 * Math.PI
+    let propAngleStart = 0
+
+    const propEntries = Array.from(hierarchy.entries()).sort((a, b) => b[1].value - a[1].value)
+
+    propEntries.forEach(([propId, propEntry], propIdx) => {
+      const propAngleEnd = propAngleStart + (propEntry.value / total) * TWO_PI
+      const propColor = PROPERTY_COLORS[propIdx % PROPERTY_COLORS.length]
+      const propName = propId === '__none__' ? 'No Property' : (propById[propId] ?? propId)
+
+      segs.push({
+        path: arcPath(cx, cy, R[0].r0, R[0].r1, propAngleStart, propAngleEnd),
+        color: propColor,
+        label: propName,
+        value: propEntry.value,
+        depth: 0,
+      })
+
+      const catEntries = Array.from(propEntry.cats.entries()).sort((a, b) => b[1].value - a[1].value)
+      let catAngleStart = propAngleStart
+      catEntries.forEach(([catId, catEntry], catIdx) => {
+        const catAngleEnd = catAngleStart + (catEntry.value / propEntry.value) * (propAngleEnd - propAngleStart)
+        const catColor = lighten(propColor, 0.35 + (catIdx % 3) * 0.1)
+        const catName = catId === '__none__' ? 'Uncategorized' : (catNameById[catId] ?? catId)
+
+        segs.push({
+          path: arcPath(cx, cy, R[1].r0, R[1].r1, catAngleStart, catAngleEnd),
+          color: catColor,
+          label: catName,
+          value: catEntry.value,
+          depth: 1,
+        })
+
+        const ctEntries = Array.from(catEntry.contacts.entries()).sort((a, b) => b[1] - a[1])
+        let ctAngleStart = catAngleStart
+        ctEntries.forEach(([ctId, ctValue], ctIdx) => {
+          const ctAngleEnd = ctAngleStart + (ctValue / catEntry.value) * (catAngleEnd - catAngleStart)
+          const ctColor = lighten(propColor, 0.55 + (ctIdx % 3) * 0.08)
+          const ctName = ctId === '__none__' ? 'No Contact' : (contactById[ctId] ?? ctId)
+
+          segs.push({
+            path: arcPath(cx, cy, R[2].r0, R[2].r1, ctAngleStart, ctAngleEnd),
+            color: ctColor,
+            label: ctName,
+            value: ctValue,
+            depth: 2,
+          })
+          ctAngleStart = ctAngleEnd
+        })
+
+        catAngleStart = catAngleEnd
+      })
+
+      propAngleStart = propAngleEnd
+    })
+
+    return segs
+  }, [hierarchy, total, propById, contactById, catNameById])
+
+  const RING_LABELS = ['Property', 'Category', 'Contact']
+
+  return (
+    <div className="space-y-6">
+      <FilterRow>
+        <YearSelect value={filterYear} years={years} onChange={v => setFilterYear(v as number)} allowAll={false} />
+      </FilterRow>
+
+      {total === 0 ? (
+        <p className="text-sm text-gray-400">No expense data for {filterYear}.</p>
+      ) : (
+        <div className="flex flex-col lg:flex-row gap-8 items-start">
+          <div className="bg-white border border-gray-200 rounded-xl p-4 relative">
+            {tooltip && (
+              <div
+                style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 8, zIndex: 9999 }}
+                className="bg-gray-900 text-white text-xs rounded-lg px-3 py-2 shadow-xl pointer-events-none"
+              >
+                <div className="font-semibold mb-0.5">{tooltip.label}</div>
+                <div className="tabular-nums">{fmtEur(tooltip.value)}</div>
+                <div className="text-gray-300 tabular-nums">{tooltip.pct.toFixed(1)} % of total</div>
+              </div>
+            )}
+            <svg width={600} height={600} viewBox="0 0 600 600">
+              {/* center label */}
+              <text x={300} y={294} textAnchor="middle" fontSize={13} fill="#6b7280" fontWeight={600}>Expenses</text>
+              <text x={300} y={312} textAnchor="middle" fontSize={12} fill="#9ca3af" className="tabular-nums">{fmtEur(total)}</text>
+
+              {segments.map((seg, i) => (
+                <path
+                  key={i}
+                  d={seg.path}
+                  fill={seg.color}
+                  stroke="white"
+                  strokeWidth={1}
+                  style={{ cursor: 'pointer', transition: 'opacity 0.1s' }}
+                  onMouseEnter={e => setTooltip({ x: e.clientX, y: e.clientY, label: seg.label, value: seg.value, pct: (seg.value / total) * 100 })}
+                  onMouseMove={e => setTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
+                  onMouseLeave={() => setTooltip(null)}
+                />
+              ))}
+
+              {/* ring labels */}
+              {[{ r: 100, label: 'Property' }, { r: 179, label: 'Category' }, { r: 246, label: 'Contact' }].map(({ r, label }) => (
+                <text key={label} x={300} y={300 - r} textAnchor="middle" fontSize={9} fill="#9ca3af" dy={-3}>{label}</text>
+              ))}
+            </svg>
+          </div>
+
+          {/* Legend: top-level properties */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5 min-w-[220px]">
+            <div className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-3">Properties</div>
+            <div className="space-y-2">
+              {Array.from(hierarchy.entries())
+                .sort((a, b) => b[1].value - a[1].value)
+                .map(([propId, propEntry], idx) => {
+                  const name = propId === '__none__' ? 'No Property' : (propById[propId] ?? propId)
+                  const color = PROPERTY_COLORS[idx % PROPERTY_COLORS.length]
+                  return (
+                    <div key={propId} className="flex items-center gap-2 text-sm">
+                      <span className="w-3 h-3 rounded-sm shrink-0" style={{ backgroundColor: color }} />
+                      <span className="text-gray-700 truncate flex-1">{name}</span>
+                      <span className="tabular-nums text-gray-500 text-xs">{fmtEur(propEntry.value)}</span>
+                    </div>
+                  )
+                })}
+            </div>
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <div className="text-xs font-semibold uppercase tracking-widest text-gray-400 mb-1">Ring guide</div>
+              {RING_LABELS.map((l, i) => (
+                <div key={l} className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                  <span className="w-4 h-2 rounded-sm bg-gray-300 shrink-0" style={{ opacity: 0.4 + i * 0.2 }} />
+                  {i + 1}. {l}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============================================================
 // MAIN DASHBOARD — tab shell
 // ============================================================
 
-type DashTab = 'overview' | 'comparison' | 'heatmap' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'expense-breakdown' | 'income-vs-forecast'
+type DashTab = 'overview' | 'comparison' | 'heatmap' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'expense-breakdown' | 'income-vs-forecast' | 'expense-sunburst'
 
 const TABS: { id: DashTab; label: string; printName: string }[] = [
   { id: 'overview',            label: 'Overview',            printName: 'overview' },
@@ -793,6 +1056,7 @@ const TABS: { id: DashTab; label: string; printName: string }[] = [
   { id: 'cat-trend',           label: 'Category Trend',       printName: 'category-trend' },
   { id: 'expense-breakdown',   label: 'Expense Breakdown',    printName: 'expense-breakdown' },
   { id: 'income-vs-forecast',  label: 'Income vs Forecast',   printName: 'income-vs-forecast' },
+  { id: 'expense-sunburst',    label: 'Expense Sunburst',     printName: 'expense-sunburst' },
 ]
 
 export default function Dashboard() {
@@ -866,6 +1130,7 @@ export default function Dashboard() {
           {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
           {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
           {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} references={references} />}
+          {tab==='expense-sunburst'   && <DashboardExpenseSunburst invoices={invoices} properties={properties} contacts={contacts} references={references} />}
         </div>
       )}
     </div>

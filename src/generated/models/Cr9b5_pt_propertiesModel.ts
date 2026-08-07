@@ -25,6 +25,7 @@ export interface Cr9b5_pt_propertiesBase {
   owneridtype: string;
   statecode: Cr9b5_pt_propertiesstatecode;
   statuscode?: Cr9b5_pt_propertiesstatuscode;
+  svm_pt_googledrivefolderid?: string;
   timezoneruleversionnumber?: number;
   utcconversiontimezonecode?: number;
 }

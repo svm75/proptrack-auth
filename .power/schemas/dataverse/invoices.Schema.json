@@ -279,8 +279,8 @@
           "x-ms-dataverse-type": "PicklistType",
           "x-ms-schema-name": "cr9b5_Type",
           "enum": [
-            "Income",
-            "Expense"
+            "Expense",
+            "Income"
           ],
           "x-ms-enum-values": [
             233100000,
@@ -588,6 +588,14 @@
           "x-ms-dataverse-type": "VirtualType",
           "x-ms-schema-name": "statuscodeName",
           "x-ms-read-only": true
+        },
+        "svm_pt_googledrivefolderid": {
+          "type": "string",
+          "title": "Google Drive Folder Id",
+          "x-ms-dataverse-attribute": "svm_pt_googledrivefolderid",
+          "x-ms-dataverse-type": "StringType",
+          "x-ms-schema-name": "svm_pt_GoogleDriveFolderId",
+          "maxLength": 100
         },
         "timezoneruleversionnumber": {
           "type": "string",

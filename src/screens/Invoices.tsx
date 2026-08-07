@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
@@ -29,7 +29,14 @@ export default function Invoices() {
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
   const [categoryMap, setCategoryMap] = useState<Record<string, string>>({})
+  const [categoryList, setCategoryList] = useState<{ id: string; name: string }[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Bulk edit
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkCategoryId, setBulkCategoryId] = useState('')
+  const [bulkPropertyId, setBulkPropertyId] = useState('')
+  const [bulkApplying, setBulkApplying] = useState(false)
 
   // Filters
   const [filterType, setFilterType] = useState<'all' | 'income' | 'expense'>('all')
@@ -37,6 +44,7 @@ export default function Invoices() {
   const [filterFrom, setFilterFrom] = useState('')
   const [filterTo, setFilterTo] = useState('')
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState<'date_desc' | 'date_asc' | 'id_asc' | 'id_desc' | 'total_desc' | 'total_asc'>('date_desc')
 
   // Form
   const [formOpen, setFormOpen] = useState(false)
@@ -45,10 +53,10 @@ export default function Invoices() {
   const [importOpen, setImportOpen]   = useState(false)
   const [exportOpen, setExportOpen]   = useState(false)
 
-  async function load() {
-    setLoading(true)
-    const [invRes, propRes, conRes, catRes] = await Promise.all([
-      Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'], maxPageSize: 5000 }),
+  // Properties/contacts/categories rarely change while browsing invoices —
+  // loaded once, independent of the invoice filters below.
+  async function loadRefData() {
+    const [propRes, conRes, catRes] = await Promise.all([
       Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
       Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
       Cr9b5_pt_referencesService.getAll({
@@ -56,41 +64,90 @@ export default function Invoices() {
         maxPageSize: 5000,
       }),
     ])
-    setInvoices(invRes.data ?? [])
     setProperties(propRes.data ?? [])
     setContacts(conRes.data ?? [])
     const map: Record<string, string> = {}
+    const list: { id: string; name: string }[] = []
     for (const ref of catRes.data ?? []) {
-      if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) map[ref.cr9b5_pt_referenceid] = ref.cr9b5_value
+      if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) {
+        map[ref.cr9b5_pt_referenceid] = ref.cr9b5_value
+        list.push({ id: ref.cr9b5_pt_referenceid, name: ref.cr9b5_value })
+      }
     }
     setCategoryMap(map)
+    setCategoryList(list.sort((a, b) => a.name.localeCompare(b.name)))
+  }
+
+  // Type/property/date-range are pushed down to the server as $filter so we
+  // only ever pull the rows the user actually asked to see, instead of the
+  // full table on every visit. Search and sort stay client-side over that
+  // already-scoped result set (they change on every keystroke — not worth a
+  // round trip each time).
+  function buildInvoiceFilter(): string | undefined {
+    const parts: string[] = []
+    if (filterType === 'income')  parts.push(`cr9b5_type eq ${TYPE_OUTGOING}`)
+    if (filterType === 'expense') parts.push(`cr9b5_type eq ${TYPE_INCOMING}`)
+    if (filterPropId) parts.push(`_cr9b5_property_value eq '${filterPropId}'`)
+    if (filterFrom) parts.push(`cr9b5_date ge ${new Date(filterFrom).toISOString()}`)
+    if (filterTo)   parts.push(`cr9b5_date le ${new Date(filterTo + 'T23:59:59').toISOString()}`)
+    return parts.length ? parts.join(' and ') : undefined
+  }
+
+  async function loadInvoices() {
+    setLoading(true)
+    const res = await Cr9b5_pt_invoicesService.getAll({
+      filter: buildInvoiceFilter(),
+      orderBy: ['cr9b5_date desc'],
+      maxPageSize: 5000,
+    })
+    setInvoices(res.data ?? [])
+    setSelectedIds(new Set())
     setLoading(false)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => { loadRefData() }, [])
+  useEffect(() => { loadInvoices() }, [filterType, filterPropId, filterFrom, filterTo])
+
+  // Id → record indexes, built once per data load instead of Array.find()
+  // scanning the full list for every invoice row on every render.
+  const propertyById = useMemo(
+    () => new Map(properties.map(p => [p.cr9b5_pt_propertyid, p])),
+    [properties]
+  )
+  const contactById = useMemo(
+    () => new Map(contacts.map(c => [c.cr9b5_pt_contactid, c])),
+    [contacts]
+  )
 
   function propName(inv: Cr9b5_pt_invoices): string {
     const raw = inv as unknown as Record<string, unknown>
     const id = raw['_cr9b5_property_value'] as string | undefined
-    return properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? '—'
+    return (id && propertyById.get(id)?.cr9b5_name) ?? '—'
   }
 
   function contactName(inv: Cr9b5_pt_invoices): string {
     const raw = inv as unknown as Record<string, unknown>
     const id = raw['_cr9b5_contact_value'] as string | undefined
-    return contacts.find(c => c.cr9b5_pt_contactid === id)?.cr9b5_name ?? '—'
+    return (id && contactById.get(id)?.cr9b5_name) ?? '—'
   }
 
-  // Apply filters
+  function contactWithTax(inv: Cr9b5_pt_invoices): string {
+    const raw = inv as unknown as Record<string, unknown>
+    const id = raw['_cr9b5_contact_value'] as string | undefined
+    const con = id ? contactById.get(id) : undefined
+    if (!con) return '—'
+    return con.cr9b5_taxid ? `${con.cr9b5_name} (${con.cr9b5_taxid})` : (con.cr9b5_name ?? '—')
+  }
+
+  function internalIdSortKey(id: string | undefined): number {
+    if (!id) return 0
+    const m = id.replace(/^(LV|TIAS)/i, '').match(/\d+/)
+    return m ? parseInt(m[0], 10) : 0
+  }
+
+  // Type/property/date range are already applied server-side in loadInvoices();
+  // only search (changes per keystroke) and sort are still done client-side.
   const filtered = invoices.filter(inv => {
-    if (filterType === 'income'  && (inv.cr9b5_type as number) !== TYPE_OUTGOING) return false
-    if (filterType === 'expense' && (inv.cr9b5_type as number) !== TYPE_INCOMING) return false
-    if (filterPropId) {
-      const raw = inv as unknown as Record<string, unknown>
-      if (raw['_cr9b5_property_value'] !== filterPropId) return false
-    }
-    if (filterFrom && inv.cr9b5_date && inv.cr9b5_date < new Date(filterFrom).toISOString()) return false
-    if (filterTo && inv.cr9b5_date && inv.cr9b5_date > new Date(filterTo + 'T23:59:59').toISOString()) return false
     if (search) {
       const q = search.toLowerCase()
       const haystack = [
@@ -103,6 +160,15 @@ export default function Invoices() {
       if (!haystack.includes(q)) return false
     }
     return true
+  }).sort((a, b) => {
+    switch (sortBy) {
+      case 'date_asc':   return (a.cr9b5_date ?? '') < (b.cr9b5_date ?? '') ? -1 : 1
+      case 'date_desc':  return (a.cr9b5_date ?? '') > (b.cr9b5_date ?? '') ? -1 : 1
+      case 'id_asc':     return internalIdSortKey(a.cr9b5_internalid) - internalIdSortKey(b.cr9b5_internalid)
+      case 'id_desc':    return internalIdSortKey(b.cr9b5_internalid) - internalIdSortKey(a.cr9b5_internalid)
+      case 'total_asc':  return (a.cr9b5_totalgross ?? 0) - (b.cr9b5_totalgross ?? 0)
+      case 'total_desc': return (b.cr9b5_totalgross ?? 0) - (a.cr9b5_totalgross ?? 0)
+    }
   })
 
   function openNew() {
@@ -124,7 +190,8 @@ export default function Invoices() {
       'Category':       inv => categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '',
       'Property':       inv => (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'All' : propName(inv),
       'All Properties': inv => (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'Yes' : 'No',
-      'Contact':        inv => contactName(inv),
+      'Contact':          inv => contactWithTax(inv),
+      'Contact (TaxID)': inv => contactWithTax(inv),
       'Date':           inv => fmtD(inv.cr9b5_date),
       'Description':    inv => inv.cr9b5_description ?? '',
       'Booking Ref':    inv => inv.cr9b5_bookingreference ?? '',
@@ -141,7 +208,7 @@ export default function Invoices() {
       'Total Gross':    inv => fmtN(inv.cr9b5_totalgross),
     }
 
-    const rows = filtered.map(inv => {
+    const rows = filtered.filter(inv => !isCancelled(inv)).map(inv => {
       const row: Record<string, unknown> = {}
       for (const col of orderedColumns) {
         row[col] = allCols[col]?.(inv) ?? ''
@@ -176,19 +243,79 @@ export default function Invoices() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await Cr9b5_pt_invoicesService.update(inv.cr9b5_pt_invoiceid, { statecode: 1 as any, statuscode: 2 as any })
     logActivity('Deleted', 'Invoice', inv.cr9b5_internalid ?? inv.cr9b5_pt_invoiceid)
-    await load()
+    // Patch locally instead of reloading the whole (possibly large) filtered set.
+    setInvoices(list => list.map(i => i.cr9b5_pt_invoiceid === inv.cr9b5_pt_invoiceid
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ? { ...i, statecode: 1 as any, statuscode: 2 as any, statecodename: 'Inactive' }
+      : i
+    ))
+  }
+
+  function upsertInvoiceLocal(record: Cr9b5_pt_invoices) {
+    setInvoices(list => {
+      const idx = list.findIndex(i => i.cr9b5_pt_invoiceid === record.cr9b5_pt_invoiceid)
+      if (idx === -1) return [record, ...list]
+      const next = [...list]
+      next[idx] = record
+      return next
+    })
   }
 
   function isCancelled(inv: Cr9b5_pt_invoices): boolean {
     return (inv.statecode as unknown as number) === 1 || (inv.statecodename as unknown as string) === 'Inactive'
   }
 
-  function totalGuests(inv: Cr9b5_pt_invoices): string {
+  function toggleSelect(id: string) {
+    setSelectedIds(s => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id); else next.add(id)
+      return next
+    })
+  }
+
+  const selectableIds = filtered.filter(inv => !isCancelled(inv)).map(inv => inv.cr9b5_pt_invoiceid)
+  const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
+
+  function toggleSelectAll() {
+    setSelectedIds(allSelected ? new Set() : new Set(selectableIds))
+  }
+
+  async function applyBulkEdit() {
+    if (!bulkCategoryId && !bulkPropertyId) return
+    setBulkApplying(true)
+    const ids = [...selectedIds]
+    try {
+      for (const id of ids) {
+        const payload: Record<string, unknown> = {}
+        if (bulkCategoryId) payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${bulkCategoryId})`
+        if (bulkPropertyId) {
+          payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${bulkPropertyId})`
+          payload.cr9b5_allproperties = false
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await Cr9b5_pt_invoicesService.update(id, payload as any)
+      }
+      const changed = [bulkCategoryId && 'category', bulkPropertyId && 'property'].filter(Boolean).join(' + ')
+      logActivity('Updated', 'Invoice', `${ids.length} invoices`, `Bulk edit: ${changed}`)
+      setSelectedIds(new Set())
+      setBulkCategoryId('')
+      setBulkPropertyId('')
+      await loadInvoices()
+    } finally {
+      setBulkApplying(false)
+    }
+  }
+
+  function totalGuests(inv: Cr9b5_pt_invoices): { display: string; title: string } {
     const a = inv.cr9b5_adults ?? 0
     const c = inv.cr9b5_children ?? 0
     const b = inv.cr9b5_babies ?? 0
     const total = a + c + b
-    return total > 0 ? String(total) : '—'
+    if (total === 0) return { display: '—', title: '' }
+    return {
+      display: `${a} / ${c} / ${b}`,
+      title: `${a} adult${a !== 1 ? 's' : ''}, ${c} child${c !== 1 ? 'ren' : ''}, ${b} bab${b !== 1 ? 'ies' : 'y'}`,
+    }
   }
 
   return (
@@ -276,15 +403,70 @@ export default function Invoices() {
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-52"
           />
 
-          {(filterType !== 'all' || filterPropId || filterFrom || filterTo || search) && (
+          {/* Sort */}
+          <select
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as typeof sortBy)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="date_desc">Date (newest first)</option>
+            <option value="date_asc">Date (oldest first)</option>
+            <option value="id_asc">Internal ID (asc)</option>
+            <option value="id_desc">Internal ID (desc)</option>
+            <option value="total_desc">Total (highest first)</option>
+            <option value="total_asc">Total (lowest first)</option>
+          </select>
+
+          {(filterType !== 'all' || filterPropId || filterFrom || filterTo || search || sortBy !== 'date_desc') && (
             <button
-              onClick={() => { setFilterType('all' as const); setFilterPropId(''); setFilterFrom(''); setFilterTo(''); setSearch('') }}
+              onClick={() => { setFilterType('all' as const); setFilterPropId(''); setFilterFrom(''); setFilterTo(''); setSearch(''); setSortBy('date_desc') }}
               className="text-xs text-gray-400 hover:text-gray-700 underline"
             >
               Clear filters
             </button>
           )}
         </div>
+
+        {/* Bulk edit bar */}
+        {selectedIds.size > 0 && (
+          <div className="flex flex-wrap items-center gap-2 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+            <span className="text-sm font-medium text-indigo-700">{selectedIds.size} selected</span>
+            <select
+              value={bulkCategoryId}
+              onChange={e => setBulkCategoryId(e.target.value)}
+              className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Set category…</option>
+              {categoryList.map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+            <select
+              value={bulkPropertyId}
+              onChange={e => setBulkPropertyId(e.target.value)}
+              className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="">Set property…</option>
+              {properties.map(p => (
+                <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>
+              ))}
+            </select>
+            <button
+              onClick={applyBulkEdit}
+              disabled={bulkApplying || (!bulkCategoryId && !bulkPropertyId)}
+              className="px-3 py-1.5 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {bulkApplying ? 'Applying…' : 'Apply'}
+            </button>
+            <button
+              onClick={() => { setSelectedIds(new Set()); setBulkCategoryId(''); setBulkPropertyId('') }}
+              disabled={bulkApplying}
+              className="text-xs text-gray-500 hover:text-gray-800 underline"
+            >
+              Clear selection
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Table */}
@@ -297,6 +479,14 @@ export default function Invoices() {
           <table className="w-full text-sm min-w-[900px]">
             <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
               <tr className="text-left text-xs text-gray-500 font-semibold uppercase tracking-wide">
+                <th className="px-4 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={toggleSelectAll}
+                    className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                </th>
                 <th className="px-4 py-3">Internal ID</th>
                 <th className="px-4 py-3">Type</th>
                 <th className="px-4 py-3">Category</th>
@@ -319,6 +509,16 @@ export default function Invoices() {
                 const cancelled = isCancelled(inv)
                 return (
                   <tr key={inv.cr9b5_pt_invoiceid} className={['hover:bg-gray-50 transition-colors', cancelled ? 'opacity-60' : ''].join(' ')}>
+                    <td className="px-4 py-3">
+                      {!cancelled && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(inv.cr9b5_pt_invoiceid)}
+                          onChange={() => toggleSelect(inv.cr9b5_pt_invoiceid)}
+                          className="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                      )}
+                    </td>
                     <td className="px-4 py-3 font-mono font-medium whitespace-nowrap">
                       <button
                         onClick={() => setViewInvoice(inv)}
@@ -348,7 +548,9 @@ export default function Invoices() {
                     <td className="px-4 py-3 text-gray-500 whitespace-nowrap">{fmtDate(inv.cr9b5_date)}</td>
                     <td className="px-4 py-3 text-gray-400 text-xs">{inv.cr9b5_bookingreference ?? '—'}</td>
                     <td className="px-4 py-3 text-right text-gray-500">{inv.cr9b5_nights ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-gray-500">{totalGuests(inv)}</td>
+                    <td className="px-4 py-3 text-right text-gray-500">
+                      {(() => { const g = totalGuests(inv); return <span title={g.title}>{g.display}</span> })()}
+                    </td>
                     <td className="px-4 py-3 text-right text-gray-700">{fmtEur(inv.cr9b5_baseamount)}</td>
                     <td className="px-4 py-3 text-right text-gray-500">
                       {inv.cr9b5_taxismanual ? (
@@ -415,7 +617,12 @@ export default function Invoices() {
           invoice={editInvoice}
           properties={properties}
           contacts={contacts}
-          onSaved={async () => { setFormOpen(false); await load() }}
+          onSaved={record => {
+            setFormOpen(false)
+            // Patch the saved/created record into local state directly (it's
+            // already returned by the create/update call) instead of a full reload.
+            if (record) upsertInvoiceLocal(record); else loadInvoices()
+          }}
           onClose={() => setFormOpen(false)}
         />
       )}
@@ -427,7 +634,7 @@ export default function Invoices() {
           properties={properties}
           contacts={contacts}
           readOnly
-          onSaved={() => {}}
+          onSaved={() => undefined}
           onClose={() => setViewInvoice(null)}
         />
       )}
@@ -436,7 +643,7 @@ export default function Invoices() {
       {importOpen && (
         <InvoiceImport
           onClose={() => setImportOpen(false)}
-          onImported={() => load()}
+          onImported={() => loadInvoices()}
         />
       )}
       {exportOpen && (

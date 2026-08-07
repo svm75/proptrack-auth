@@ -40,6 +40,13 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
+  "svm_pt_invoicecomments": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "svm_pt_invoicecommentid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "cr9b5_pt_invoices": {
     "tableId": "",
     "version": "",
@@ -47,10 +54,24 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
+  "svm_pt_invoicetemplates": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "svm_pt_invoicetemplateid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "cr9b5_pt_properties": {
     "tableId": "",
     "version": "",
     "primaryKey": "cr9b5_pt_propertyid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "svm_pt_suppliercontracts": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "svm_pt_suppliercontractid",
     "dataSourceType": "Dataverse",
     "apis": {}
   },

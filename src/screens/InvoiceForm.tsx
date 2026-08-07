@@ -3,11 +3,15 @@ import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoice
 import { Cr9b5_pt_attachmentsService } from '../generated/services/Cr9b5_pt_attachmentsService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
+import { Svm_pt_invoicetemplatesService } from '../generated/services/Svm_pt_invoicetemplatesService'
+import { Svm_pt_invoicecommentsService } from '../generated/services/Svm_pt_invoicecommentsService'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_attachments } from '../generated/models/Cr9b5_pt_attachmentsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
+import type { Svm_pt_invoicetemplates } from '../generated/models/Svm_pt_invoicetemplatesModel'
+import type { Svm_pt_invoicecomments } from '../generated/models/Svm_pt_invoicecommentsModel'
 import { uploadFile, deleteFile, getOrCreateFolder, invoiceFolderPath, isAuthorized, authorizeWithPopup } from '../services/googledrive'
 import { logActivity } from '../services/activitylog'
 import { fmtEur } from '../utils/formatters'
@@ -20,12 +24,16 @@ const REF_CAT_INCOME  = 233100005
 const REF_CAT_EXPENSE = 233100006
 const ROLE_CLIENT = 233100001
 const ROLE_SUPPLIER = 233100000
+const TEMPLATE_TYPE_INCOME  = 925060000
+const TEMPLATE_TYPE_EXPENSE = 925060001
 
 export interface InvoiceFormProps {
   invoice: Cr9b5_pt_invoices | null  // null = new
   properties: Cr9b5_pt_properties[]
   contacts: Cr9b5_pt_contacts[]      // initial list; form manages its own copy
-  onSaved: () => void
+  // Receives the saved/created record when available so the caller can patch
+  // it into local state directly instead of reloading everything.
+  onSaved: (record?: Cr9b5_pt_invoices) => void
   onClose: () => void
   readOnly?: boolean
 }
@@ -211,6 +219,71 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     }).then(res => setCategories(res.data ?? []))
   }, [form.type])
 
+  // Invoice templates — quick-fill for new invoices only
+  const [templates, setTemplates] = useState<Svm_pt_invoicetemplates[]>([])
+  const [templateId, setTemplateId] = useState('')
+
+  useEffect(() => {
+    if (isEdit || readOnly) return
+    const templateType = form.type === TYPE_OUTGOING ? TEMPLATE_TYPE_INCOME : TEMPLATE_TYPE_EXPENSE
+    Svm_pt_invoicetemplatesService.getAll({
+      filter: `svm_pt_type eq ${templateType}`,
+      orderBy: ['svm_pt_name asc'],
+    }).then(res => setTemplates(res.data ?? []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.type, isEdit, readOnly])
+
+  function applyTemplate(id: string) {
+    setTemplateId(id)
+    const t = templates.find(t => t.svm_pt_invoicetemplateid === id)
+    if (!t) return
+    setForm(f => {
+      const next = {
+        ...f,
+        categoryId: t._svm_category_value ?? f.categoryId,
+        description: t.svm_pt_description ?? f.description,
+      }
+      if (t.svm_pt_defaultamount != null) {
+        next.baseAmount = String(t.svm_pt_defaultamount)
+        if (!next.taxIsManual) next.taxAmount = calcTax(next.baseAmount)
+      }
+      return next
+    })
+  }
+
+  // Invoice comments — only meaningful once the invoice exists
+  const [comments, setComments] = useState<Svm_pt_invoicecomments[]>([])
+  const [commentsLoading, setCommentsLoading] = useState(false)
+  const [newComment, setNewComment] = useState('')
+  const [commentSaving, setCommentSaving] = useState(false)
+
+  async function loadComments(invoiceId: string) {
+    setCommentsLoading(true)
+    const res = await Svm_pt_invoicecommentsService.getAll({
+      filter: `_svm_invoice_value eq '${invoiceId}'`,
+      orderBy: ['createdon desc'],
+    })
+    setComments(res.data ?? [])
+    setCommentsLoading(false)
+  }
+
+  async function addComment() {
+    if (!activeInvoice || !newComment.trim()) return
+    setCommentSaving(true)
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const res = await Svm_pt_invoicecommentsService.create({
+        svm_pt_comment: newComment.trim(),
+        'svm_Invoice@odata.bind': `/cr9b5_pt_invoices(${activeInvoice.cr9b5_pt_invoiceid})`,
+      } as any)
+      if (!res.success) throw (res.error as Error) ?? new Error('Failed to add comment.')
+      setNewComment('')
+      await loadComments(activeInvoice.cr9b5_pt_invoiceid)
+    } finally {
+      setCommentSaving(false)
+    }
+  }
+
   // Attachments
   const [attachments, setAttachments] = useState<Cr9b5_pt_attachments[]>([])
   const [attachRefTypes, setAttachRefTypes] = useState<Cr9b5_pt_references[]>([])
@@ -229,6 +302,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
   useEffect(() => {
     if (!isEdit || !invoice) return
     loadAttachments(invoice.cr9b5_pt_invoiceid, form.type)
+    loadComments(invoice.cr9b5_pt_invoiceid)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEdit])
 
@@ -382,7 +456,17 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       if (isEdit) {
         logActivity('Updated', 'Invoice', internalId,
           changedFields.length ? `Fields changed: ${changedFields.join(', ')}` : undefined)
-        onSaved()
+        // Dataverse update calls don't reliably return the full updated record,
+        // so build the merged record from what we already know locally —
+        // avoids the caller having to reload the whole invoice list.
+        const updated = {
+          ...(invoice as Cr9b5_pt_invoices),
+          ...(payload as Partial<Cr9b5_pt_invoices>),
+        } as unknown as Record<string, unknown>
+        updated['_cr9b5_contact_value'] = form.contactId
+        updated['_cr9b5_property_value'] = form.allProperties ? undefined : form.propertyId
+        updated['_cr9b5_categoryid_value'] = form.categoryId || undefined
+        onSaved(updated as unknown as Cr9b5_pt_invoices)
       } else {
         // New invoice created — stay open so user can optionally add attachments
         const created = result.data!
@@ -416,17 +500,13 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         cr9b5_defaultdescription: newContact.defaultdesc.trim() || undefined,
       } as any)
 
-      if (!result.success) throw (result.error as Error) ?? new Error('Failed to create contact.')
+      if (!result.success || !result.data) throw (result.error as Error) ?? new Error('Failed to create contact.')
 
-      // Reload contact list and select the new one
-      const refreshed = await Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 })
-      const newList = refreshed.data ?? []
-      setContacts(newList)
-
+      // The create call already returns the full new record — insert it
+      // directly instead of refetching the entire contact list.
       const created = result.data
-      if (created?.cr9b5_pt_contactid) {
-        handleContactChange(created.cr9b5_pt_contactid)
-      }
+      setContacts(cs => [...cs, created].sort((a, b) => a.cr9b5_name.localeCompare(b.cr9b5_name)))
+      handleContactChange(created.cr9b5_pt_contactid)
 
       setNewContact(EMPTY_NEW_CONTACT)
       setNewContactOpen(false)
@@ -457,6 +537,12 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     setAttachLoading(false)
   }
 
+  // Cached Drive folder id for this invoice, seeded from the record if it
+  // already has one so returning to edit an invoice skips the path walk too.
+  const [driveFolderId, setDriveFolderId] = useState<string | undefined>(
+    (invoice as unknown as { svm_pt_googledrivefolderid?: string } | null)?.svm_pt_googledrivefolderid
+  )
+
   async function handleFileSelect(file: File) {
     if (!activeInvoice) return
     const prop = properties.find(p => p.cr9b5_pt_propertyid === form.propertyId)
@@ -464,10 +550,17 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
     setAttachError(null)
     try {
-      const path = prop
-        ? invoiceFolderPath(prop.cr9b5_name, prop.cr9b5_shortid, internalId)
-        : ['PropTrack', 'Invoices', internalId.replace(/\//g, '-')]
-      const folderId = await getOrCreateFolder(path)
+      let folderId = driveFolderId
+      if (!folderId) {
+        const path = prop
+          ? invoiceFolderPath(prop.cr9b5_name, prop.cr9b5_shortid, internalId)
+          : ['PropTrack', 'Invoices', internalId.replace(/\//g, '-')]
+        folderId = await getOrCreateFolder(path)
+        setDriveFolderId(folderId)
+        // Persist so the next time this invoice is opened, the cache hits too.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        Cr9b5_pt_invoicesService.update(activeInvoice.cr9b5_pt_invoiceid, { svm_pt_googledrivefolderid: folderId } as any).catch(() => { /* cache is best-effort */ })
+      }
       const { id, webViewLink } = await uploadFile(file, folderId)
       setAttachForm(f => ({ ...f, uploading: false, driveId: id, driveUrl: webViewLink }))
     } catch (e: unknown) {
@@ -571,6 +664,24 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
               ))}
             </div>
           </div>
+
+          {/* Template quick-fill (new invoices only) */}
+          {!isEdit && !readOnly && templates.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Use Template</label>
+              <select
+                value={templateId}
+                onChange={e => applyTemplate(e.target.value)}
+                className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              >
+                <option value="">No template — fill in manually</option>
+                {templates.map(t => (
+                  <option key={t.svm_pt_invoicetemplateid} value={t.svm_pt_invoicetemplateid}>{t.svm_pt_name}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-400">Pre-fills category, description and default amount below.</p>
+            </div>
+          )}
 
           {/* Category */}
           <div>
@@ -968,6 +1079,48 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
             </div>
           )}
 
+          {/* Comments */}
+          {isEdit && invoice && (
+            <div className="space-y-3 border-t border-gray-200 pt-5">
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Comments</p>
+              {commentsLoading ? (
+                <p className="text-sm text-gray-400">Loading comments…</p>
+              ) : comments.length === 0 ? (
+                <p className="text-sm text-gray-400">No comments yet.</p>
+              ) : (
+                <ul className="space-y-2">
+                  {comments.map(c => (
+                    <li key={c.svm_pt_invoicecommentid} className="bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+                      <p className="text-sm text-gray-800 whitespace-pre-wrap">{c.svm_pt_comment}</p>
+                      <p className="mt-1 text-xs text-gray-400">
+                        {c.createdbyname ?? 'Unknown'} · {c.createdon ? new Date(c.createdon).toLocaleString('de-DE') : ''}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {!readOnly && (
+                <div className="flex gap-2 items-start">
+                  <textarea
+                    value={newComment}
+                    onChange={e => setNewComment(e.target.value)}
+                    rows={2}
+                    placeholder="Add a comment…"
+                    className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                  />
+                  <button
+                    type="button"
+                    onClick={addComment}
+                    disabled={commentSaving || !newComment.trim()}
+                    className="shrink-0 px-3 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                  >
+                    {commentSaving ? 'Adding…' : 'Add'}
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
           {errors._form && (
             <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
               {errors._form}
@@ -979,7 +1132,7 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
         <div className="flex justify-end gap-3 px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl">
           {readOnly || createdInvoice ? (
             <button
-              onClick={() => createdInvoice ? onSaved() : onClose()}
+              onClick={() => createdInvoice ? onSaved(createdInvoice) : onClose()}
               className="px-5 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
             >
               Done

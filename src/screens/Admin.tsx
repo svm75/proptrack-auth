@@ -2,11 +2,33 @@ import { useEffect, useState } from 'react'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
 import { Cr9b5_pt_attachmentsService } from '../generated/services/Cr9b5_pt_attachmentsService'
 import { Cr9b5_pt_activitylogsService } from '../generated/services/Cr9b5_pt_activitylogsService'
+import { Svm_pt_invoicetemplatesService } from '../generated/services/Svm_pt_invoicetemplatesService'
 import type { Cr9b5_pt_references, Cr9b5_pt_referencescr9b5_referencetype } from '../generated/models/Cr9b5_pt_referencesModel'
 import type { Cr9b5_pt_activitylogs } from '../generated/models/Cr9b5_pt_activitylogsModel'
+import type { Svm_pt_invoicetemplates } from '../generated/models/Svm_pt_invoicetemplatesModel'
 
-type AdminTab = 'refdata' | 'activitylog'
+type AdminTab = 'refdata' | 'templates' | 'activitylog'
 type RefType = Cr9b5_pt_referencescr9b5_referencetype
+
+// ─── Invoice Templates ──────────────────────────────────────────────────────
+
+const REF_CAT_INCOME  = 233100005
+const REF_CAT_EXPENSE = 233100006
+const TEMPLATE_TYPE_INCOME  = 925060000
+const TEMPLATE_TYPE_EXPENSE = 925060001
+
+interface TemplateForm {
+  id: string | null
+  name: string
+  type: number
+  categoryId: string
+  description: string
+  defaultAmount: string
+}
+
+const EMPTY_TEMPLATE_FORM: TemplateForm = {
+  id: null, name: '', type: TEMPLATE_TYPE_EXPENSE, categoryId: '', description: '', defaultAmount: '',
+}
 
 // ─── Reference Data ─────────────────────────────────────────────────────────
 
@@ -71,6 +93,15 @@ export default function Admin() {
   const [formOpen, setFormOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // ── Invoice Templates state ──
+  const [templates, setTemplates] = useState<Svm_pt_invoicetemplates[]>([])
+  const [templateCategories, setTemplateCategories] = useState<Cr9b5_pt_references[]>([])
+  const [templatesLoading, setTemplatesLoading] = useState(false)
+  const [templateForm, setTemplateForm] = useState<TemplateForm>(EMPTY_TEMPLATE_FORM)
+  const [templateFormOpen, setTemplateFormOpen] = useState(false)
+  const [templateSaving, setTemplateSaving] = useState(false)
+  const [templateError, setTemplateError] = useState<string | null>(null)
 
   // ── Activity Log state ──
   const [logs, setLogs] = useState<Cr9b5_pt_activitylogs[]>([])
@@ -179,6 +210,96 @@ export default function Admin() {
     items: refs.filter(r => r.cr9b5_referencetype === opt.value),
   })).filter(g => g.items.length > 0)
 
+  // ── Invoice Templates ────────────────────────────────────────────────────
+
+  async function loadTemplates() {
+    setTemplatesLoading(true)
+    const [tplRes, catRes] = await Promise.all([
+      Svm_pt_invoicetemplatesService.getAll({ orderBy: ['svm_pt_name asc'], maxPageSize: 5000 }),
+      Cr9b5_pt_referencesService.getAll({
+        filter: `cr9b5_referencetype eq ${REF_CAT_INCOME} or cr9b5_referencetype eq ${REF_CAT_EXPENSE}`,
+        orderBy: ['cr9b5_sortorder asc'],
+        maxPageSize: 5000,
+      }),
+    ])
+    setTemplates(tplRes.data ?? [])
+    setTemplateCategories(catRes.data ?? [])
+    setTemplatesLoading(false)
+  }
+
+  useEffect(() => {
+    if (tab === 'templates' && templates.length === 0) loadTemplates()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab])
+
+  function openNewTemplate() {
+    setTemplateForm(EMPTY_TEMPLATE_FORM)
+    setTemplateError(null)
+    setTemplateFormOpen(true)
+  }
+
+  function openEditTemplate(t: Svm_pt_invoicetemplates) {
+    setTemplateForm({
+      id: t.svm_pt_invoicetemplateid,
+      name: t.svm_pt_name ?? '',
+      type: t.svm_pt_type ?? TEMPLATE_TYPE_EXPENSE,
+      categoryId: t._svm_category_value ?? '',
+      description: t.svm_pt_description ?? '',
+      defaultAmount: t.svm_pt_defaultamount?.toString() ?? '',
+    })
+    setTemplateError(null)
+    setTemplateFormOpen(true)
+  }
+
+  function closeTemplateForm() {
+    setTemplateFormOpen(false)
+    setTemplateForm(EMPTY_TEMPLATE_FORM)
+    setTemplateError(null)
+  }
+
+  async function saveTemplate() {
+    if (!templateForm.name.trim()) {
+      setTemplateError('Name is required.')
+      return
+    }
+    setTemplateSaving(true)
+    setTemplateError(null)
+    const payload: Record<string, unknown> = {
+      svm_pt_name: templateForm.name.trim(),
+      svm_pt_type: templateForm.type,
+      svm_pt_description: templateForm.description.trim() || undefined,
+      svm_pt_defaultamount: templateForm.defaultAmount !== '' ? Number(templateForm.defaultAmount) : undefined,
+    }
+    if (templateForm.categoryId) {
+      payload['svm_Category@odata.bind'] = `/cr9b5_pt_references(${templateForm.categoryId})`
+    }
+    try {
+      if (templateForm.id) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await Svm_pt_invoicetemplatesService.update(templateForm.id, payload as any)
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await Svm_pt_invoicetemplatesService.create(payload as any)
+      }
+      closeTemplateForm()
+      await loadTemplates()
+    } catch (e: unknown) {
+      setTemplateError(e instanceof Error ? e.message : 'Save failed.')
+    } finally {
+      setTemplateSaving(false)
+    }
+  }
+
+  async function deleteTemplate(t: Svm_pt_invoicetemplates) {
+    if (!confirm(`Delete template "${t.svm_pt_name}"?`)) return
+    await Svm_pt_invoicetemplatesService.delete(t.svm_pt_invoicetemplateid)
+    await loadTemplates()
+  }
+
+  const templateCategoryOptions = templateCategories.filter(c =>
+    (c.cr9b5_referencetype as unknown as number) === (templateForm.type === TEMPLATE_TYPE_INCOME ? REF_CAT_INCOME : REF_CAT_EXPENSE)
+  )
+
   // ── Activity Log ──────────────────────────────────────────────────────────
 
   async function loadLogs() {
@@ -216,6 +337,7 @@ export default function Admin() {
       <div className="flex gap-1 mb-6 border-b border-gray-200">
         {([
           { id: 'refdata',     label: 'Reference Data' },
+          { id: 'templates',   label: 'Invoice Templates' },
           { id: 'activitylog', label: 'Activity Log' },
         ] as { id: AdminTab; label: string }[]).map(t => (
           <button
@@ -376,6 +498,155 @@ export default function Admin() {
                     className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
                   >
                     {saving ? 'Saving…' : 'Save'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Invoice Templates ── */}
+      {tab === 'templates' && (
+        <div className="max-w-3xl">
+          <div className="flex items-center justify-between mb-6">
+            <p className="text-sm text-gray-500">Reusable presets shown as "Use Template" when creating a new invoice.</p>
+            <button
+              onClick={openNewTemplate}
+              className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 transition-colors"
+            >
+              + Add Template
+            </button>
+          </div>
+
+          {templatesLoading ? (
+            <p className="text-gray-500">Loading…</p>
+          ) : templates.length === 0 ? (
+            <p className="text-gray-400 text-sm">No templates yet. Add your first one.</p>
+          ) : (
+            <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-gray-400 bg-gray-50 border-b border-gray-200">
+                    <th className="px-4 py-2.5 font-medium">Name</th>
+                    <th className="px-4 py-2.5 font-medium">Type</th>
+                    <th className="px-4 py-2.5 font-medium">Category</th>
+                    <th className="px-4 py-2.5 font-medium">Description</th>
+                    <th className="px-4 py-2.5 font-medium text-right">Default Amount</th>
+                    <th className="px-4 py-2.5 w-20"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {templates.map(t => (
+                    <tr key={t.svm_pt_invoicetemplateid} className="border-b border-gray-50 last:border-0 hover:bg-gray-50">
+                      <td className="px-4 py-2.5 font-medium text-gray-900">{t.svm_pt_name}</td>
+                      <td className="px-4 py-2.5 text-gray-500">{t.svm_pt_type === TEMPLATE_TYPE_INCOME ? 'Income' : 'Expense'}</td>
+                      <td className="px-4 py-2.5 text-gray-500">{t.svm_categoryname ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="px-4 py-2.5 text-gray-500 max-w-xs truncate">{t.svm_pt_description ?? <span className="text-gray-300">—</span>}</td>
+                      <td className="px-4 py-2.5 text-right text-gray-700">
+                        {t.svm_pt_defaultamount != null ? t.svm_pt_defaultamount.toFixed(2) : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex gap-2 justify-end">
+                          <button onClick={() => openEditTemplate(t)} className="text-indigo-600 hover:text-indigo-800 text-xs font-medium">Edit</button>
+                          <button onClick={() => deleteTemplate(t)} className="text-red-500 hover:text-red-700 text-xs font-medium">Delete</button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {/* Modal */}
+          {templateFormOpen && (
+            <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+              <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4 p-6">
+                <h2 className="text-lg font-semibold text-gray-900 mb-4">
+                  {templateForm.id ? 'Edit Template' : 'Add Template'}
+                </h2>
+
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
+                    <input
+                      type="text"
+                      value={templateForm.name}
+                      onChange={e => setTemplateForm(f => ({ ...f, name: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="e.g. Annual Insurance Renewal"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Type</label>
+                    <div className="flex rounded-lg border border-gray-300 overflow-hidden w-fit">
+                      {[{ val: TEMPLATE_TYPE_EXPENSE, label: 'Expense' }, { val: TEMPLATE_TYPE_INCOME, label: 'Income' }].map(opt => (
+                        <button
+                          key={opt.val}
+                          type="button"
+                          onClick={() => setTemplateForm(f => ({ ...f, type: opt.val, categoryId: '' }))}
+                          className={[
+                            'px-4 py-1.5 text-sm font-medium transition-colors',
+                            templateForm.type === opt.val ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50',
+                          ].join(' ')}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
+                    <select
+                      value={templateForm.categoryId}
+                      onChange={e => setTemplateForm(f => ({ ...f, categoryId: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    >
+                      <option value="">No category</option>
+                      {templateCategoryOptions.map(c => (
+                        <option key={c.cr9b5_pt_referenceid} value={c.cr9b5_pt_referenceid}>{c.cr9b5_value}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
+                    <input
+                      type="text"
+                      value={templateForm.description}
+                      onChange={e => setTemplateForm(f => ({ ...f, description: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Pre-fills the invoice description (optional)"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">Default Amount</label>
+                    <input
+                      type="number" min="0" step="0.01"
+                      value={templateForm.defaultAmount}
+                      onChange={e => setTemplateForm(f => ({ ...f, defaultAmount: e.target.value }))}
+                      className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Optional"
+                    />
+                  </div>
+                </div>
+
+                {templateError && <p className="mt-3 text-sm text-red-600">{templateError}</p>}
+
+                <div className="flex justify-end gap-3 mt-6">
+                  <button onClick={closeTemplateForm} className="px-4 py-2 text-sm font-medium text-gray-600 hover:text-gray-900 transition-colors">
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveTemplate}
+                    disabled={templateSaving}
+                    className="px-4 py-2 bg-indigo-600 text-white text-sm font-medium rounded-lg hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                  >
+                    {templateSaving ? 'Saving…' : 'Save'}
                   </button>
                 </div>
               </div>

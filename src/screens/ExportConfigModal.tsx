@@ -14,7 +14,7 @@ export const ALL_COLUMNS: ExportColumn[] = [
   { key: 'Category',       label: 'Category' },
   { key: 'Property',       label: 'Property' },
   { key: 'All Properties', label: 'All Properties' },
-  { key: 'Contact',        label: 'Contact' },
+  { key: 'Contact (TaxID)', label: 'Contact (TaxID)' },
   { key: 'Date',           label: 'Date' },
   { key: 'Description',    label: 'Description' },
   { key: 'Booking Ref',    label: 'Booking Ref' },

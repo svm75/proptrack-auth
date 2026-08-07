@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
+import { Svm_pt_suppliercontractsService } from '../generated/services/Svm_pt_suppliercontractsService'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
@@ -45,12 +46,15 @@ function buildInternalId(shortId: string, seq: number, year: number): string {
   return `${shortId}${String(seq).padStart(3, '0')}/${year}`
 }
 
+type SortKey = 'supplier' | 'property' | 'category' | 'date' | 'amount' | 'ready'
+
 function toIso(date: string): string {
   if (!date) return ''
   return new Date(`${date}T12:00:00`).toISOString()
 }
 
 interface Row {
+  key: string
   supplier: Cr9b5_pt_contacts
   description: string
   date: string
@@ -70,12 +74,23 @@ export default function RegularInvoices() {
   const [saving, setSaving] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<SortKey>('supplier')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  // Next free global sequence number per year, used to preview the invoice ID
+  // a row will receive on save. Populated lazily as row dates are filled in.
+  const [nextSeqByYear, setNextSeqByYear] = useState<Record<number, number>>({})
+  const pendingYearsRef = useRef<Set<number>>(new Set())
 
   async function load() {
     setLoading(true)
-    const [suppRes, propRes, catRes] = await Promise.all([
+    const [contractRes, contactRes, propRes, catRes] = await Promise.all([
+      Svm_pt_suppliercontractsService.getAll({
+        filter: 'svm_pt_active eq true',
+        maxPageSize: 5000,
+      }),
       Cr9b5_pt_contactsService.getAll({
-        filter: `cr9b5_role eq 233100000 and cr9b5_regularsupplier eq true`,
+        filter: `cr9b5_role eq 233100000`,
         orderBy: ['cr9b5_name asc'],
         maxPageSize: 5000,
       }),
@@ -86,23 +101,116 @@ export default function RegularInvoices() {
         maxPageSize: 500,
       }),
     ])
+    const contacts = contactRes.data ?? []
     setProperties(propRes.data ?? [])
     setCategories(catRes.data ?? [])
-    setRows((suppRes.data ?? []).map(s => ({
-      supplier: s,
-      description: s.cr9b5_defaultdescription ?? '',
-      date: '',
-      propertyId: '',
-      allProperties: false,
-      categoryId: '',
-      baseAmount: '',
-      taxAmount: '',
-      taxIsManual: false,
-    })))
+
+    const contactById = new Map(contacts.map(c => [c.cr9b5_pt_contactid, c]))
+
+    // One row per contract per contract-count unit: a supplier with a
+    // 2-contract deal on property A and a 1-contract deal on property B
+    // yields three rows (two for A, one for B).
+    const newRows: Row[] = []
+    const contracts = [...(contractRes.data ?? [])].sort((a, b) =>
+      (contactById.get(a._svm_pt_contact_value ?? '')?.cr9b5_name ?? '').localeCompare(
+        contactById.get(b._svm_pt_contact_value ?? '')?.cr9b5_name ?? ''
+      )
+    )
+    for (const contract of contracts) {
+      const supplier = contactById.get(contract._svm_pt_contact_value ?? '')
+      if (!supplier) continue
+      const count = contract.svm_pt_contractcount && contract.svm_pt_contractcount > 0 ? contract.svm_pt_contractcount : 1
+      const allProperties = !!contract.svm_pt_allproperties
+      const propertyId = allProperties ? '' : (contract._svm_property_value ?? '')
+      const categoryId = contract._svm_defaultcategory_value ?? supplier._svm_defaultcategory_value ?? ''
+      const description = contract.svm_pt_defaultdescription || supplier.cr9b5_defaultdescription || ''
+      for (let i = 0; i < count; i++) {
+        newRows.push({
+          key: `${contract.svm_pt_suppliercontractid}-${i}`,
+          supplier,
+          description,
+          date: '',
+          propertyId,
+          allProperties,
+          categoryId,
+          baseAmount: '',
+          taxAmount: '',
+          taxIsManual: false,
+        })
+      }
+    }
+    setRows(newRows)
+    setNextSeqByYear({})
+    pendingYearsRef.current.clear()
     setLoading(false)
   }
 
   useEffect(() => { load() }, [])
+
+  // Lazily fetch the next free global sequence number for every year that
+  // appears in a filled-in row date, so the ID preview can be computed.
+  useEffect(() => {
+    const years = new Set<number>()
+    for (const r of rows) {
+      if (r.date) years.add(new Date(r.date).getFullYear())
+    }
+    const missing = [...years].filter(y => !(y in nextSeqByYear) && !pendingYearsRef.current.has(y))
+    if (missing.length === 0) return
+    missing.forEach(y => pendingYearsRef.current.add(y))
+    ;(async () => {
+      const entries = await Promise.all(missing.map(async y => [y, await getNextSequence(y)] as const))
+      setNextSeqByYear(prev => {
+        const next = { ...prev }
+        for (const [y, seq] of entries) next[y] = seq
+        return next
+      })
+    })()
+  }, [rows, nextSeqByYear])
+
+  // Preview the internal ID each ready row would receive if saved right now,
+  // allocating sequence numbers in row order per year (mirrors saveAll()).
+  const previewIds = useMemo(() => {
+    const counters = { ...nextSeqByYear }
+    return rows.map(row => {
+      const ready = !!(row.date && (row.propertyId || row.allProperties) && row.baseAmount && parseFloat(row.baseAmount) > 0)
+      if (!ready) return null
+      const year = new Date(row.date).getFullYear()
+      if (!(year in counters)) return null
+      const property = row.allProperties ? null : properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
+      const shortId = row.allProperties ? 'ALL' : (property?.cr9b5_shortid ?? '')
+      const seq = counters[year]
+      counters[year] = seq + 1
+      return buildInternalId(shortId, seq, year)
+    })
+  }, [rows, nextSeqByYear, properties])
+
+  // Display order only — row handlers below still address rows by their
+  // original index in `rows`, so sorting never disturbs saveAll()/preview logic.
+  const displayIndices = useMemo(() => {
+    const propertyName = (id: string) => properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? ''
+    const categoryName = (id: string) => categories.find(c => c.cr9b5_pt_referenceid === id)?.cr9b5_value ?? ''
+    const sortValue = (row: Row): string | number => {
+      switch (sortKey) {
+        case 'supplier': return row.supplier.cr9b5_name.toLowerCase()
+        case 'property': return (row.allProperties ? 'All properties' : propertyName(row.propertyId)).toLowerCase()
+        case 'category': return categoryName(row.categoryId).toLowerCase()
+        case 'date': return row.date || '9999-99-99'
+        case 'amount': return parseFloat(row.baseAmount) || 0
+        case 'ready': {
+          const ready = !!(row.date && (row.propertyId || row.allProperties) && row.baseAmount && parseFloat(row.baseAmount) > 0)
+          return ready ? 0 : 1
+        }
+      }
+    }
+    const indices = rows.map((_, i) => i)
+    indices.sort((a, b) => {
+      const va = sortValue(rows[a])
+      const vb = sortValue(rows[b])
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return indices
+  }, [rows, sortKey, sortDir, properties, categories])
 
   function updateRow(idx: number, patch: Partial<Row>) {
     setRows(rs => rs.map((r, i) => i === idx ? { ...r, ...patch } : r))
@@ -199,12 +307,15 @@ export default function RegularInvoices() {
       }
 
       // Clear transient fields for saved rows, keep description
-      const savedIds = new Set(toSave.map(r => r.supplier.cr9b5_pt_contactid))
+      const savedKeys = new Set(toSave.map(r => r.key))
       setRows(rs => rs.map(r =>
-        savedIds.has(r.supplier.cr9b5_pt_contactid)
+        savedKeys.has(r.key)
           ? { ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false }
           : r
       ))
+      // Sequence numbers were consumed on the server; refresh the preview cache.
+      setNextSeqByYear({})
+      pendingYearsRef.current.clear()
 
       setSummary(`${toSave.length} invoice${toSave.length !== 1 ? 's' : ''} created.`)
       void year // suppress unused warning
@@ -221,7 +332,7 @@ export default function RegularInvoices() {
     return (
       <div className="p-6">
         <h1 className="text-2xl font-semibold text-gray-900 mb-2">Regular Invoices</h1>
-        <p className="text-gray-400 text-sm">No regular suppliers found. Mark suppliers as "Regular" in the Contacts screen.</p>
+        <p className="text-gray-400 text-sm">No active supplier contracts found. Add property contracts for a supplier in the Contacts screen.</p>
       </div>
     )
   }
@@ -230,16 +341,41 @@ export default function RegularInvoices() {
 
   return (
     <div className="flex flex-col h-full">
-      <div className="px-6 py-4 border-b border-gray-200 bg-white">
-        <h1 className="text-2xl font-semibold text-gray-900">Regular Invoices</h1>
-        <p className="text-sm text-gray-500 mt-0.5">Quick-entry for recurring supplier invoices. Fill in the rows and click Save All.</p>
+      <div className="px-6 py-4 border-b border-gray-200 bg-white flex items-center justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Regular Invoices</h1>
+          <p className="text-sm text-gray-500 mt-0.5">Quick-entry for recurring supplier invoices. Fill in the rows and click Save All.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs font-medium text-gray-500">Sort by</label>
+          <select
+            value={sortKey}
+            onChange={e => setSortKey(e.target.value as SortKey)}
+            className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          >
+            <option value="supplier">Supplier</option>
+            <option value="property">Property</option>
+            <option value="category">Category</option>
+            <option value="date">Date</option>
+            <option value="amount">Base Amount</option>
+            <option value="ready">Ready first</option>
+          </select>
+          <button
+            type="button"
+            onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+            className="border border-gray-300 rounded-lg px-2.5 py-1.5 text-sm bg-white hover:bg-gray-50"
+          >
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto">
         <table className="w-full text-sm min-w-[900px]">
           <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
             <tr className="text-left text-xs text-gray-500 font-semibold uppercase tracking-wide">
-              <th className="px-4 py-3 w-6"></th>
+              <th className="px-4 py-3 w-24">Next ID</th>
               <th className="px-4 py-3">Supplier</th>
               <th className="px-4 py-3">Description</th>
               <th className="px-4 py-3">Date</th>
@@ -252,15 +388,24 @@ export default function RegularInvoices() {
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-100">
-            {rows.map((row, idx) => {
+            {displayIndices.map(idx => {
+              const row = rows[idx]
               const base = parseFloat(row.baseAmount) || 0
               const tax = parseFloat(row.taxAmount) || 0
               const total = base + tax
               const ready = !!(row.date && (row.propertyId || row.allProperties) && row.baseAmount && base > 0)
+              const previewId = previewIds[idx]
               return (
-                <tr key={row.supplier.cr9b5_pt_contactid} className="hover:bg-gray-50">
+                <tr key={row.key} className="hover:bg-gray-50">
                   <td className="px-4 py-2.5 text-center">
-                    {ready && <span className="text-green-500 font-bold text-base leading-none">✓</span>}
+                    {ready && (
+                      <div className="flex flex-col items-center gap-0.5 leading-none">
+                        <span className="text-green-500 font-bold text-base leading-none">✓</span>
+                        <span className="text-[10px] font-mono text-green-600 whitespace-nowrap">
+                          {previewId ?? '…'}
+                        </span>
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-2.5 font-medium text-gray-900 whitespace-nowrap">
                     {row.supplier.cr9b5_name}
