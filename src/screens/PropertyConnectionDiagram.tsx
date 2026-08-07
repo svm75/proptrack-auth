@@ -23,6 +23,16 @@ function fmtDate(iso: string | undefined): string {
   return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' })
 }
 
+// Occupancy denominator: full year for past years, but only elapsed days
+// (1 Jan through today, inclusive) for the current year.
+function daysElapsedInYear(year: number): number {
+  const now = new Date()
+  if (year < now.getFullYear()) return (new Date(year + 1, 0, 1).getTime() - new Date(year, 0, 1).getTime()) / 86400000
+  if (year > now.getFullYear()) return 0
+  const start = new Date(year, 0, 1)
+  return Math.floor((now.getTime() - start.getTime()) / 86400000) + 1
+}
+
 function invType(inv: Cr9b5_pt_invoices): 'Income' | 'Expense' {
   return (inv as unknown as Record<string, unknown>)['cr9b5_type'] as number === TYPE_OUTGOING ? 'Income' : 'Expense'
 }
@@ -135,7 +145,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
   // Occupancy from income invoices
   const incomeInvs = filtered.filter(i => invType(i) === 'Income')
   const totalNights = incomeInvs.reduce((s, i) => s + (i.cr9b5_nights ?? 0), 0)
-  const daysInPeriod = diagYear === 'all' ? 365 : (new Date(Number(diagYear) + 1, 0, 1).getTime() - new Date(Number(diagYear), 0, 1).getTime()) / 86400000
+  const daysInPeriod = diagYear === 'all' ? 365 : daysElapsedInYear(Number(diagYear))
   const occupancy = daysInPeriod > 0 && totalNights > 0 ? Math.round(totalNights / daysInPeriod * 100) : null
 
   // Compute SVG lines after DOM renders

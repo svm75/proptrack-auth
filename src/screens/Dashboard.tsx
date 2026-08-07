@@ -25,9 +25,9 @@ const TYPE_INCOMING = 233100000
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const MONTH_FULL   = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-const COLOR_INCOME  = '#4f46e5'
-const COLOR_EXPENSE = '#f87171'
-const COLOR_PROFIT  = '#10b981'
+const COLOR_INCOME  = '#15803D'
+const COLOR_EXPENSE = '#DC2626'
+const COLOR_PROFIT  = '#0F766E'
 
 const PROPERTY_COLORS = [
   '#4f46e5','#059669','#d97706','#dc2626',
@@ -44,8 +44,15 @@ function daysInYear(year: number): number {
   return ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) ? 366 : 365
 }
 
-function daysInMonth(year: number, month: number): number {
-  return new Date(year, month + 1, 0).getDate()
+// Occupancy denominator: full year for past years, but only elapsed days
+// (1 Jan through today, inclusive) for the current year — a partial year
+// shouldn't be judged against a full year's worth of available nights.
+function daysElapsedInYear(year: number): number {
+  const now = new Date()
+  if (year < now.getFullYear()) return daysInYear(year)
+  if (year > now.getFullYear()) return 0
+  const start = new Date(year, 0, 1)
+  return Math.floor((now.getTime() - start.getTime()) / 86400000) + 1
 }
 
 function fmtPct(n: number): string { return `${n.toFixed(1)} %` }
@@ -111,12 +118,23 @@ const useStyles = makeStyles({
 
   kpiGrid: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' },
   kpiGrid4: { display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '16px' },
-  kpiCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '20px', display: 'flex', flexDirection: 'column', gap: '4px', position: 'relative', overflow: 'hidden' },
-  kpiBar: { position: 'absolute', top: 0, left: 0, right: 0, height: '4px' },
-  kpiLabel: { fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: tokens.colorNeutralForeground4 },
-  kpiValue: { fontSize: '24px', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  kpiCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: '4px', position: 'relative', overflow: 'hidden' },
+  kpiBar: { position: 'absolute', top: 0, left: 0, right: 0, height: '3px' },
+  kpiLabel: { fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: tokens.colorNeutralForeground4 },
+  kpiDualRow: { display: 'flex', alignItems: 'baseline', gap: '14px', flexWrap: 'wrap' },
+  kpiValueTag: { fontSize: '10px', fontWeight: 500, color: tokens.colorNeutralForeground4, marginRight: '5px' },
+  kpiValue: { fontSize: '19px', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
+  kpiValue2: { fontSize: '14px', fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: tokens.colorNeutralForeground2 },
   kpiSub: { fontSize: '11px', color: tokens.colorNeutralForeground4, fontVariantNumeric: 'tabular-nums' },
   kpiSubLabel: { fontWeight: 500, color: tokens.colorNeutralForeground3 },
+
+  dashboardGrid: { display: 'grid', gridTemplateColumns: '212px 1fr', gap: '20px', alignItems: 'start' },
+  kpiSidebar: { display: 'flex', flexDirection: 'column', gap: '10px', position: 'sticky', top: '20px' },
+  kpiSidebarTitle: { fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: tokens.colorNeutralForeground4, marginBottom: '2px' },
+  sidebarKpiCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: '2px', position: 'relative', overflow: 'hidden' },
+  sidebarKpiBar: { position: 'absolute', top: 0, left: 0, bottom: 0, width: '3px' },
+  sidebarKpiLabel: { fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', color: tokens.colorNeutralForeground4 },
+  sidebarKpiValue: { fontSize: '17px', fontWeight: 700, fontVariantNumeric: 'tabular-nums' },
 
   sectionHeading: { display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' },
   sectionHeadingText: { fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', color: tokens.colorNeutralForeground4 },
@@ -180,24 +198,36 @@ const useStyles = makeStyles({
 
 interface KpiCardProps {
   label: string; value: string; sub?: string; subLabel?: string
-  accent?: 'green' | 'red' | 'blue' | 'purple' | 'gray'
+  accent?: 'green' | 'red' | 'blue' | 'gray'
+  value2?: string; value2Label?: string
 }
 
-function KpiCard({ label, value, sub, subLabel, accent = 'blue' }: KpiCardProps) {
+function KpiCard({ label, value, sub, subLabel, accent = 'blue', value2, value2Label }: KpiCardProps) {
   const s = useStyles()
   const bar: Record<string, string> = {
     green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1,
-    blue: tokens.colorBrandForeground1, purple: tokens.colorPalettePurpleForeground2, gray: tokens.colorNeutralForeground4,
+    blue: tokens.colorBrandForeground1, gray: tokens.colorNeutralForeground4,
   }
   const val: Record<string, string> = {
     green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1,
-    blue: tokens.colorBrandForeground1, purple: tokens.colorPalettePurpleForeground2, gray: tokens.colorNeutralForeground3,
+    blue: tokens.colorBrandForeground1, gray: tokens.colorNeutralForeground3,
   }
   return (
     <div className={s.kpiCard}>
       <div className={s.kpiBar} style={{ backgroundColor: bar[accent] }} />
       <span className={s.kpiLabel}>{label}</span>
-      <span className={s.kpiValue} style={{ color: val[accent] }}>{value}</span>
+      <div className={s.kpiDualRow}>
+        <div>
+          {value2 != null && <span className={s.kpiValueTag}>Gross</span>}
+          <span className={s.kpiValue} style={{ color: val[accent] }}>{value}</span>
+        </div>
+        {value2 != null && (
+          <div>
+            <span className={s.kpiValueTag}>{value2Label ?? 'Net'}</span>
+            <span className={s.kpiValue2}>{value2}</span>
+          </div>
+        )}
+      </div>
       {sub && <span className={s.kpiSub}>{subLabel && <span className={s.kpiSubLabel}>{subLabel} </span>}{sub}</span>}
     </div>
   )
@@ -288,7 +318,7 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
   const vatComponent   = income.reduce((s,i) => s+(i.cr9b5_taxamount??0),0) + expenses.reduce((s,i) => s+(i.cr9b5_taxamount??0),0)
   const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
   const propCount      = filterPropId ? 1 : properties.length
-  const availableNights = filterYear !== 'all' && propCount > 0 ? daysInYear(filterYear as number) * propCount : null
+  const availableNights = filterYear !== 'all' && propCount > 0 ? daysElapsedInYear(filterYear as number) * propCount : null
   const occupancyPct   = availableNights ? (totalNights / availableNights) * 100 : null
 
   const monthlyData = useMemo(() => MONTH_LABELS.map((month, idx) => {
@@ -319,21 +349,15 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
         <PropSelect value={filterPropId} properties={properties} onChange={setFilterPropId} />
       </FilterRow>
       <div>
-        <SectionHeading>Gross — incl. VAT</SectionHeading>
         <div className={s.kpiGrid4} style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
-          <KpiCard label="Income"     value={formatMoney(incomeGross)}   sub={`${income.length} invoice${income.length!==1?'s':''}`} accent="green" />
-          <KpiCard label="Expenses"   value={formatMoney(expensesGross)} sub={`${expenses.length} invoice${expenses.length!==1?'s':''}`} accent="red" />
-          <KpiCard label="Net Profit" value={formatMoney(netProfitGross)} accent={netProfitGross>=0?'blue':'red'} />
-          <KpiCard label="Occupancy"  value={occupancyPct!==null?fmtPct(occupancyPct):'—'}
-            sub={occupancyPct!==null?`${totalNights} / ${availableNights} nights`:filterYear==='all'?'Select a year':'No properties'} accent="purple" />
-        </div>
-      </div>
-      <div>
-        <SectionHeading>Net — excl. VAT</SectionHeading>
-        <div className={s.kpiGrid} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-          <KpiCard label="Income Net"   value={formatMoney(incomeNet)}   sub={formatMoney(income.reduce((s,i)=>s+(i.cr9b5_taxamount??0),0))}   subLabel="VAT:" accent="green" />
-          <KpiCard label="Expenses Net" value={formatMoney(expensesNet)} sub={formatMoney(expenses.reduce((s,i)=>s+(i.cr9b5_taxamount??0),0))} subLabel="VAT:" accent="red" />
-          <KpiCard label="Net Profit"   value={formatMoney(netProfitNet)} sub={formatMoney(vatComponent)} subLabel="VAT total:" accent={netProfitNet>=0?'blue':'red'} />
+          <KpiCard label="Income" value={formatMoney(incomeGross)} value2={formatMoney(incomeNet)}
+            sub={`${income.length} invoice${income.length!==1?'s':''}`} accent="green" />
+          <KpiCard label="Expenses" value={formatMoney(expensesGross)} value2={formatMoney(expensesNet)}
+            sub={`${expenses.length} invoice${expenses.length!==1?'s':''}`} accent="red" />
+          <KpiCard label="Net Profit" value={formatMoney(netProfitGross)} value2={formatMoney(netProfitNet)}
+            sub={formatMoney(vatComponent)} subLabel="VAT total:" accent={netProfitGross>=0?'blue':'red'} />
+          <KpiCard label="Occupancy" value={occupancyPct!==null?fmtPct(occupancyPct):'—'}
+            sub={occupancyPct!==null?`${totalNights} / ${availableNights} nights`:filterYear==='all'?'Select a year':'No properties'} accent="blue" />
         </div>
       </div>
       <div>
@@ -381,11 +405,11 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
 // PROPERTY COMPARISON TAB
 // ============================================================
 
-function StatRow({ label, value, sub, accent }: { label:string; value:string; sub?:string; accent?:'green'|'red'|'blue'|'purple' }) {
+function StatRow({ label, value, sub, accent }: { label:string; value:string; sub?:string; accent?:'green'|'red'|'blue' }) {
   const s = useStyles()
   const colors: Record<string,string> = {
     green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1,
-    blue: tokens.colorBrandForeground1, purple: tokens.colorPalettePurpleForeground2,
+    blue: tokens.colorBrandForeground1,
   }
   return (
     <div className={s.statRow}>
@@ -416,7 +440,7 @@ function DashboardComparison({ invoices, properties }: SharedProps) {
     const income   = out.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
     const expenses = inc.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
     const nights   = out.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
-    const avail    = filterYear!=='all' ? daysInYear(filterYear as number) : 365
+    const avail    = filterYear!=='all' ? daysElapsedInYear(filterYear as number) : 365
     const nightsByMonth = Array(12).fill(0)
     out.forEach(inv => { if (inv.cr9b5_checkin) nightsByMonth[new Date(inv.cr9b5_checkin).getMonth()] += (inv.cr9b5_nights??0) })
     const maxN = Math.max(...nightsByMonth)
@@ -449,7 +473,7 @@ function DashboardComparison({ invoices, properties }: SharedProps) {
                 <StatRow label="Income (gross)"   value={formatMoney(p.income)}   accent="green" />
                 <StatRow label="Expenses (gross)" value={formatMoney(p.expenses)} accent="red" />
                 <StatRow label="Net Profit"       value={formatMoney(p.profit)}   accent={p.profit>=0?'blue':'red'} />
-                <StatRow label="Occupancy"        value={fmtPct(p.occupancyPct)} sub={`${p.nights} nights`} accent="purple" />
+                <StatRow label="Occupancy"        value={fmtPct(p.occupancyPct)} sub={`${p.nights} nights`} accent="blue" />
                 <StatRow label="Avg Nightly Rate" value={p.nights>0?formatMoney(p.avgNightlyRate):'—'} />
                 <StatRow label="Avg Stay Length"  value={p.stayCount>0?`${p.avgStayLength.toFixed(1)} nights`:'—'} sub={`${p.stayCount} stays`} />
                 <div style={{ gridColumn: 'span 2' }}><StatRow label="Busiest Month" value={p.busiestMonth} /></div>
@@ -457,177 +481,6 @@ function DashboardComparison({ invoices, properties }: SharedProps) {
             </div>
           </div>
         ))}
-      </div>
-    </div>
-  )
-}
-
-// ============================================================
-// OCCUPANCY HEATMAP TAB  (all years stacked, compact cells)
-// ============================================================
-
-function blendHex(colors: string[]): string {
-  if (colors.length===1) return colors[0]
-  const r = colors.map(c=>({r:parseInt(c.slice(1,3),16),g:parseInt(c.slice(3,5),16),b:parseInt(c.slice(5,7),16)}))
-  const a = {r:Math.round(r.reduce((s,c)=>s+c.r,0)/r.length),g:Math.round(r.reduce((s,c)=>s+c.g,0)/r.length),b:Math.round(r.reduce((s,c)=>s+c.b,0)/r.length)}
-  return `#${a.r.toString(16).padStart(2,'0')}${a.g.toString(16).padStart(2,'0')}${a.b.toString(16).padStart(2,'0')}`
-}
-
-interface HeatTooltip { x: number; y: number; lines: string[] }
-
-function YearHeatmap({ year, occupiedMap, colorMap }: {
-  year: number
-  occupiedMap: Record<string, {propId:string;propName:string;contactName:string}[]>
-  colorMap: Record<string, string>
-}) {
-  const s = useStyles()
-  const [tooltip, setTooltip] = useState<HeatTooltip|null>(null)
-  const totalOccupied = useMemo(() => {
-    return Object.keys(occupiedMap).filter(k => k.startsWith(`${year}-`)).length
-  }, [occupiedMap, year])
-
-  function getCellColor(month: number, day: number): string {
-    const key = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-    const entries = occupiedMap[key]
-    if (!entries?.length) return '#e5e7eb'
-    const colors = [...new Set(entries.map(e => colorMap[e.propId] ?? '#6b7280'))]
-    return blendHex(colors)
-  }
-
-  function getCellTip(month: number, day: number): string[] | null {
-    const key = `${year}-${String(month+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`
-    const entries = occupiedMap[key]
-    if (!entries?.length) return null
-    const lines = [`${day} ${MONTH_FULL[month]} ${year}`]
-    const seen = new Set<string>()
-    entries.forEach(e => {
-      const str = e.contactName ? `${e.propName} — ${e.contactName}` : e.propName
-      if (!seen.has(str)) { seen.add(str); lines.push(str) }
-    })
-    return lines
-  }
-
-  const MONTH_1 = ['J','F','M','A','M','J','J','A','S','O','N','D']
-
-  return (
-    <div className={s.heatmapWrap}>
-      {tooltip && (
-        <div style={{position:'fixed',left:tooltip.x+14,top:tooltip.y-8,zIndex:9999}} className={s.heatTooltip}>
-          {tooltip.lines.map((l,i) => <div key={i} className={i===0?s.heatTooltipTitle:s.heatTooltipLine}>{l}</div>)}
-        </div>
-      )}
-
-      <div className={s.heatYearRow}>
-        <span className={s.heatYearLabel}>{year}</span>
-        <span className={s.heatYearSub}>{totalOccupied} / {daysInYear(year)} days occupied</span>
-      </div>
-
-      <div className={s.heatGrid}>
-        {Array.from({length:12}, (_,month) => {
-          const dim = daysInMonth(year, month)
-          return (
-            <div key={month} className={s.heatMonthCol}>
-              <div className={s.heatMonthLabel}>{MONTH_1[month]}</div>
-              {Array.from({length:31}, (_,di) => {
-                const day = di+1
-                if (day>dim) return <div key={day} style={{width:12,height:12}} />
-                const tipLines = getCellTip(month, day)
-                return (
-                  <div key={day}
-                    className={s.heatCell}
-                    style={{backgroundColor:getCellColor(month,day)}}
-                    onMouseEnter={e => { if(tipLines) setTooltip({x:e.clientX,y:e.clientY,lines:tipLines}) }}
-                    onMouseMove={e => { if(tipLines) setTooltip(t => t?{...t,x:e.clientX,y:e.clientY}:null) }}
-                    onMouseLeave={() => setTooltip(null)}
-                  />
-                )
-              })}
-            </div>
-          )
-        })}
-      </div>
-    </div>
-  )
-}
-
-function DashboardHeatmap({ invoices, properties }: SharedProps) {
-  const s = useStyles()
-  const currentYear = new Date().getFullYear()
-  const [filterYear,   setFilterYear]   = useState<number|'all'>('all')
-  const [filterPropId, setFilterPropId] = useState('')
-
-  const years = useMemo(() => {
-    const s = new Set<number>(); invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
-    const arr = Array.from(s).sort((a,b) => b-a)
-    return arr.length ? arr : [currentYear]
-  }, [invoices, currentYear])
-
-  const visibleYears = filterYear==='all' ? years : [filterYear as number]
-
-  const colorMap = useMemo(() => {
-    const map: Record<string,string> = {}
-    properties.forEach((p,i) => { map[p.cr9b5_pt_propertyid] = PROPERTY_COLORS[i % PROPERTY_COLORS.length] })
-    return map
-  }, [properties])
-
-  // Build full occupied map (all years)
-  const occupiedMap = useMemo(() => {
-    const map: Record<string, {propId:string;propName:string;contactName:string}[]> = {}
-    invoices.forEach(inv => {
-      if (!isActive(inv)) return
-      if ((inv.cr9b5_type as unknown as number) !== TYPE_OUTGOING) return
-      if (!inv.cr9b5_checkin || !inv.cr9b5_checkout) return
-      const propId = (inv as unknown as Record<string,unknown>)['_cr9b5_property_value'] as string
-      if (filterPropId && propId !== filterPropId) return
-      const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
-      const checkin  = new Date(inv.cr9b5_checkin)
-      const checkout = new Date(inv.cr9b5_checkout)
-      const cur = new Date(checkin)
-      while (cur < checkout) {
-        const key = `${cur.getFullYear()}-${String(cur.getMonth()+1).padStart(2,'0')}-${String(cur.getDate()).padStart(2,'0')}`
-        if (!map[key]) map[key] = []
-        map[key].push({
-          propId,
-          propName: prop?.cr9b5_name ?? 'Unknown',
-          contactName: (inv as unknown as Record<string,unknown>)['cr9b5_contactname'] as string ?? '',
-        })
-        cur.setDate(cur.getDate()+1)
-      }
-    })
-    return map
-  }, [invoices, properties, filterPropId])
-
-  return (
-    <div className={s.stack6}>
-      <FilterRow>
-        <YearSelect value={filterYear} years={years} onChange={setFilterYear} />
-        <PropSelect value={filterPropId} properties={properties} onChange={setFilterPropId} />
-      </FilterRow>
-
-      {!filterPropId && properties.length>1 && (
-        <div className={s.legendRow}>
-          {properties.map((p,i) => (
-            <div key={p.cr9b5_pt_propertyid} className={s.legendItem}>
-              <span className={s.legendSwatch} style={{backgroundColor:PROPERTY_COLORS[i%PROPERTY_COLORS.length]}} />
-              {p.cr9b5_name}
-            </div>
-          ))}
-        </div>
-      )}
-
-      <div className={s.chartCard} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-        {visibleYears.map(year => (
-          <YearHeatmap key={year} year={year} occupiedMap={occupiedMap} colorMap={colorMap} />
-        ))}
-        {visibleYears.length===0 && <p className={s.muted}>No data.</p>}
-        <div className={s.heatFooter}>
-          <span>Empty</span>
-          <div style={{width:12,height:12,borderRadius:2,backgroundColor:'#e5e7eb'}} />
-          <span style={{marginLeft:8}}>→ Occupied</span>
-          {!filterPropId && properties.map((p,i) => (
-            <div key={p.cr9b5_pt_propertyid} style={{width:12,height:12,borderRadius:2,backgroundColor:PROPERTY_COLORS[i%PROPERTY_COLORS.length],marginLeft:4}} />
-          ))}
-        </div>
       </div>
     </div>
   )
@@ -830,9 +683,9 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
             <thead>
               <tr>
                 <th className={s.th}>Quarter</th>
-                <th className={mergeClasses(s.th, s.thRight)} style={{ color: tokens.colorPaletteGreenForeground1 }}>VAT Collected</th>
-                <th className={mergeClasses(s.th, s.thRight)} style={{ color: tokens.colorPaletteRedForeground1 }}>VAT Paid</th>
-                <th className={mergeClasses(s.th, s.thRight)} style={{ color: tokens.colorBrandForeground1 }}>Net VAT</th>
+                <th className={mergeClasses(s.th, s.thRight)}>VAT Collected</th>
+                <th className={mergeClasses(s.th, s.thRight)}>VAT Paid</th>
+                <th className={mergeClasses(s.th, s.thRight)}>Net VAT</th>
               </tr>
             </thead>
             <tbody>
@@ -843,9 +696,9 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
                 return (
                   <tr key={q}>
                     <td className={mergeClasses(s.td, s.tdLabel)}>Q{q}</td>
-                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteGreenForeground1 }}>{formatMoney(collected)}</td>
-                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteRedForeground1 }}>{formatMoney(paid)}</td>
-                    <td className={mergeClasses(s.td, s.tdTotal)} style={{ color: net>=0?tokens.colorBrandForeground1:tokens.colorPaletteRedForeground1 }}>{formatMoney(net)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(collected)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(paid)}</td>
+                    <td className={mergeClasses(s.td, s.tdTotal)}>{formatMoney(net)}</td>
                   </tr>
                 )
               })}
@@ -856,9 +709,9 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
                 return (
                   <tr className={s.trTotal}>
                     <td className={s.td}>Annual Total</td>
-                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteGreenForeground1 }}>{formatMoney(tc)}</td>
-                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tokens.colorPaletteRedForeground1 }}>{formatMoney(tp)}</td>
-                    <td className={mergeClasses(s.td, s.tdRight)} style={{ color: tn>=0?tokens.colorBrandForeground1:tokens.colorPaletteRedForeground1, fontWeight: 600 }}>{formatMoney(tn)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(tc)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(tp)}</td>
+                    <td className={mergeClasses(s.td, s.tdRight)} style={{ fontWeight: 600 }}>{formatMoney(tn)}</td>
                   </tr>
                 )
               })()}
@@ -881,273 +734,14 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
 }
 
 // ============================================================
-// EXPENSE SUNBURST TAB
-// ============================================================
-
-function polarToCartesian(cx: number, cy: number, r: number, angle: number) {
-  return { x: cx + r * Math.cos(angle - Math.PI / 2), y: cy + r * Math.sin(angle - Math.PI / 2) }
-}
-
-function arcPath(cx: number, cy: number, r0: number, r1: number, startAngle: number, endAngle: number): string {
-  const gap = 0.012
-  const s = startAngle + gap / 2
-  const e = endAngle - gap / 2
-  if (e <= s) return ''
-  const p0s = polarToCartesian(cx, cy, r0, s)
-  const p0e = polarToCartesian(cx, cy, r0, e)
-  const p1s = polarToCartesian(cx, cy, r1, s)
-  const p1e = polarToCartesian(cx, cy, r1, e)
-  const large = e - s > Math.PI ? 1 : 0
-  return [
-    `M ${p1s.x.toFixed(2)} ${p1s.y.toFixed(2)}`,
-    `A ${r1} ${r1} 0 ${large} 1 ${p1e.x.toFixed(2)} ${p1e.y.toFixed(2)}`,
-    `L ${p0e.x.toFixed(2)} ${p0e.y.toFixed(2)}`,
-    `A ${r0} ${r0} 0 ${large} 0 ${p0s.x.toFixed(2)} ${p0s.y.toFixed(2)}`,
-    'Z',
-  ].join(' ')
-}
-
-function lighten(hex: string, amount: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  const lr = Math.min(255, Math.round(r + (255 - r) * amount))
-  const lg = Math.min(255, Math.round(g + (255 - g) * amount))
-  const lb = Math.min(255, Math.round(b + (255 - b) * amount))
-  return `#${lr.toString(16).padStart(2, '0')}${lg.toString(16).padStart(2, '0')}${lb.toString(16).padStart(2, '0')}`
-}
-
-interface SbSegment { path: string; color: string; label: string; value: number; depth: number }
-
-function DashboardExpenseSunburst({ invoices, properties, contacts, references }: SharedProps & { contacts: Cr9b5_pt_contacts[]; references: Cr9b5_pt_references[] }) {
-  const s = useStyles()
-  const currentYear = new Date().getFullYear()
-  const [filterYear, setFilterYear] = useState<number>(currentYear)
-  const [tooltip, setTooltip] = useState<{ x: number; y: number; label: string; value: number; pct: number } | null>(null)
-
-  const years = useMemo(() => {
-    const s = new Set<number>()
-    invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
-    const arr = Array.from(s).sort((a, b) => b - a)
-    return arr.length ? arr : [currentYear]
-  }, [invoices, currentYear])
-
-  const contactById = useMemo(() => {
-    const m: Record<string, string> = {}
-    contacts.forEach(c => { m[c.cr9b5_pt_contactid] = c.cr9b5_name })
-    return m
-  }, [contacts])
-
-  const propById = useMemo(() => {
-    const m: Record<string, string> = {}
-    properties.forEach(p => { m[p.cr9b5_pt_propertyid] = p.cr9b5_name })
-    return m
-  }, [properties])
-
-  const catNameById = useMemo(() => {
-    const m: Record<string, string> = {}
-    references.forEach(ref => {
-      if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) m[ref.cr9b5_pt_referenceid] = ref.cr9b5_value
-    })
-    return m
-  }, [references])
-
-  const hierarchy = useMemo(() => {
-    const expenses = invoices.filter(inv =>
-      isActive(inv) &&
-      (inv.cr9b5_type as unknown as number) === TYPE_INCOMING &&
-      inv.cr9b5_year === filterYear
-    )
-
-    type ContactMap = Map<string, number>
-    type CatMap = Map<string, { value: number; contacts: ContactMap }>
-    type PropMap = Map<string, { value: number; cats: CatMap }>
-
-    const propMap: PropMap = new Map()
-
-    expenses.forEach(inv => {
-      const raw = inv as unknown as Record<string, unknown>
-      const propId  = (raw['_cr9b5_property_value'] as string) ?? '__none__'
-      const catId   = (raw['_cr9b5_categoryid_value'] as string) ?? '__none__'
-      const ctId    = (raw['_cr9b5_contact_value'] as string) ?? '__none__'
-      const amount  = (inv.cr9b5_totalgross ?? 0)
-
-      if (!propMap.has(propId)) propMap.set(propId, { value: 0, cats: new Map() })
-      const propEntry = propMap.get(propId)!
-      propEntry.value += amount
-
-      if (!propEntry.cats.has(catId)) propEntry.cats.set(catId, { value: 0, contacts: new Map() })
-      const catEntry = propEntry.cats.get(catId)!
-      catEntry.value += amount
-
-      catEntry.contacts.set(ctId, (catEntry.contacts.get(ctId) ?? 0) + amount)
-    })
-
-    return propMap
-  }, [invoices, filterYear])
-
-  const total = useMemo(() => {
-    let t = 0
-    hierarchy.forEach(p => { t += p.value })
-    return t
-  }, [hierarchy])
-
-  const segments = useMemo<SbSegment[]>(() => {
-    if (total === 0) return []
-    const cx = 300, cy = 300
-    const R = [
-      { r0: 60,  r1: 140 },
-      { r0: 148, r1: 210 },
-      { r0: 218, r1: 275 },
-    ]
-    const segs: SbSegment[] = []
-    const TWO_PI = 2 * Math.PI
-    let propAngleStart = 0
-
-    const propEntries = Array.from(hierarchy.entries()).sort((a, b) => b[1].value - a[1].value)
-
-    propEntries.forEach(([propId, propEntry], propIdx) => {
-      const propAngleEnd = propAngleStart + (propEntry.value / total) * TWO_PI
-      const propColor = PROPERTY_COLORS[propIdx % PROPERTY_COLORS.length]
-      const propName = propId === '__none__' ? 'No Property' : (propById[propId] ?? propId)
-
-      segs.push({
-        path: arcPath(cx, cy, R[0].r0, R[0].r1, propAngleStart, propAngleEnd),
-        color: propColor,
-        label: propName,
-        value: propEntry.value,
-        depth: 0,
-      })
-
-      const catEntries = Array.from(propEntry.cats.entries()).sort((a, b) => b[1].value - a[1].value)
-      let catAngleStart = propAngleStart
-      catEntries.forEach(([catId, catEntry], catIdx) => {
-        const catAngleEnd = catAngleStart + (catEntry.value / propEntry.value) * (propAngleEnd - propAngleStart)
-        const catColor = lighten(propColor, 0.35 + (catIdx % 3) * 0.1)
-        const catName = catId === '__none__' ? 'Uncategorized' : (catNameById[catId] ?? catId)
-
-        segs.push({
-          path: arcPath(cx, cy, R[1].r0, R[1].r1, catAngleStart, catAngleEnd),
-          color: catColor,
-          label: catName,
-          value: catEntry.value,
-          depth: 1,
-        })
-
-        const ctEntries = Array.from(catEntry.contacts.entries()).sort((a, b) => b[1] - a[1])
-        let ctAngleStart = catAngleStart
-        ctEntries.forEach(([ctId, ctValue], ctIdx) => {
-          const ctAngleEnd = ctAngleStart + (ctValue / catEntry.value) * (catAngleEnd - catAngleStart)
-          const ctColor = lighten(propColor, 0.55 + (ctIdx % 3) * 0.08)
-          const ctName = ctId === '__none__' ? 'No Contact' : (contactById[ctId] ?? ctId)
-
-          segs.push({
-            path: arcPath(cx, cy, R[2].r0, R[2].r1, ctAngleStart, ctAngleEnd),
-            color: ctColor,
-            label: ctName,
-            value: ctValue,
-            depth: 2,
-          })
-          ctAngleStart = ctAngleEnd
-        })
-
-        catAngleStart = catAngleEnd
-      })
-
-      propAngleStart = propAngleEnd
-    })
-
-    return segs
-  }, [hierarchy, total, propById, contactById, catNameById])
-
-  const RING_LABELS = ['Property', 'Category', 'Contact']
-
-  return (
-    <div className={s.stack6}>
-      <FilterRow>
-        <YearSelect value={filterYear} years={years} onChange={v => setFilterYear(v as number)} allowAll={false} />
-      </FilterRow>
-
-      {total === 0 ? (
-        <p className={s.muted}>No expense data for {filterYear}.</p>
-      ) : (
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '32px', alignItems: 'flex-start' }}>
-          <div className={s.sbCard}>
-            {tooltip && (
-              <div style={{ position: 'fixed', left: tooltip.x + 14, top: tooltip.y - 8, zIndex: 9999 }} className={s.heatTooltip}>
-                <div className={s.heatTooltipTitle}>{tooltip.label}</div>
-                <div style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(tooltip.value)}</div>
-                <div className={s.heatTooltipLine} style={{ fontVariantNumeric: 'tabular-nums' }}>{tooltip.pct.toFixed(1)} % of total</div>
-              </div>
-            )}
-            <svg width={600} height={600} viewBox="0 0 600 600">
-              <text x={300} y={294} textAnchor="middle" fontSize={13} fill="#6b7280" fontWeight={600}>Expenses</text>
-              <text x={300} y={312} textAnchor="middle" fontSize={12} fill="#9ca3af" style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(total)}</text>
-
-              {segments.map((seg, i) => (
-                <path
-                  key={i}
-                  d={seg.path}
-                  fill={seg.color}
-                  stroke="white"
-                  strokeWidth={1}
-                  style={{ cursor: 'pointer', transition: 'opacity 0.1s' }}
-                  onMouseEnter={e => setTooltip({ x: e.clientX, y: e.clientY, label: seg.label, value: seg.value, pct: (seg.value / total) * 100 })}
-                  onMouseMove={e => setTooltip(t => t ? { ...t, x: e.clientX, y: e.clientY } : null)}
-                  onMouseLeave={() => setTooltip(null)}
-                />
-              ))}
-
-              {[{ r: 100, label: 'Property' }, { r: 179, label: 'Category' }, { r: 246, label: 'Contact' }].map(({ r, label }) => (
-                <text key={label} x={300} y={300 - r} textAnchor="middle" fontSize={9} fill="#9ca3af" dy={-3}>{label}</text>
-              ))}
-            </svg>
-          </div>
-
-          {/* Legend: top-level properties */}
-          <div className={s.sbLegendCard}>
-            <div className={s.sbLegendTitle}>Properties</div>
-            <div>
-              {Array.from(hierarchy.entries())
-                .sort((a, b) => b[1].value - a[1].value)
-                .map(([propId, propEntry], idx) => {
-                  const name = propId === '__none__' ? 'No Property' : (propById[propId] ?? propId)
-                  const color = PROPERTY_COLORS[idx % PROPERTY_COLORS.length]
-                  return (
-                    <div key={propId} className={s.sbLegendRow}>
-                      <span className={s.legendSwatch} style={{ backgroundColor: color, borderRadius: '2px' }} />
-                      <span className={s.sbLegendName}>{name}</span>
-                      <span className={s.sbLegendVal}>{formatMoney(propEntry.value)}</span>
-                    </div>
-                  )
-                })}
-            </div>
-            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: `1px solid ${tokens.colorNeutralStroke2}` }}>
-              <div className={s.sbLegendTitle} style={{ marginBottom: '4px' }}>Ring guide</div>
-              {RING_LABELS.map((l, i) => (
-                <div key={l} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '12px', color: tokens.colorNeutralForeground4, marginTop: '4px' }}>
-                  <span style={{ width: '16px', height: '8px', borderRadius: '2px', backgroundColor: tokens.colorNeutralStroke1, opacity: 0.4 + i * 0.2, flexShrink: 0 }} />
-                  {i + 1}. {l}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
-
-// ============================================================
 // MAIN DASHBOARD — tab shell
 // ============================================================
 
-type DashTab = 'overview' | 'comparison' | 'heatmap' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'expense-breakdown' | 'income-vs-forecast' | 'expense-sunburst'
+type DashTab = 'overview' | 'comparison' | 'cashflow' | 'tax' | 'calendar' | 'cat-pnl' | 'cat-trend' | 'expense-breakdown' | 'income-vs-forecast'
 
 const TABS: { id: DashTab; label: string; printName: string }[] = [
   { id: 'overview',            label: 'Overview',            printName: 'overview' },
   { id: 'comparison',          label: 'Property Comparison', printName: 'property-comparison' },
-  { id: 'heatmap',             label: 'Occupancy Heatmap',   printName: 'occupancy-heatmap' },
   { id: 'cashflow',            label: 'Cash Flow',            printName: 'cash-flow' },
   { id: 'tax',                 label: 'Tax Summary',          printName: 'tax-summary' },
   { id: 'calendar',            label: 'Calendar',             printName: 'calendar' },
@@ -1155,8 +749,47 @@ const TABS: { id: DashTab; label: string; printName: string }[] = [
   { id: 'cat-trend',           label: 'Category Trend',       printName: 'category-trend' },
   { id: 'expense-breakdown',   label: 'Expense Breakdown',    printName: 'expense-breakdown' },
   { id: 'income-vs-forecast',  label: 'Income vs Forecast',   printName: 'income-vs-forecast' },
-  { id: 'expense-sunburst',    label: 'Expense Sunburst',     printName: 'expense-sunburst' },
 ]
+
+// ---------- Left-hand key KPI sidebar (always visible, current year to date) ----------
+
+function KeyKpiSidebar({ invoices, properties }: SharedProps) {
+  const s = useStyles()
+  const currentYear = new Date().getFullYear()
+
+  const yearInvoices = invoices.filter(inv => isActive(inv) && inv.cr9b5_year === currentYear)
+  const income   = yearInvoices.filter(i => (i.cr9b5_type as unknown as number) === TYPE_OUTGOING)
+  const expenses = yearInvoices.filter(i => (i.cr9b5_type as unknown as number) === TYPE_INCOMING)
+  const incomeGross   = income.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
+  const expensesGross = expenses.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
+  const netProfit      = incomeGross - expensesGross
+  const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
+  const availableNights = properties.length > 0 ? daysElapsedInYear(currentYear) * properties.length : 0
+  const occupancyPct   = availableNights > 0 ? (totalNights / availableNights) * 100 : null
+
+  const items: { label: string; value: string; accent: 'green'|'red'|'blue' }[] = [
+    { label: 'Income',     value: formatMoney(incomeGross),   accent: 'green' },
+    { label: 'Expenses',   value: formatMoney(expensesGross), accent: 'red' },
+    { label: 'Net Profit', value: formatMoney(netProfit),     accent: netProfit>=0 ? 'blue' : 'red' },
+    { label: 'Occupancy',  value: occupancyPct!==null?fmtPct(occupancyPct):'—', accent: 'blue' },
+  ]
+  const barColor: Record<string,string> = {
+    green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1, blue: tokens.colorBrandForeground1,
+  }
+
+  return (
+    <div className={s.kpiSidebar}>
+      <Text className={s.kpiSidebarTitle}>{currentYear} at a glance</Text>
+      {items.map(item => (
+        <div key={item.label} className={s.sidebarKpiCard}>
+          <div className={s.sidebarKpiBar} style={{ backgroundColor: barColor[item.accent] }} />
+          <span className={s.sidebarKpiLabel}>{item.label}</span>
+          <span className={s.sidebarKpiValue} style={{ color: barColor[item.accent] }}>{item.value}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export default function Dashboard() {
   const s = useStyles()
@@ -1198,38 +831,39 @@ export default function Dashboard() {
   const isCalendar = tab === 'calendar'
 
   return (
-    <div className={isCalendar ? s.pageCalendar : s.page}>
-      {/* Header row */}
-      <div className={isCalendar ? s.headerRowCalendar : s.headerRow}>
-        <div className={s.tabBar}>
-          {TABS.map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} className={mergeClasses(s.tabBtn, tab===t.id && s.tabBtnActive)}>
-              {t.label}
-            </button>
-          ))}
+    <div className={s.dashboardGrid}>
+      <KeyKpiSidebar invoices={invoices} properties={properties} />
+      <div className={isCalendar ? s.pageCalendar : s.page} style={{ padding: isCalendar ? undefined : '24px 24px 24px 0', maxWidth: 'none' }}>
+        {/* Header row */}
+        <div className={isCalendar ? s.headerRowCalendar : s.headerRow}>
+          <div className={s.tabBar}>
+            {TABS.map(t => (
+              <button key={t.id} onClick={() => setTab(t.id)} className={mergeClasses(s.tabBtn, tab===t.id && s.tabBtnActive)}>
+                {t.label}
+              </button>
+            ))}
+          </div>
+          <Button className={mergeClasses('no-print', s.exportBtn)} appearance="secondary" onClick={() => handlePrint(activeTab.printName)}>
+            ↓ Export PDF
+          </Button>
         </div>
-        <Button className={mergeClasses('no-print', s.exportBtn)} appearance="secondary" onClick={() => handlePrint(activeTab.printName)}>
-          ↓ Export PDF
-        </Button>
-      </div>
 
-      {loading ? (
-        <Text className={isCalendar ? s.loadingCalendar : s.loading}>Loading…</Text>
-      ) : (
-        <div className={mergeClasses('dashboard-print-content', isCalendar ? s.contentCalendar : s.content)}>
-          {tab==='overview'            && <DashboardOverview    invoices={invoices} properties={properties} />}
-          {tab==='comparison'          && <DashboardComparison  invoices={invoices} properties={properties} />}
-          {tab==='heatmap'             && <DashboardHeatmap     invoices={invoices} properties={properties} />}
-          {tab==='cashflow'            && <DashboardCashFlow    invoices={invoices} properties={properties} />}
-          {tab==='tax'                 && <DashboardTax         invoices={invoices} contacts={contacts} />}
-          {tab==='calendar'            && <div style={{ flex: 1, minHeight: 0 }}><CalendarScreen /></div>}
-          {tab==='cat-pnl'             && <CategoryPnL          invoices={invoices} properties={properties} references={references} contacts={contacts} />}
-          {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
-          {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
-          {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} references={references} />}
-          {tab==='expense-sunburst'   && <DashboardExpenseSunburst invoices={invoices} properties={properties} contacts={contacts} references={references} />}
-        </div>
-      )}
+        {loading ? (
+          <Text className={isCalendar ? s.loadingCalendar : s.loading}>Loading…</Text>
+        ) : (
+          <div className={mergeClasses('dashboard-print-content', isCalendar ? s.contentCalendar : s.content)}>
+            {tab==='overview'            && <DashboardOverview    invoices={invoices} properties={properties} />}
+            {tab==='comparison'          && <DashboardComparison  invoices={invoices} properties={properties} />}
+            {tab==='cashflow'            && <DashboardCashFlow    invoices={invoices} properties={properties} />}
+            {tab==='tax'                 && <DashboardTax         invoices={invoices} contacts={contacts} />}
+            {tab==='calendar'            && <div style={{ flex: 1, minHeight: 0 }}><CalendarScreen /></div>}
+            {tab==='cat-pnl'             && <CategoryPnL          invoices={invoices} properties={properties} references={references} contacts={contacts} />}
+            {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
+            {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
+            {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} references={references} />}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
