@@ -3,10 +3,11 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import { makeStyles, tokens, mergeClasses, Select } from '@fluentui/react-components'
 import type { Cr9b5_pt_invoices }   from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
-import { fmtEur } from '../utils/formatters'
+import { formatMoney } from '@/domain/money'
 
 const TYPE_INCOME  = 233100001
 const TYPE_EXPENSE = 233100000
@@ -47,14 +48,37 @@ interface TooltipProps {
   label?: string
 }
 
+const useStyles = makeStyles({
+  root: { display: 'flex', flexDirection: 'column', gap: '24px' },
+  filterRow: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' },
+  segmented: { display: 'flex', borderRadius: tokens.borderRadiusMedium, border: `1px solid ${tokens.colorNeutralStroke2}`, overflow: 'hidden', fontSize: '14px' },
+  segBtn: { padding: '6px 16px', fontWeight: 500, border: 'none', cursor: 'pointer', backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground2 },
+  segBtnActive: { backgroundColor: '#0F766E', color: '#fff' },
+  chartCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '16px' },
+  empty: { padding: '64px', textAlign: 'center', color: tokens.colorNeutralForeground4, fontSize: '14px' },
+  tooltipBox: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16, padding: '8px 12px', fontSize: '13px' },
+  tooltipTitle: { fontWeight: 600, color: tokens.colorNeutralForeground2, marginBottom: '4px' },
+  tableCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, overflow: 'hidden' },
+  table: { width: '100%', fontSize: '14px', borderCollapse: 'collapse' },
+  th: { padding: '10px 16px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground4, textTransform: 'uppercase', letterSpacing: '0.04em', backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left' },
+  thRight: { textAlign: 'right' },
+  td: { padding: '10px 16px', borderBottom: `1px solid ${tokens.colorNeutralStroke1}` },
+  dot: { display: 'inline-block', width: '10px', height: '10px', borderRadius: tokens.borderRadiusCircular, marginRight: '8px' },
+  catName: { color: tokens.colorNeutralForeground1, fontWeight: 500 },
+  tdRight: { textAlign: 'right', color: tokens.colorNeutralForeground2, fontVariantNumeric: 'tabular-nums' },
+  tdRightBold: { textAlign: 'right', fontWeight: 600, color: tokens.colorNeutralForeground1, fontVariantNumeric: 'tabular-nums' },
+  faded: { color: tokens.colorNeutralForeground4, fontSize: '12px' },
+})
+
 function ChartTooltip({ active, payload, label }: TooltipProps) {
+  const s = useStyles()
   if (!active || !payload?.length) return null
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-sm">
-      <p className="font-semibold text-gray-700 mb-1">{label}</p>
+    <div className={s.tooltipBox}>
+      <p className={s.tooltipTitle}>{label}</p>
       {payload.map(p => (
-        <p key={p.name} style={{ color: p.color }} className="tabular-nums">
-          {p.name}: {fmtEur(p.value)}
+        <p key={p.name} style={{ color: p.color, fontVariantNumeric: 'tabular-nums' }}>
+          {p.name}: {formatMoney(p.value)}
         </p>
       ))}
     </div>
@@ -62,6 +86,7 @@ function ChartTooltip({ active, payload, label }: TooltipProps) {
 }
 
 export default function CategoryTrend({ invoices, properties, references }: Props) {
+  const s = useStyles()
   const [typeFilter, setTypeFilter] = useState<'income' | 'expense'>('income')
   const [propId,     setPropId]     = useState('')
   const [nMonths,    setNMonths]    = useState(24)
@@ -87,7 +112,6 @@ export default function CategoryTrend({ invoices, properties, references }: Prop
     return true
   }), [invoices, invType, propId])
 
-  // Build category list: defined cats that have data + Uncategorised
   const activeCatIds = useMemo(() => {
     const ids = new Set(filteredInvs.map(getCatId))
     const result: { id: string; label: string }[] = cats
@@ -97,7 +121,6 @@ export default function CategoryTrend({ invoices, properties, references }: Prop
     return result
   }, [filteredInvs, cats])
 
-  // Chart data: one row per month
   const chartData = useMemo(() => monthSlots.map(({ year, month, label }) => {
     const monthInvs = filteredInvs.filter(inv => {
       if (!inv.cr9b5_date) return false
@@ -113,7 +136,6 @@ export default function CategoryTrend({ invoices, properties, references }: Prop
     return row
   }), [monthSlots, filteredInvs, activeCatIds])
 
-  // Summary table
   const summaryRows = useMemo(() => activeCatIds.map(({ id, label }, idx) => {
     const catInvs = filteredInvs.filter(i => getCatId(i) === id)
     const monthlySums = monthSlots.map(({ year, month }) =>
@@ -131,38 +153,36 @@ export default function CategoryTrend({ invoices, properties, references }: Prop
   }).sort((a, b) => b.total - a.total), [activeCatIds, filteredInvs, monthSlots, nMonths])
 
   return (
-    <div className="space-y-6">
+    <div className={s.root}>
       {/* Filters */}
-      <div className="flex gap-3 items-center flex-wrap">
-        <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+      <div className={s.filterRow}>
+        <div className={s.segmented}>
           {(['income', 'expense'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTypeFilter(t)}
-              className={['px-4 py-1.5 font-medium transition-colors', typeFilter === t ? 'bg-indigo-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'].join(' ')}
+              className={mergeClasses(s.segBtn, typeFilter === t && s.segBtnActive)}
             >
               {t === 'income' ? 'Income' : 'Expense'}
             </button>
           ))}
         </div>
-        <select value={propId} onChange={e => setPropId(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        <Select value={propId} onChange={e => setPropId(e.target.value)}>
           <option value="">All properties</option>
           {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
-        </select>
-        <select value={nMonths} onChange={e => setNMonths(Number(e.target.value))}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </Select>
+        <Select value={String(nMonths)} onChange={e => setNMonths(Number(e.target.value))}>
           <option value={12}>Last 12 months</option>
           <option value={24}>Last 24 months</option>
           <option value={36}>Last 36 months</option>
-        </select>
+        </Select>
       </div>
 
       {/* Line chart */}
       {activeCatIds.length === 0 ? (
-        <div className="py-16 text-center text-gray-400 text-sm">No data for selected filters.</div>
+        <div className={s.empty}>No data for selected filters.</div>
       ) : (
-        <div className="bg-white border border-gray-200 rounded-xl p-4">
+        <div className={s.chartCard}>
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={chartData} margin={{ top: 4, right: 16, left: 8, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -188,32 +208,32 @@ export default function CategoryTrend({ invoices, properties, references }: Prop
 
       {/* Summary table */}
       {summaryRows.length > 0 && (
-        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-50 border-b border-gray-200">
-              <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                <th className="px-4 py-2.5 text-left">Category</th>
-                <th className="px-4 py-2.5 text-right">Avg / Month</th>
-                <th className="px-4 py-2.5 text-right">Highest Month</th>
-                <th className="px-4 py-2.5 text-right">Lowest Month</th>
-                <th className="px-4 py-2.5 text-right">Total</th>
+        <div className={s.tableCard}>
+          <table className={s.table}>
+            <thead>
+              <tr>
+                <th className={s.th}>Category</th>
+                <th className={mergeClasses(s.th, s.thRight)}>Avg / Month</th>
+                <th className={mergeClasses(s.th, s.thRight)}>Highest Month</th>
+                <th className={mergeClasses(s.th, s.thRight)}>Lowest Month</th>
+                <th className={mergeClasses(s.th, s.thRight)}>Total</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-100">
+            <tbody>
               {summaryRows.map(row => (
-                <tr key={row.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2.5">
-                    <span className="inline-block w-2.5 h-2.5 rounded-full mr-2" style={{ background: row.color }} />
-                    <span className="text-gray-800 font-medium">{row.label}</span>
+                <tr key={row.id}>
+                  <td className={s.td}>
+                    <span className={s.dot} style={{ backgroundColor: row.color }} />
+                    <span className={s.catName}>{row.label}</span>
                   </td>
-                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">{fmtEur(row.avg)}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">
-                    {row.maxIdx >= 0 ? <>{fmtEur(row.maxVal)} <span className="text-gray-400 text-xs">({monthSlots[row.maxIdx]?.label})</span></> : '—'}
+                  <td className={mergeClasses(s.td, s.tdRight)}>{formatMoney(row.avg)}</td>
+                  <td className={mergeClasses(s.td, s.tdRight)}>
+                    {row.maxIdx >= 0 ? <>{formatMoney(row.maxVal)} <span className={s.faded}>({monthSlots[row.maxIdx]?.label})</span></> : '—'}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-gray-700 tabular-nums">
-                    {row.minIdx >= 0 ? <>{fmtEur(row.minVal)} <span className="text-gray-400 text-xs">({monthSlots[row.minIdx]?.label})</span></> : '—'}
+                  <td className={mergeClasses(s.td, s.tdRight)}>
+                    {row.minIdx >= 0 ? <>{formatMoney(row.minVal)} <span className={s.faded}>({monthSlots[row.minIdx]?.label})</span></> : '—'}
                   </td>
-                  <td className="px-4 py-2.5 text-right font-semibold text-gray-900 tabular-nums">{fmtEur(row.total)}</td>
+                  <td className={mergeClasses(s.td, s.tdRightBold)}>{formatMoney(row.total)}</td>
                 </tr>
               ))}
             </tbody>

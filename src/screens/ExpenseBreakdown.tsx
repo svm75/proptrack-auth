@@ -2,10 +2,11 @@ import { useMemo, useState } from 'react'
 import {
   PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts'
+import { makeStyles, tokens, mergeClasses, Select } from '@fluentui/react-components'
 import type { Cr9b5_pt_invoices }   from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
-import { fmtEur } from '../utils/formatters'
+import { formatMoney } from '@/domain/money'
 
 const TYPE_EXPENSE = 233100000
 const REF_EXP_CAT  = 233100006
@@ -30,12 +31,35 @@ interface Props {
   references: Cr9b5_pt_references[]
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const useStyles = makeStyles({
+  root: { display: 'flex', flexDirection: 'column', gap: '24px' },
+  filterRow: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' },
+  empty: { padding: '64px', textAlign: 'center', color: tokens.colorNeutralForeground4, fontSize: '14px' },
+  chartCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '16px' },
+  tooltipBox: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16, padding: '8px 12px', fontSize: '13px' },
+  tooltipTitle: { fontWeight: 600, color: tokens.colorNeutralForeground2 },
+  tooltipVal: { color: tokens.colorNeutralForeground3, fontVariantNumeric: 'tabular-nums' },
+  tooltipPct: { color: tokens.colorNeutralForeground4, fontSize: '12px' },
+  tableCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, overflowX: 'auto' },
+  table: { fontSize: '14px', borderCollapse: 'collapse', width: '100%', minWidth: '900px' },
+  th: { padding: '10px 8px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground4, textTransform: 'uppercase', letterSpacing: '0.04em', backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'right', whiteSpace: 'nowrap' },
+  thLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '10px 16px', textAlign: 'left', minWidth: '160px', zIndex: 1 },
+  thTotal: { borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  td: { padding: '8px', textAlign: 'right', fontSize: '12px', color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', borderBottom: `1px solid ${tokens.colorNeutralStroke1}` },
+  tdLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground1, padding: '8px 16px', whiteSpace: 'nowrap', zIndex: 1, borderBottom: `1px solid ${tokens.colorNeutralStroke1}` },
+  dot: { display: 'inline-block', width: '10px', height: '10px', borderRadius: tokens.borderRadiusCircular, marginRight: '8px' },
+  catName: { color: tokens.colorNeutralForeground1, fontWeight: 500 },
+  tdTotal: { fontWeight: 600, color: tokens.colorNeutralForeground1, borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  tfootRow: { backgroundColor: tokens.colorNeutralBackground2 },
+  tfootLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '10px 16px', fontSize: '14px', fontWeight: 700, color: tokens.colorNeutralForeground1, zIndex: 1, borderTop: `2px solid ${tokens.colorNeutralStroke1}` },
+  tfootCell: { padding: '10px 8px', textAlign: 'right', fontSize: '12px', fontWeight: 700, color: tokens.colorNeutralForeground1, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums', borderTop: `2px solid ${tokens.colorNeutralStroke1}` },
+})
+
 function DonutLabel({ cx, cy, total }: { cx: number; cy: number; total: number }) {
   return (
     <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
       <tspan x={cx} dy="-0.4em" fontSize={13} fill="#374151" fontWeight={600}>Total</tspan>
-      <tspan x={cx} dy="1.4em" fontSize={14} fill="#111827" fontWeight={700}>{fmtEur(total)}</tspan>
+      <tspan x={cx} dy="1.4em" fontSize={14} fill="#111827" fontWeight={700}>{formatMoney(total)}</tspan>
     </text>
   )
 }
@@ -48,19 +72,21 @@ interface PieTooltipProps {
 }
 
 function PieTooltip({ active, payload, total }: PieTooltipProps) {
+  const s = useStyles()
   if (!active || !payload?.length) return null
   const { name, value } = payload[0]
   const pct = total > 0 ? ((value / total) * 100).toFixed(1) : '0.0'
   return (
-    <div className="bg-white border border-gray-200 rounded-lg shadow-lg px-3 py-2 text-sm">
-      <p className="font-semibold text-gray-700">{name}</p>
-      <p className="text-gray-600 tabular-nums">{fmtEur(value)}</p>
-      <p className="text-gray-400 text-xs">{pct}% of total</p>
+    <div className={s.tooltipBox}>
+      <p className={s.tooltipTitle}>{name}</p>
+      <p className={s.tooltipVal}>{formatMoney(value)}</p>
+      <p className={s.tooltipPct}>{pct}% of total</p>
     </div>
   )
 }
 
 export default function ExpenseBreakdown({ invoices, properties, references }: Props) {
+  const s = useStyles()
   const curYear = new Date().getFullYear()
 
   const years = useMemo(() => {
@@ -89,7 +115,6 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
     return true
   }), [invoices, year, propId])
 
-  // Category rows: defined cats with data + Uncategorised
   const catRows = useMemo(() => {
     const rows: { id: string; label: string; invs: Cr9b5_pt_invoices[]; color: string }[] = expenseCats
       .map((c, idx) => ({
@@ -142,26 +167,24 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
   }
 
   return (
-    <div className="space-y-6">
+    <div className={s.root}>
       {/* Filters */}
-      <div className="flex gap-3 items-center flex-wrap">
-        <select value={year} onChange={e => setYear(Number(e.target.value))}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      <div className={s.filterRow}>
+        <Select value={String(year)} onChange={e => setYear(Number(e.target.value))}>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <select value={propId} onChange={e => setPropId(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </Select>
+        <Select value={propId} onChange={e => setPropId(e.target.value)}>
           <option value="">All properties</option>
           {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
-        </select>
+        </Select>
       </div>
 
       {filtered.length === 0 ? (
-        <div className="py-16 text-center text-gray-400 text-sm">No expense data for selected filters.</div>
+        <div className={s.empty}>No expense data for selected filters.</div>
       ) : (
         <>
           {/* Donut chart */}
-          <div className="bg-white border border-gray-200 rounded-xl p-4">
+          <div className={s.chartCard}>
             <ResponsiveContainer width="100%" height={300}>
               <PieChart>
                 <Pie
@@ -187,52 +210,44 @@ export default function ExpenseBreakdown({ invoices, properties, references }: P
           </div>
 
           {/* Monthly breakdown table */}
-          <div className="bg-white border border-gray-200 rounded-xl overflow-x-auto">
-            <table className="text-sm border-collapse w-full min-w-[900px]">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-                  <th className="sticky left-0 bg-gray-50 px-4 py-2.5 text-left min-w-[160px] z-10">Category</th>
-                  {MONTHS.map(mn => <th key={mn} className="px-2 py-2.5 text-right whitespace-nowrap">{mn}</th>)}
-                  <th className="px-4 py-2.5 text-right border-l border-gray-200 whitespace-nowrap">Total</th>
-                  <th className="px-4 py-2.5 text-right whitespace-nowrap">% of Total</th>
+          <div className={s.tableCard}>
+            <table className={s.table}>
+              <thead>
+                <tr>
+                  <th className={mergeClasses(s.th, s.thLabel)}>Category</th>
+                  {MONTHS.map(mn => <th key={mn} className={s.th}>{mn}</th>)}
+                  <th className={mergeClasses(s.th, s.thTotal)}>Total</th>
+                  <th className={s.th}>% of Total</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {catRows.map(row => {
                   const rowTotal = row.invs.reduce((s, i) => s + (i.cr9b5_baseamount ?? 0), 0)
                   return (
-                    <tr key={row.id} className="hover:bg-gray-50">
-                      <td className="sticky left-0 bg-white px-4 py-2 whitespace-nowrap z-10">
-                        <span className="inline-block w-2.5 h-2.5 rounded-full mr-2" style={{ background: row.color }} />
-                        <span className="text-gray-800 font-medium">{row.label}</span>
+                    <tr key={row.id}>
+                      <td className={s.tdLabel}>
+                        <span className={s.dot} style={{ backgroundColor: row.color }} />
+                        <span className={s.catName}>{row.label}</span>
                       </td>
                       {MONTHS.map((_, m) => (
-                        <td key={m} className="px-2 py-2 text-right text-xs text-gray-600 whitespace-nowrap tabular-nums">
-                          {fmtCell(monthTotal(row.invs, m))}
-                        </td>
+                        <td key={m} className={s.td}>{fmtCell(monthTotal(row.invs, m))}</td>
                       ))}
-                      <td className="px-4 py-2 text-right text-xs font-semibold text-gray-900 whitespace-nowrap tabular-nums border-l border-gray-200">
-                        {fmtWhole(rowTotal)}
-                      </td>
-                      <td className="px-4 py-2 text-right text-xs text-gray-600 whitespace-nowrap tabular-nums">
-                        {fmtPct(rowTotal)}
-                      </td>
+                      <td className={mergeClasses(s.td, s.tdTotal)}>{fmtWhole(rowTotal)}</td>
+                      <td className={s.td}>{fmtPct(rowTotal)}</td>
                     </tr>
                   )
                 })}
               </tbody>
-              <tfoot className="bg-gray-50 border-t border-gray-300">
-                <tr>
-                  <td className="sticky left-0 bg-gray-50 px-4 py-2.5 text-sm font-bold text-gray-900 z-10">TOTAL</td>
+              <tfoot>
+                <tr className={s.tfootRow}>
+                  <td className={s.tfootLabel}>TOTAL</td>
                   {MONTHS.map((_, m) => (
-                    <td key={m} className="px-2 py-2.5 text-right text-xs font-bold text-gray-900 whitespace-nowrap tabular-nums">
+                    <td key={m} className={s.tfootCell}>
                       {fmtCell(filtered.filter(i => i.cr9b5_date && new Date(i.cr9b5_date).getMonth() === m).reduce((s, i) => s + (i.cr9b5_baseamount ?? 0), 0))}
                     </td>
                   ))}
-                  <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-900 whitespace-nowrap tabular-nums border-l border-gray-200">
-                    {fmtWhole(totalExpenses)}
-                  </td>
-                  <td className="px-4 py-2.5 text-right text-xs font-bold text-gray-500 whitespace-nowrap">100%</td>
+                  <td className={mergeClasses(s.tfootCell, s.tdTotal)}>{fmtWhole(totalExpenses)}</td>
+                  <td className={s.tfootCell} style={{ color: tokens.colorNeutralForeground4 }}>100%</td>
                 </tr>
               </tfoot>
             </table>

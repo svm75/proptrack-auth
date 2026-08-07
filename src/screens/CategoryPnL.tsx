@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
+import { makeStyles, tokens, mergeClasses, Select, Button } from '@fluentui/react-components'
 import type { Cr9b5_pt_invoices }   from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import type { Cr9b5_pt_contacts }   from '../generated/models/Cr9b5_pt_contactsModel'
-import { fmtEur } from '../utils/formatters'
+import { formatMoney } from '@/domain/money'
 
 const TYPE_INCOME  = 233100001   // outgoing invoice = income
 const TYPE_EXPENSE = 233100000   // incoming invoice = expense
@@ -34,7 +35,7 @@ function sumNet(invs: Cr9b5_pt_invoices[], month: number | null): number {
 }
 
 function fmtCell(n: number): string {
-  return n === 0 ? '—' : fmtEur(Math.round(n * 100) / 100)
+  return n === 0 ? '—' : formatMoney(Math.round(n * 100) / 100)
 }
 
 function fmtDate(iso: string | undefined): string {
@@ -49,7 +50,52 @@ interface Props {
   contacts:   Cr9b5_pt_contacts[]
 }
 
+const useStyles = makeStyles({
+  root: { display: 'flex', flexDirection: 'column', gap: '16px' },
+  filterRow: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' },
+  tableWrap: { overflowX: 'auto', borderRadius: tokens.borderRadiusLarge, border: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground1 },
+  table: { fontSize: '14px', borderCollapse: 'collapse', width: '100%' },
+  theadRow: { backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  thLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '8px 12px', textAlign: 'left', fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground3, minWidth: '240px', zIndex: 1 },
+  th: { padding: '8px', textAlign: 'center', fontSize: '12px', fontWeight: 500, color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap' },
+  thTotal: { padding: '8px 12px', textAlign: 'center', fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground2, borderLeft: `1px solid ${tokens.colorNeutralStroke2}`, whiteSpace: 'nowrap' },
+  sectionHeader: { borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  sectionHeaderCell: { position: 'sticky', left: 0, padding: '8px 12px', fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', zIndex: 1 },
+  incomeBg: { backgroundColor: tokens.colorPaletteGreenBackground1, color: tokens.colorPaletteGreenForeground1 },
+  expenseBg: { backgroundColor: tokens.colorPaletteRedBackground1, color: tokens.colorPaletteRedForeground1 },
+  spacerRow: { backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  spacerCell: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '2px', zIndex: 1 },
+  totalRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke1}`, backgroundColor: tokens.colorNeutralBackground2 },
+  totalLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '6px 12px', fontSize: '14px', fontWeight: 700, color: tokens.colorNeutralForeground1, zIndex: 1, whiteSpace: 'nowrap' },
+  totalCell: { padding: '6px 8px', textAlign: 'right', fontSize: '12px', fontWeight: 700, color: tokens.colorNeutralForeground1, whiteSpace: 'nowrap' },
+  totalCellEnd: { padding: '6px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 700, color: tokens.colorNeutralForeground1, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  catRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, cursor: 'pointer' },
+  catLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground1, padding: '6px 12px 6px 24px', fontSize: '14px', fontWeight: 600, color: tokens.colorNeutralForeground1, zIndex: 1, whiteSpace: 'nowrap' },
+  caret: { marginRight: '6px', color: tokens.colorNeutralForeground4, fontSize: '12px' },
+  cellNum: { padding: '6px 8px', textAlign: 'right', fontSize: '12px', color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap' },
+  cellTotal: { padding: '6px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground1, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  contactRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, cursor: 'pointer', backgroundColor: tokens.colorNeutralBackground2 },
+  contactLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '6px 12px 6px 40px', zIndex: 1, whiteSpace: 'nowrap' },
+  contactName: { fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground2 },
+  contactCell: { padding: '6px 8px', textAlign: 'right', fontSize: '12px', color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap' },
+  contactCellTotal: { padding: '6px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground2, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  invRow: { borderBottom: `1px solid ${tokens.colorNeutralStroke1}`, backgroundColor: tokens.colorBrandBackground2 },
+  invLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorBrandBackground2, padding: '4px 12px 4px 64px', zIndex: 1, whiteSpace: 'nowrap' },
+  invId: { fontSize: '12px', fontWeight: 500, color: tokens.colorNeutralForeground2 },
+  invDate: { fontSize: '12px', color: tokens.colorNeutralForeground4, marginLeft: '8px' },
+  invCell: { padding: '4px 8px', textAlign: 'right', fontSize: '12px', color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap' },
+  invCellTotal: { padding: '4px 12px', textAlign: 'right', fontSize: '12px', color: tokens.colorNeutralForeground3, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  netProfitRow: { backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  netProfitLabel: { position: 'sticky', left: 0, backgroundColor: tokens.colorNeutralBackground2, padding: '8px 12px', fontSize: '14px', fontWeight: 700, color: tokens.colorNeutralForeground1, zIndex: 1, whiteSpace: 'nowrap' },
+  netProfitCell: { padding: '8px 8px', textAlign: 'right', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap' },
+  netProfitCellEnd: { padding: '8px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
+  pos: { color: tokens.colorPaletteGreenForeground1 },
+  neg: { color: tokens.colorPaletteRedForeground1 },
+  expandBtn: { color: '#0F766E', fontWeight: 500 },
+})
+
 export default function CategoryPnL({ invoices, properties, references, contacts }: Props) {
+  const s = useStyles()
   const curYear = new Date().getFullYear()
 
   const years = useMemo(() => {
@@ -106,34 +152,28 @@ export default function CategoryPnL({ invoices, properties, references, contacts
 
   function renderSectionHeader(label: string, cls: string) {
     return (
-      <tr className={`${cls} border-b`}>
-        <td className={`sticky left-0 ${cls} px-3 py-2 text-xs font-bold uppercase tracking-widest z-10`} colSpan={15}>
-          {label}
-        </td>
+      <tr key={label} className={s.sectionHeader}>
+        <td className={mergeClasses(s.sectionHeaderCell, cls)} colSpan={15}>{label}</td>
       </tr>
     )
   }
 
-  function renderSpacer() {
+  function renderSpacer(key: string) {
     return (
-      <tr className="bg-gray-100 border-b border-gray-200">
-        <td className="sticky left-0 bg-gray-100 py-0.5 z-10" colSpan={15} />
+      <tr key={key} className={s.spacerRow}>
+        <td className={s.spacerCell} colSpan={15} />
       </tr>
     )
   }
 
   function renderTotalRow(label: string, invs: Cr9b5_pt_invoices[]) {
     return (
-      <tr className="border-b border-gray-300 bg-gray-50">
-        <td className="sticky left-0 bg-gray-50 px-3 py-1.5 text-sm font-bold text-gray-900 z-10 whitespace-nowrap">{label}</td>
+      <tr key={label} className={s.totalRow}>
+        <td className={s.totalLabel}>{label}</td>
         {MONTHS.map((_, m) => (
-          <td key={m} className="px-2 py-1.5 text-right text-xs font-bold text-gray-800 whitespace-nowrap">
-            {fmtCell(sumNet(invs, m))}
-          </td>
+          <td key={m} className={s.totalCell}>{fmtCell(sumNet(invs, m))}</td>
         ))}
-        <td className="px-3 py-1.5 text-right text-xs font-bold text-gray-900 whitespace-nowrap border-l border-gray-200">
-          {fmtCell(sumNet(invs, null))}
-        </td>
+        <td className={s.totalCellEnd}>{fmtCell(sumNet(invs, null))}</td>
       </tr>
     )
   }
@@ -154,7 +194,6 @@ export default function CategoryPnL({ invoices, properties, references, contacts
       const catKey   = `${prefix}-${row.id}`
       const isCatOpen = expanded.has(catKey)
 
-      // Group invoices by contact name for second-level drill-down
       const contactGroups: { contactKey: string; contactName: string; invs: Cr9b5_pt_invoices[] }[] = []
       const seen = new Map<string, Cr9b5_pt_invoices[]>()
       row.invs.forEach(inv => {
@@ -167,40 +206,31 @@ export default function CategoryPnL({ invoices, properties, references, contacts
       contactGroups.sort((a, b) => a.contactName.localeCompare(b.contactName))
 
       return (
-        <>
-          <tr key={catKey} className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer" onClick={() => toggleExpand(catKey)}>
-            <td className="sticky left-0 bg-white px-3 py-1.5 text-sm font-semibold text-gray-800 pl-6 z-10 whitespace-nowrap">
-              <span className="mr-1.5 text-gray-400 text-xs">{isCatOpen ? '▾' : '▸'}</span>
+        <Fragment key={catKey}>
+          <tr className={s.catRow} onClick={() => toggleExpand(catKey)}>
+            <td className={s.catLabel}>
+              <span className={s.caret}>{isCatOpen ? '▾' : '▸'}</span>
               {row.label}
             </td>
             {MONTHS.map((_, m) => (
-              <td key={m} className="px-2 py-1.5 text-right text-xs text-gray-700 whitespace-nowrap">
-                {fmtCell(sumNet(row.invs, m))}
-              </td>
+              <td key={m} className={s.cellNum}>{fmtCell(sumNet(row.invs, m))}</td>
             ))}
-            <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-800 whitespace-nowrap border-l border-gray-200">
-              {fmtCell(sumNet(row.invs, null))}
-            </td>
+            <td className={s.cellTotal}>{fmtCell(sumNet(row.invs, null))}</td>
           </tr>
 
           {isCatOpen && contactGroups.map(cg => {
             const isContactOpen = expanded.has(cg.contactKey)
             return (
-              <>
-                <tr key={cg.contactKey} className="border-b border-gray-100 hover:bg-indigo-50/40 cursor-pointer bg-gray-50/60"
-                  onClick={() => toggleExpand(cg.contactKey)}>
-                  <td className="sticky left-0 bg-gray-50/60 px-3 py-1.5 pl-10 z-10 whitespace-nowrap">
-                    <span className="mr-1.5 text-gray-400 text-xs">{isContactOpen ? '▾' : '▸'}</span>
-                    <span className="text-xs font-semibold text-gray-700">{cg.contactName}</span>
+              <Fragment key={cg.contactKey}>
+                <tr className={s.contactRow} onClick={() => toggleExpand(cg.contactKey)}>
+                  <td className={s.contactLabel}>
+                    <span className={s.caret}>{isContactOpen ? '▾' : '▸'}</span>
+                    <span className={s.contactName}>{cg.contactName}</span>
                   </td>
                   {MONTHS.map((_, m) => (
-                    <td key={m} className="px-2 py-1.5 text-right text-xs text-gray-600 whitespace-nowrap">
-                      {fmtCell(sumNet(cg.invs, m))}
-                    </td>
+                    <td key={m} className={s.contactCell}>{fmtCell(sumNet(cg.invs, m))}</td>
                   ))}
-                  <td className="px-3 py-1.5 text-right text-xs font-semibold text-gray-700 whitespace-nowrap border-l border-gray-200">
-                    {fmtCell(sumNet(cg.invs, null))}
-                  </td>
+                  <td className={s.contactCellTotal}>{fmtCell(sumNet(cg.invs, null))}</td>
                 </tr>
 
                 {isContactOpen && cg.invs
@@ -209,30 +239,28 @@ export default function CategoryPnL({ invoices, properties, references, contacts
                   .map(inv => {
                     const m = invMonth(inv)
                     return (
-                      <tr key={inv.cr9b5_pt_invoiceid} className="border-b border-gray-50 bg-indigo-50/20">
-                        <td className="sticky left-0 bg-indigo-50/20 px-3 py-1 pl-16 z-10 whitespace-nowrap">
-                          <span className="text-xs font-medium text-gray-700">{inv.cr9b5_internalid}</span>
-                          <span className="text-xs text-gray-400 ml-2">{fmtDate(inv.cr9b5_date)}</span>
+                      <tr key={inv.cr9b5_pt_invoiceid} className={s.invRow}>
+                        <td className={s.invLabel}>
+                          <span className={s.invId}>{inv.cr9b5_internalid}</span>
+                          <span className={s.invDate}>{fmtDate(inv.cr9b5_date)}</span>
                         </td>
                         {MONTHS.map((_, mi) => (
-                          <td key={mi} className="px-2 py-1 text-right text-xs text-gray-500 whitespace-nowrap">
+                          <td key={mi} className={s.invCell}>
                             {mi === m ? (
-                              <span title={`Net: ${fmtEur(inv.cr9b5_baseamount??0)} · VAT: ${fmtEur(inv.cr9b5_taxamount??0)} · Gross: ${fmtEur(inv.cr9b5_totalgross??0)}`}>
+                              <span title={`Net: ${formatMoney(inv.cr9b5_baseamount??0)} · VAT: ${formatMoney(inv.cr9b5_taxamount??0)} · Gross: ${formatMoney(inv.cr9b5_totalgross??0)}`}>
                                 {fmtCell(inv.cr9b5_baseamount ?? 0)}
                               </span>
                             ) : null}
                           </td>
                         ))}
-                        <td className="px-3 py-1 text-right text-xs text-gray-500 whitespace-nowrap border-l border-gray-200">
-                          {fmtCell(inv.cr9b5_baseamount ?? 0)}
-                        </td>
+                        <td className={s.invCellTotal}>{fmtCell(inv.cr9b5_baseamount ?? 0)}</td>
                       </tr>
                     )
                   })}
-              </>
+              </Fragment>
             )
           })}
-        </>
+        </Fragment>
       )
     })
   }
@@ -241,59 +269,51 @@ export default function CategoryPnL({ invoices, properties, references, contacts
   const netProfitTotal  = sumNet(incomeInvs, null) - sumNet(expenseInvs, null)
 
   return (
-    <div className="space-y-4">
+    <div className={s.root}>
       {/* Filters */}
-      <div className="flex gap-3 items-center flex-wrap">
-        <select value={year} onChange={e => setYear(Number(e.target.value))}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      <div className={s.filterRow}>
+        <Select value={String(year)} onChange={e => setYear(Number(e.target.value))}>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <select value={propId} onChange={e => setPropId(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </Select>
+        <Select value={propId} onChange={e => setPropId(e.target.value)}>
           <option value="">All properties</option>
           {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
-        </select>
+        </Select>
       </div>
 
       {/* Table */}
-      <div className="overflow-x-auto rounded-xl border border-gray-200 bg-white">
-        <table className="text-sm border-collapse w-full">
+      <div className={s.tableWrap}>
+        <table className={s.table}>
           <thead>
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <th className="sticky left-0 bg-gray-50 px-3 py-2 text-left text-xs font-semibold text-gray-500 min-w-[240px] z-10">
-                <button onClick={toggleAll} className="text-xs text-teal-600 hover:text-teal-800 font-medium">
+            <tr className={s.theadRow}>
+              <th className={s.thLabel}>
+                <Button appearance="transparent" size="small" onClick={toggleAll} className={s.expandBtn}>
                   {allExpanded ? '− Collapse All' : '+ Expand All'}
-                </button>
+                </Button>
               </th>
-              {MONTHS.map(mn => (
-                <th key={mn} className="px-2 py-2 text-center text-xs font-medium text-gray-500 whitespace-nowrap">{mn}</th>
-              ))}
-              <th className="px-3 py-2 text-center text-xs font-semibold text-gray-600 border-l border-gray-200 whitespace-nowrap">
-                {year} Total
-              </th>
+              {MONTHS.map(mn => <th key={mn} className={s.th}>{mn}</th>)}
+              <th className={s.thTotal}>{year} Total</th>
             </tr>
           </thead>
           <tbody>
-            {renderSectionHeader('INCOME', 'bg-green-50 text-green-800')}
+            {renderSectionHeader('INCOME', s.incomeBg)}
             {renderCategories(incomeInvs, incomeCats, 'inc')}
             {renderTotalRow('TOTAL INCOME', incomeInvs)}
-            {renderSpacer()}
+            {renderSpacer('spacer-1')}
 
-            {renderSectionHeader('EXPENSES', 'bg-red-50 text-red-800')}
+            {renderSectionHeader('EXPENSES', s.expenseBg)}
             {renderCategories(expenseInvs, expenseCats, 'exp')}
             {renderTotalRow('TOTAL EXPENSES', expenseInvs)}
-            {renderSpacer()}
+            {renderSpacer('spacer-2')}
 
-            <tr className="bg-gray-50 border-b border-gray-200">
-              <td className="sticky left-0 bg-gray-50 px-3 py-2 text-sm font-bold text-gray-900 z-10 whitespace-nowrap">
-                NET PROFIT
-              </td>
+            <tr className={s.netProfitRow}>
+              <td className={s.netProfitLabel}>NET PROFIT</td>
               {netProfitMonths.map((v, m) => (
-                <td key={m} className={['px-2 py-2 text-right text-xs font-bold whitespace-nowrap', v >= 0 ? 'text-green-700' : 'text-red-600'].join(' ')}>
+                <td key={m} className={mergeClasses(s.netProfitCell, v >= 0 ? s.pos : s.neg)}>
                   {fmtCell(Math.round(v * 100) / 100)}
                 </td>
               ))}
-              <td className={['px-3 py-2 text-right text-xs font-bold whitespace-nowrap border-l border-gray-200', netProfitTotal >= 0 ? 'text-green-700' : 'text-red-600'].join(' ')}>
+              <td className={mergeClasses(s.netProfitCellEnd, netProfitTotal >= 0 ? s.pos : s.neg)}>
                 {fmtCell(Math.round(netProfitTotal * 100) / 100)}
               </td>
             </tr>

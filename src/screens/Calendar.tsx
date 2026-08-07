@@ -3,6 +3,7 @@ import { Calendar as BigCalendar, dateFnsLocalizer } from 'react-big-calendar'
 import { format, parse, startOfWeek, getDay, addDays } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
+import { makeStyles, tokens, mergeClasses, Select, Text } from '@fluentui/react-components'
 import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
@@ -49,12 +50,43 @@ function blendHex(colors: string[]): string {
   return `#${a.r.toString(16).padStart(2,'0')}${a.g.toString(16).padStart(2,'0')}${a.b.toString(16).padStart(2,'0')}`
 }
 
+// ---------- Styles ----------
+
+const useStyles = makeStyles({
+  root: { display: 'flex', flexDirection: 'column', height: '100%' },
+  toolbar: { padding: '12px 24px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground1, display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexShrink: 0 },
+  toolbarLeft: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' },
+  viewToggle: { display: 'flex', backgroundColor: tokens.colorNeutralBackground3, borderRadius: tokens.borderRadiusMedium, padding: '2px' },
+  viewBtn: { padding: '4px 12px', borderRadius: tokens.borderRadiusSmall, fontSize: '12px', fontWeight: 500, border: 'none', cursor: 'pointer', backgroundColor: 'transparent', color: tokens.colorNeutralForeground3 },
+  viewBtnActive: { backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorBrandForeground1, boxShadow: tokens.shadow2 },
+  legend: { display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' },
+  legendItem: { display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: tokens.colorNeutralForeground3 },
+  legendDot: { width: '10px', height: '10px', borderRadius: tokens.borderRadiusCircular, flexShrink: 0 },
+  navGroup: { display: 'flex', alignItems: 'center', gap: '8px' },
+  navBtn: { border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusMedium, padding: '6px 12px', fontSize: '14px', cursor: 'pointer', backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground2 },
+  navLabel: { fontSize: '14px', fontWeight: 600, color: tokens.colorNeutralForeground2, minWidth: '90px', textAlign: 'center' },
+  loading: { padding: '24px', color: tokens.colorNeutralForeground4 },
+  body: { flex: 1, minHeight: 0, padding: '16px 24px', overflow: 'auto' },
+  quarterGrid: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px', minHeight: '480px' },
+  quarterCol: { display: 'flex', flexDirection: 'column' },
+  quarterTitle: { textAlign: 'center', fontWeight: 600, color: tokens.colorNeutralForeground2, marginBottom: '8px', fontSize: '14px' },
+  annualGrid: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px' },
+  miniMonth: { backgroundColor: tokens.colorNeutralBackground1, borderRadius: tokens.borderRadiusMedium, border: `1px solid ${tokens.colorNeutralStroke2}`, padding: '8px' },
+  miniMonthTitle: { fontSize: '12px', fontWeight: 600, color: tokens.colorNeutralForeground2, textAlign: 'center', marginBottom: '6px' },
+  miniGrid: { display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '1px' },
+  miniDow: { fontSize: '8px', textAlign: 'center', color: tokens.colorNeutralForeground4, fontWeight: 500, paddingBottom: '1px' },
+  miniCellEmpty: { width: '24px', height: '24px' },
+  miniCell: { width: '24px', height: '24px', borderRadius: '2px', fontSize: '9px', display: 'flex', alignItems: 'center', justifyContent: 'center' },
+  miniCellClickable: { cursor: 'pointer' },
+})
+
 // ---------- Mini calendar for annual view ----------
 
 function MiniMonth({ year, month, events, onSelectEvent }: {
   year: number; month: number; events: CalEvent[]
   onSelectEvent: (inv: Cr9b5_pt_invoices) => void
 }) {
+  const s = useStyles()
   const firstDow = (new Date(year, month, 1).getDay() + 6) % 7
   const dim = new Date(year, month + 1, 0).getDate()
   const cells: (number | null)[] = Array(firstDow).fill(null)
@@ -68,22 +100,22 @@ function MiniMonth({ year, month, events, onSelectEvent }: {
   }
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 p-2">
-      <div className="text-xs font-semibold text-gray-700 text-center mb-1.5">{MONTH_SHORT[month]}</div>
-      <div className="grid grid-cols-7 gap-px">
+    <div className={s.miniMonth}>
+      <div className={s.miniMonthTitle}>{MONTH_SHORT[month]}</div>
+      <div className={s.miniGrid}>
         {DOW_LABELS.map((d, i) => (
-          <div key={i} className="text-[8px] text-center text-gray-400 font-medium pb-px">{d}</div>
+          <div key={i} className={s.miniDow}>{d}</div>
         ))}
         {cells.map((day, i) => {
-          if (!day) return <div key={i} className="w-6 h-6" />
+          if (!day) return <div key={i} className={s.miniCellEmpty} />
           const evts = dayEvts(day)
           const colors = [...new Set(evts.map(e => e.color))]
           const bg = colors.length ? blendHex(colors) : undefined
           return (
             <div
               key={i}
-              className={['w-6 h-6 rounded-sm text-[9px] flex items-center justify-center', evts.length ? 'cursor-pointer hover:opacity-80' : ''].join(' ')}
-              style={{ backgroundColor: bg, color: bg ? 'white' : '#9ca3af' }}
+              className={mergeClasses(s.miniCell, evts.length > 0 && s.miniCellClickable)}
+              style={{ backgroundColor: bg, color: bg ? 'white' : tokens.colorNeutralForeground4 }}
               onClick={() => evts.length === 1 ? onSelectEvent(evts[0].resource) : undefined}
               title={evts.map(e => e.title).join(', ')}
             >
@@ -124,6 +156,7 @@ type ViewMode = 'monthly' | 'quarterly' | 'annual'
 // ---------- Main component ----------
 
 export default function CalendarScreen() {
+  const s = useStyles()
   const [invoices,   setInvoices]   = useState<Cr9b5_pt_invoices[]>([])
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
@@ -188,32 +221,30 @@ export default function CalendarScreen() {
   })
 
   return (
-    <div className="flex flex-col h-full">
+    <div className={s.root}>
       {/* Toolbar */}
-      <div className="px-6 py-3 border-b border-gray-200 bg-white flex flex-wrap items-center justify-between gap-3 shrink-0">
-        <div className="flex items-center gap-3 flex-wrap">
+      <div className={s.toolbar}>
+        <div className={s.toolbarLeft}>
           {/* View toggle */}
-          <div className="flex bg-gray-100 rounded-lg p-0.5">
+          <div className={s.viewToggle}>
             {(['monthly', 'quarterly', 'annual'] as ViewMode[]).map(m => (
-              <button key={m} onClick={() => setViewMode(m)}
-                className={['px-3 py-1 rounded-md text-xs font-medium transition-colors', viewMode === m ? 'bg-white text-indigo-700 shadow-sm' : 'text-gray-500 hover:text-gray-700'].join(' ')}>
+              <button key={m} onClick={() => setViewMode(m)} className={mergeClasses(s.viewBtn, viewMode === m && s.viewBtnActive)}>
                 {m.charAt(0).toUpperCase() + m.slice(1)}
               </button>
             ))}
           </div>
 
           {/* Property filter */}
-          <select value={filterPropId} onChange={e => setFilterPropId(e.target.value)}
-            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+          <Select value={filterPropId} onChange={e => setFilterPropId(e.target.value)}>
             <option value="">All properties</option>
             {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
-          </select>
+          </Select>
 
           {/* Legend */}
-          <div className="flex items-center gap-3 flex-wrap">
+          <div className={s.legend}>
             {visibleProps.map(p => (
-              <span key={p.cr9b5_pt_propertyid} className="flex items-center gap-1.5 text-xs text-gray-600">
-                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: colorMap[p.cr9b5_pt_propertyid] }} />
+              <span key={p.cr9b5_pt_propertyid} className={s.legendItem}>
+                <span className={s.legendDot} style={{ backgroundColor: colorMap[p.cr9b5_pt_propertyid] }} />
                 {p.cr9b5_name}
               </span>
             ))}
@@ -222,22 +253,20 @@ export default function CalendarScreen() {
 
         {/* Quarterly / Annual navigation */}
         {viewMode !== 'monthly' && (
-          <div className="flex items-center gap-2">
-            <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - (viewMode === 'quarterly' ? 3 : 12), 1))}
-              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm hover:bg-gray-50">‹</button>
-            <span className="text-sm font-semibold text-gray-700 min-w-[90px] text-center">
+          <div className={s.navGroup}>
+            <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() - (viewMode === 'quarterly' ? 3 : 12), 1))} className={s.navBtn}>‹</button>
+            <span className={s.navLabel}>
               {viewMode === 'quarterly' ? `Q${quarter + 1} ${year}` : year}
             </span>
-            <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + (viewMode === 'quarterly' ? 3 : 12), 1))}
-              className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm hover:bg-gray-50">›</button>
+            <button onClick={() => setCurrentDate(d => new Date(d.getFullYear(), d.getMonth() + (viewMode === 'quarterly' ? 3 : 12), 1))} className={s.navBtn}>›</button>
           </div>
         )}
       </div>
 
       {loading ? (
-        <p className="p-6 text-gray-400">Loading…</p>
+        <Text className={s.loading}>Loading…</Text>
       ) : (
-        <div className="flex-1 min-h-0 px-6 py-4 overflow-auto">
+        <div className={s.body}>
           <style>{CAL_CSS}</style>
 
           {viewMode === 'monthly' && (
@@ -256,10 +285,10 @@ export default function CalendarScreen() {
           )}
 
           {viewMode === 'quarterly' && (
-            <div className="grid grid-cols-3 gap-5" style={{ minHeight: 480 }}>
+            <div className={s.quarterGrid}>
               {[0, 1, 2].map(offset => (
-                <div key={offset} className="flex flex-col">
-                  <div className="text-center font-semibold text-gray-700 mb-2 text-sm">
+                <div key={offset} className={s.quarterCol}>
+                  <div className={s.quarterTitle}>
                     {MONTH_FULL[quarterStart + offset]} {year}
                   </div>
                   <BigCalendar
@@ -281,7 +310,7 @@ export default function CalendarScreen() {
           )}
 
           {viewMode === 'annual' && (
-            <div className="grid grid-cols-4 gap-4">
+            <div className={s.annualGrid}>
               {Array.from({ length: 12 }, (_, m) => (
                 <MiniMonth key={m} year={year} month={m} events={events}
                   onSelectEvent={inv => setViewInvoice(inv)} />

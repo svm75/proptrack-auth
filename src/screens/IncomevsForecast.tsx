@@ -3,6 +3,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
+import { makeStyles, tokens, mergeClasses, Select, Text } from '@fluentui/react-components'
 import { Cr9b5_pt_forecastflowsService }   from '../generated/services/Cr9b5_pt_forecastflowsService'
 import { Cr9b5_forecastpropertiesService }  from '../generated/services/Cr9b5_forecastpropertiesService'
 import type { Cr9b5_pt_forecastflows }      from '../generated/models/Cr9b5_pt_forecastflowsModel'
@@ -10,7 +11,7 @@ import type { Cr9b5_forecastproperties }    from '../generated/models/Cr9b5_fore
 import type { Cr9b5_pt_invoices }           from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties }         from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references }         from '../generated/models/Cr9b5_pt_referencesModel'
-import { fmtEur } from '../utils/formatters'
+import { formatMoney } from '@/domain/money'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const INV_INCOME       = 233100001   // invoice type: outgoing = income
@@ -116,9 +117,36 @@ interface LogicalFlow {
   allProperties:      boolean
 }
 
+// ── Styles ────────────────────────────────────────────────────────────────────
+
+const useStyles = makeStyles({
+  root: { display: 'flex', flexDirection: 'column', gap: '24px' },
+  filterRow: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' },
+  loadingHint: { fontSize: '12px', color: tokens.colorNeutralForeground4 },
+  tableCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, overflow: 'hidden' },
+  table: { width: '100%', fontSize: '14px', borderCollapse: 'collapse' },
+  th: { padding: '10px 16px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground4, textTransform: 'uppercase', letterSpacing: '0.04em', backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left' },
+  thRight: { textAlign: 'right' },
+  td: { padding: '10px 16px', borderBottom: `1px solid ${tokens.colorNeutralStroke1}` },
+  tdLabel: { fontWeight: 500, color: tokens.colorNeutralForeground2 },
+  tdRight: { textAlign: 'right', color: tokens.colorNeutralForeground3, fontVariantNumeric: 'tabular-nums' },
+  tdRightBold: { textAlign: 'right', color: tokens.colorNeutralForeground1, fontWeight: 500, fontVariantNumeric: 'tabular-nums' },
+  faded: { color: tokens.colorNeutralForeground5 },
+  empty: { padding: '32px 16px', textAlign: 'center', color: tokens.colorNeutralForeground4, fontSize: '14px' },
+  tfootRow: { backgroundColor: tokens.colorNeutralBackground2 },
+  tfootCell: { padding: '10px 16px', fontSize: '14px', fontWeight: 700, color: tokens.colorNeutralForeground1, borderTop: `2px solid ${tokens.colorNeutralStroke1}` },
+  tfootCellRight: { textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
+  chartCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '16px' },
+  chartTitle: { fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground4, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '12px', display: 'block' },
+  pos: { color: tokens.colorPaletteGreenForeground1 },
+  neg: { color: tokens.colorPaletteRedForeground1 },
+  neutral: { color: tokens.colorNeutralForeground4 },
+})
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function IncomevsForecast({ invoices, properties, references }: Props) {
+  const s = useStyles()
   const curYear = new Date().getFullYear()
 
   const years = useMemo(() => {
@@ -296,14 +324,14 @@ export default function IncomevsForecast({ invoices, properties, references }: P
     Actual:   Math.round((actualMonthTotal.get(m) ?? 0) * 100) / 100,
   }))
 
-  function rowColor(forecast: number, actual: number): string {
-    if (forecast === 0) return 'text-gray-400'
-    return actual >= forecast ? 'text-green-700' : 'text-red-600'
+  function rowColorCls(forecast: number, actual: number): string {
+    if (forecast === 0) return s.neutral
+    return actual >= forecast ? s.pos : s.neg
   }
 
   function fmtVar(v: number): string {
     if (v === 0) return '—'
-    return (v > 0 ? '+' : '') + fmtEur(Math.round(v * 100) / 100)
+    return (v > 0 ? '+' : '') + formatMoney(Math.round(v * 100) / 100)
   }
 
   function fmtVarPct(actual: number, forecast: number): string {
@@ -313,72 +341,64 @@ export default function IncomevsForecast({ invoices, properties, references }: P
   }
 
   return (
-    <div className="space-y-6">
+    <div className={s.root}>
       {/* Filters */}
-      <div className="flex gap-3 items-center flex-wrap">
-        <select value={year} onChange={e => setYear(Number(e.target.value))}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+      <div className={s.filterRow}>
+        <Select value={String(year)} onChange={e => setYear(Number(e.target.value))}>
           {years.map(y => <option key={y} value={y}>{y}</option>)}
-        </select>
-        <select value={propId} onChange={e => setPropId(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500">
+        </Select>
+        <Select value={propId} onChange={e => setPropId(e.target.value)}>
           <option value="">All properties</option>
           {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
-        </select>
-        {fcLoading && <span className="text-xs text-gray-400">Loading forecast…</span>}
+        </Select>
+        {fcLoading && <span className={s.loadingHint}>Loading forecast…</span>}
       </div>
 
       {/* Comparison table */}
-      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-gray-50 border-b border-gray-200">
-            <tr className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
-              <th className="px-4 py-2.5 text-left">Category</th>
-              <th className="px-4 py-2.5 text-right">Forecast Net</th>
-              <th className="px-4 py-2.5 text-right">Actual Net</th>
-              <th className="px-4 py-2.5 text-right">Variance</th>
-              <th className="px-4 py-2.5 text-right">Variance %</th>
+      <div className={s.tableCard}>
+        <table className={s.table}>
+          <thead>
+            <tr>
+              <th className={s.th}>Category</th>
+              <th className={mergeClasses(s.th, s.thRight)}>Forecast Net</th>
+              <th className={mergeClasses(s.th, s.thRight)}>Actual Net</th>
+              <th className={mergeClasses(s.th, s.thRight)}>Variance</th>
+              <th className={mergeClasses(s.th, s.thRight)}>Variance %</th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-gray-100">
+          <tbody>
             {tableRows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-8 text-center text-gray-400 text-sm">
-                  No income data for selected filters.
-                </td>
+                <td colSpan={5} className={s.empty}>No income data for selected filters.</td>
               </tr>
             ) : tableRows.map(row => {
               const variance = row.actual - row.forecast
-              const cls = rowColor(row.forecast, row.actual)
+              const cls = rowColorCls(row.forecast, row.actual)
               return (
-                <tr key={row.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-2.5 font-medium text-gray-800">{row.label}</td>
-                  <td className="px-4 py-2.5 text-right text-gray-600 tabular-nums">
-                    {row.forecast > 0 ? fmtEur(row.forecast) : <span className="text-gray-300">—</span>}
+                <tr key={row.id}>
+                  <td className={mergeClasses(s.td, s.tdLabel)}>{row.label}</td>
+                  <td className={mergeClasses(s.td, s.tdRight)}>
+                    {row.forecast > 0 ? formatMoney(row.forecast) : <span className={s.faded}>—</span>}
                   </td>
-                  <td className="px-4 py-2.5 text-right text-gray-800 tabular-nums font-medium">
-                    {row.actual > 0 ? fmtEur(row.actual) : <span className="text-gray-300">—</span>}
+                  <td className={mergeClasses(s.td, s.tdRightBold)}>
+                    {row.actual > 0 ? formatMoney(row.actual) : <span className={s.faded}>—</span>}
                   </td>
-                  <td className={`px-4 py-2.5 text-right tabular-nums font-medium ${cls}`}>
-                    {fmtVar(variance)}
-                  </td>
-                  <td className={`px-4 py-2.5 text-right tabular-nums ${cls}`}>
-                    {fmtVarPct(row.actual, row.forecast)}
-                  </td>
+                  <td className={mergeClasses(s.td, s.tdRightBold, cls)}>{fmtVar(variance)}</td>
+                  <td className={mergeClasses(s.td, s.tdRight, cls)}>{fmtVarPct(row.actual, row.forecast)}</td>
                 </tr>
               )
             })}
           </tbody>
           {tableRows.length > 0 && (
-            <tfoot className="bg-gray-50 border-t border-gray-300">
-              <tr>
-                <td className="px-4 py-2.5 text-sm font-bold text-gray-900">TOTAL</td>
-                <td className="px-4 py-2.5 text-right font-bold text-gray-800 tabular-nums">{fmtEur(totalForecast)}</td>
-                <td className="px-4 py-2.5 text-right font-bold text-gray-900 tabular-nums">{fmtEur(totalActual)}</td>
-                <td className={`px-4 py-2.5 text-right font-bold tabular-nums ${totalVariance >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+            <tfoot>
+              <tr className={s.tfootRow}>
+                <td className={s.tfootCell}>TOTAL</td>
+                <td className={mergeClasses(s.tfootCell, s.tfootCellRight)}>{formatMoney(totalForecast)}</td>
+                <td className={mergeClasses(s.tfootCell, s.tfootCellRight)}>{formatMoney(totalActual)}</td>
+                <td className={mergeClasses(s.tfootCell, s.tfootCellRight, totalVariance >= 0 ? s.pos : s.neg)}>
                   {fmtVar(totalVariance)}
                 </td>
-                <td className={`px-4 py-2.5 text-right font-bold tabular-nums ${totalVariance >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                <td className={mergeClasses(s.tfootCell, s.tfootCellRight, totalVariance >= 0 ? s.pos : s.neg)}>
                   {fmtVarPct(totalActual, totalForecast)}
                 </td>
               </tr>
@@ -388,15 +408,15 @@ export default function IncomevsForecast({ invoices, properties, references }: P
       </div>
 
       {/* Monthly bar chart */}
-      <div className="bg-white border border-gray-200 rounded-xl p-4">
-        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Forecast vs Actual by Month</p>
+      <div className={s.chartCard}>
+        <Text className={s.chartTitle}>Forecast vs Actual by Month</Text>
         <ResponsiveContainer width="100%" height={260}>
           <BarChart data={barData} margin={{ top: 4, right: 8, left: 8, bottom: 0 }} barGap={3}>
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
             <XAxis dataKey="label" tick={{ fontSize: 11 }} />
             <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `€${Math.round(v / 1000)}k`} />
             <Tooltip
-              formatter={(v, name) => [fmtEur(Number(v)), name as string]}
+              formatter={(v, name) => [formatMoney(Number(v)), name as string]}
               contentStyle={{ fontSize: 12 }}
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
