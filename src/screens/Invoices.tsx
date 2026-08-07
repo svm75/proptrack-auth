@@ -31,9 +31,9 @@ const useStyles = makeStyles({
   segmentBtnActive: { backgroundColor: tokens.colorBrandBackground, color: 'white' },
   bulkBar: { display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '8px', backgroundColor: tokens.colorBrandBackground2, border: `1px solid ${tokens.colorBrandStroke2}`, borderRadius: tokens.borderRadiusMedium, padding: '8px 12px' },
   tableWrap: { flex: 1, overflow: 'auto' },
-  table: { width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '900px' },
-  th: { position: 'sticky', top: 0, backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left', padding: '10px 14px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground3, textTransform: 'uppercase' },
-  td: { padding: '10px 14px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
+  table: { width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '860px' },
+  th: { position: 'sticky', top: 0, backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left', padding: '10px 10px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground3, textTransform: 'uppercase' },
+  td: { padding: '8px 10px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
   summary: { padding: '10px 24px', borderTop: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2, display: 'flex', gap: '24px', fontSize: '14px', color: tokens.colorNeutralForeground2 },
 })
 

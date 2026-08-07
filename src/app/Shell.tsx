@@ -14,9 +14,9 @@ const useStyles = makeStyles({
   link: { color: '#B9D2CD', textDecoration: 'none', padding: '8px 11px', borderRadius: tokens.borderRadiusMedium, fontSize: '14px' },
   subLink: { color: '#9FC0BA', textDecoration: 'none', padding: '6px 11px 6px 22px', borderRadius: tokens.borderRadiusMedium, fontSize: '13px' },
   on: { backgroundColor: '#0F766E', color: '#fff', fontWeight: 600 },
-  main: { display: 'flex', flexDirection: 'column', backgroundColor: tokens.colorNeutralBackground2, minHeight: '100vh' },
+  main: { display: 'flex', flexDirection: 'column', backgroundColor: tokens.colorNeutralBackground2, minHeight: '100vh', minWidth: 0 },
   topbar: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px', padding: '10px 28px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground1 },
-  content: { padding: '24px 32px', maxWidth: '1690px', width: '100%' },
+  content: { padding: '20px 24px', maxWidth: '1690px', width: '100%', minWidth: 0, overflowX: 'auto' },
 })
 
 interface NavItem {
