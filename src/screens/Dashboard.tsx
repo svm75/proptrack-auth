@@ -8,10 +8,12 @@ import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoice
 import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
 import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
 import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
+import { Svm_pt_owneroccupanciesService } from '../generated/services/Svm_pt_owneroccupanciesService'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
+import type { Svm_pt_owneroccupancies } from '../generated/models/Svm_pt_owneroccupanciesModel'
 import CalendarScreen from './Calendar'
 import CategoryPnL from './CategoryPnL'
 import CategoryTrend from './CategoryTrend'
@@ -56,6 +58,32 @@ function daysElapsedInYear(year: number): number {
 }
 
 function fmtPct(n: number): string { return `${n.toFixed(1)} %` }
+
+// Nights blocked for owner use within [1 Jan, elapsed-end) of `year`, clipped
+// to the same window daysElapsedInYear() uses so incl./excl. occupancy share
+// one consistent denominator. propertyId === '' sums across all properties.
+function ownerNightsForPeriod(records: Svm_pt_owneroccupancies[], propertyId: string, year: number): number {
+  const now = new Date()
+  const yearStart = new Date(year, 0, 1)
+  const yearEndExclusive = year === now.getFullYear() ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : new Date(year + 1, 0, 1)
+  let total = 0
+  for (const r of records) {
+    const raw = r as unknown as Record<string, unknown>
+    const pid = (raw['_svm_pt_property_value'] as string) ?? ''
+    if (propertyId && pid !== propertyId) continue
+    if (!r.svm_pt_fromdate || !r.svm_pt_todate) continue
+    const from = new Date(r.svm_pt_fromdate) < yearStart ? yearStart : new Date(r.svm_pt_fromdate)
+    const to = new Date(r.svm_pt_todate) > yearEndExclusive ? yearEndExclusive : new Date(r.svm_pt_todate)
+    const nights = Math.round((to.getTime() - from.getTime()) / 86400000)
+    if (nights > 0) total += nights
+  }
+  return total
+}
+
+function exclOccupancyPct(totalGuestNights: number, availableNights: number, ownerNights: number): number | null {
+  const denom = availableNights - ownerNights
+  return denom > 0 ? (totalGuestNights / denom) * 100 : null
+}
 
 function getQuarter(inv: Cr9b5_pt_invoices): number {
   if (!inv.cr9b5_date) return 0
@@ -281,7 +309,7 @@ function PropSelect({ value, properties, onChange }: { value: string; properties
 // OVERVIEW TAB
 // ============================================================
 
-function DashboardOverview({ invoices, properties }: SharedProps) {
+function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: Svm_pt_owneroccupancies[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear,   setFilterYear]   = useState<number|'all'>(currentYear)
@@ -320,6 +348,8 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
   const propCount      = filterPropId ? 1 : properties.length
   const availableNights = filterYear !== 'all' && propCount > 0 ? daysElapsedInYear(filterYear as number) * propCount : null
   const occupancyPct   = availableNights ? (totalNights / availableNights) * 100 : null
+  const ownerNights    = filterYear !== 'all' ? ownerNightsForPeriod(ownerOccupancy, filterPropId, filterYear as number) : 0
+  const occupancyExclPct = availableNights !== null ? exclOccupancyPct(totalNights, availableNights, ownerNights) : null
 
   const monthlyData = useMemo(() => MONTH_LABELS.map((month, idx) => {
     const inv = filtered.filter(i => i.cr9b5_date && new Date(i.cr9b5_date).getMonth() === idx)
@@ -357,6 +387,7 @@ function DashboardOverview({ invoices, properties }: SharedProps) {
           <KpiCard label="Net Profit" value={formatMoney(netProfitGross)} value2={formatMoney(netProfitNet)}
             sub={formatMoney(vatComponent)} subLabel="VAT total:" accent={netProfitGross>=0?'blue':'red'} />
           <KpiCard label="Occupancy" value={occupancyPct!==null?fmtPct(occupancyPct):'—'}
+            value2={occupancyExclPct!==null?fmtPct(occupancyExclPct):undefined} value2Label="Excl. Owner"
             sub={occupancyPct!==null?`${totalNights} / ${availableNights} nights`:filterYear==='all'?'Select a year':'No properties'} accent="blue" />
         </div>
       </div>
@@ -420,7 +451,7 @@ function StatRow({ label, value, sub, accent }: { label:string; value:string; su
   )
 }
 
-function DashboardComparison({ invoices, properties }: SharedProps) {
+function DashboardComparison({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: Svm_pt_owneroccupancies[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear, setFilterYear] = useState<number|'all'>(currentYear)
@@ -444,16 +475,18 @@ function DashboardComparison({ invoices, properties }: SharedProps) {
     const nightsByMonth = Array(12).fill(0)
     out.forEach(inv => { if (inv.cr9b5_checkin) nightsByMonth[new Date(inv.cr9b5_checkin).getMonth()] += (inv.cr9b5_nights??0) })
     const maxN = Math.max(...nightsByMonth)
+    const ownerNights = filterYear !== 'all' ? ownerNightsForPeriod(ownerOccupancy, prop.cr9b5_pt_propertyid, filterYear as number) : 0
     return {
       prop, color: PROPERTY_COLORS[idx % PROPERTY_COLORS.length],
       income, expenses, profit: income-expenses,
       occupancyPct: avail>0 ? (nights/avail)*100 : 0,
+      occupancyExclPct: exclOccupancyPct(nights, avail, ownerNights),
       avgNightlyRate: nights>0 ? income/nights : 0,
       avgStayLength: out.length>0 ? nights/out.length : 0,
       busiestMonth: maxN>0 ? MONTH_FULL[nightsByMonth.indexOf(maxN)] : '—',
       nights, stayCount: out.length,
     }
-  }), [invoices, properties, filterYear])
+  }), [invoices, properties, filterYear, ownerOccupancy])
 
   return (
     <div className={s.stack6}>
@@ -474,6 +507,7 @@ function DashboardComparison({ invoices, properties }: SharedProps) {
                 <StatRow label="Expenses (gross)" value={formatMoney(p.expenses)} accent="red" />
                 <StatRow label="Net Profit"       value={formatMoney(p.profit)}   accent={p.profit>=0?'blue':'red'} />
                 <StatRow label="Occupancy"        value={fmtPct(p.occupancyPct)} sub={`${p.nights} nights`} accent="blue" />
+                <StatRow label="Occ. Excl. Owner"  value={p.occupancyExclPct!==null?fmtPct(p.occupancyExclPct):'—'} accent="blue" />
                 <StatRow label="Avg Nightly Rate" value={p.nights>0?formatMoney(p.avgNightlyRate):'—'} />
                 <StatRow label="Avg Stay Length"  value={p.stayCount>0?`${p.avgStayLength.toFixed(1)} nights`:'—'} sub={`${p.stayCount} stays`} />
                 <div style={{ gridColumn: 'span 2' }}><StatRow label="Busiest Month" value={p.busiestMonth} /></div>
@@ -753,7 +787,7 @@ const TABS: { id: DashTab; label: string; printName: string }[] = [
 
 // ---------- Left-hand key KPI sidebar (always visible, current year to date) ----------
 
-function KeyKpiSidebar({ invoices, properties }: SharedProps) {
+function KeyKpiSidebar({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: Svm_pt_owneroccupancies[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
 
@@ -766,12 +800,15 @@ function KeyKpiSidebar({ invoices, properties }: SharedProps) {
   const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
   const availableNights = properties.length > 0 ? daysElapsedInYear(currentYear) * properties.length : 0
   const occupancyPct   = availableNights > 0 ? (totalNights / availableNights) * 100 : null
+  const ownerNights    = ownerNightsForPeriod(ownerOccupancy, '', currentYear)
+  const occupancyExclPct = exclOccupancyPct(totalNights, availableNights, ownerNights)
 
-  const items: { label: string; value: string; accent: 'green'|'red'|'blue' }[] = [
+  const items: { label: string; value: string; sub?: string; accent: 'green'|'red'|'blue' }[] = [
     { label: 'Income',     value: formatMoney(incomeGross),   accent: 'green' },
     { label: 'Expenses',   value: formatMoney(expensesGross), accent: 'red' },
     { label: 'Net Profit', value: formatMoney(netProfit),     accent: netProfit>=0 ? 'blue' : 'red' },
-    { label: 'Occupancy',  value: occupancyPct!==null?fmtPct(occupancyPct):'—', accent: 'blue' },
+    { label: 'Occupancy',  value: occupancyPct!==null?fmtPct(occupancyPct):'—',
+      sub: occupancyExclPct!==null ? `excl. owner: ${fmtPct(occupancyExclPct)}` : undefined, accent: 'blue' },
   ]
   const barColor: Record<string,string> = {
     green: tokens.colorPaletteGreenForeground1, red: tokens.colorPaletteRedForeground1, blue: tokens.colorBrandForeground1,
@@ -785,6 +822,7 @@ function KeyKpiSidebar({ invoices, properties }: SharedProps) {
           <div className={s.sidebarKpiBar} style={{ backgroundColor: barColor[item.accent] }} />
           <span className={s.sidebarKpiLabel}>{item.label}</span>
           <span className={s.sidebarKpiValue} style={{ color: barColor[item.accent] }}>{item.value}</span>
+          {item.sub && <span className={s.kpiSub}>{item.sub}</span>}
         </div>
       ))}
     </div>
@@ -797,6 +835,7 @@ export default function Dashboard() {
   const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
   const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
   const [references, setReferences] = useState<Cr9b5_pt_references[]>([])
+  const [ownerOccupancy, setOwnerOccupancy] = useState<Svm_pt_owneroccupancies[]>([])
   const [loading,    setLoading]    = useState(true)
   const [tab,        setTab]        = useState<DashTab>('overview')
 
@@ -812,16 +851,18 @@ export default function Dashboard() {
   useEffect(() => {
     async function load() {
       setLoading(true)
-      const [invRes, propRes, conRes, refRes] = await Promise.all([
+      const [invRes, propRes, conRes, refRes, occRes] = await Promise.all([
         Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'], maxPageSize: 5000 }),
         Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
         Cr9b5_pt_contactsService.getAll({ select: ['cr9b5_pt_contactid', 'cr9b5_name'], maxPageSize: 5000 }),
         Cr9b5_pt_referencesService.getAll({ select: ['cr9b5_pt_referenceid', 'cr9b5_value', 'cr9b5_referencetype'], maxPageSize: 5000 }),
+        Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
       ])
       setInvoices(invRes.data ?? [])
       setProperties(propRes.data ?? [])
       setContacts(conRes.data ?? [])
       setReferences(refRes.data ?? [])
+      setOwnerOccupancy(occRes.data ?? [])
       setLoading(false)
     }
     load()
@@ -832,7 +873,7 @@ export default function Dashboard() {
 
   return (
     <div className={s.dashboardGrid}>
-      <KeyKpiSidebar invoices={invoices} properties={properties} />
+      <KeyKpiSidebar invoices={invoices} properties={properties} ownerOccupancy={ownerOccupancy} />
       <div className={isCalendar ? s.pageCalendar : s.page} style={{ padding: isCalendar ? undefined : '24px 24px 24px 0', maxWidth: 'none' }}>
         {/* Header row */}
         <div className={isCalendar ? s.headerRowCalendar : s.headerRow}>
@@ -852,8 +893,8 @@ export default function Dashboard() {
           <Text className={isCalendar ? s.loadingCalendar : s.loading}>Loading…</Text>
         ) : (
           <div className={mergeClasses('dashboard-print-content', isCalendar ? s.contentCalendar : s.content)}>
-            {tab==='overview'            && <DashboardOverview    invoices={invoices} properties={properties} />}
-            {tab==='comparison'          && <DashboardComparison  invoices={invoices} properties={properties} />}
+            {tab==='overview'            && <DashboardOverview    invoices={invoices} properties={properties} ownerOccupancy={ownerOccupancy} />}
+            {tab==='comparison'          && <DashboardComparison  invoices={invoices} properties={properties} ownerOccupancy={ownerOccupancy} />}
             {tab==='cashflow'            && <DashboardCashFlow    invoices={invoices} properties={properties} />}
             {tab==='tax'                 && <DashboardTax         invoices={invoices} contacts={contacts} />}
             {tab==='calendar'            && <div style={{ flex: 1, minHeight: 0 }}><CalendarScreen /></div>}

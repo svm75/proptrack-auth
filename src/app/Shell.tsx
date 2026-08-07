@@ -39,6 +39,7 @@ const NAV: NavItem[] = [
   { to: '/forecast/view', label: 'Forecast View', parent: '/forecast' },
   { to: '/invoices', label: 'Invoices' },
   { to: '/invoices/regular', label: 'Regular Invoices', parent: '/invoices' },
+  { to: '/invoices/owner-occupancy', label: 'Owner Occupancy', parent: '/invoices' },
   { to: '/properties', label: 'Properties' },
   { to: '/contacts', label: 'Contacts' },
   { to: '/admin', label: 'Admin' },

@@ -5,6 +5,8 @@ import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesMod
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import { formatMoney } from '@/domain/money'
 import InvoiceForm from './InvoiceForm'
+import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
+import type { Svm_pt_owneroccupancies } from '@/generated/models/Svm_pt_owneroccupanciesModel'
 
 const TYPE_OUTGOING = 233100001 // Income
 
@@ -82,6 +84,13 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
   const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; content: React.ReactNode } | null>(null)
   const [lines, setLines] = useState<Line[]>([])
+  const [ownerOccupancy, setOwnerOccupancy] = useState<Svm_pt_owneroccupancies[]>([])
+
+  useEffect(() => {
+    Svm_pt_owneroccupanciesService.getAll({ filter: `_svm_pt_property_value eq '${property.cr9b5_pt_propertyid}'` })
+      .then(res => setOwnerOccupancy(res.data ?? []))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [property.cr9b5_pt_propertyid])
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -147,6 +156,21 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
   const totalNights = incomeInvs.reduce((s, i) => s + (i.cr9b5_nights ?? 0), 0)
   const daysInPeriod = diagYear === 'all' ? 365 : daysElapsedInYear(Number(diagYear))
   const occupancy = daysInPeriod > 0 && totalNights > 0 ? Math.round(totalNights / daysInPeriod * 100) : null
+  const ownerNightsInPeriod = diagYear === 'all' ? 0 : (() => {
+    const year = Number(diagYear)
+    const now = new Date()
+    const yearStart = new Date(year, 0, 1)
+    const yearEndExclusive = year === now.getFullYear() ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : new Date(year + 1, 0, 1)
+    return ownerOccupancy.reduce((sum, r) => {
+      if (!r.svm_pt_fromdate || !r.svm_pt_todate) return sum
+      const from = new Date(r.svm_pt_fromdate) < yearStart ? yearStart : new Date(r.svm_pt_fromdate)
+      const to = new Date(r.svm_pt_todate) > yearEndExclusive ? yearEndExclusive : new Date(r.svm_pt_todate)
+      const nights = Math.round((to.getTime() - from.getTime()) / 86400000)
+      return sum + (nights > 0 ? nights : 0)
+    }, 0)
+  })()
+  const occupancyExclDenom = daysInPeriod - ownerNightsInPeriod
+  const occupancyExcl = occupancyExclDenom > 0 && totalNights > 0 ? Math.round(totalNights / occupancyExclDenom * 100) : null
 
   // Compute SVG lines after DOM renders
   useEffect(() => {
@@ -246,7 +270,11 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
               <div data-node-level="1" className={s.propNode}>
                 <p className={s.propName}>{property.cr9b5_name}</p>
                 <p className={s.propShortId}>{property.cr9b5_shortid}</p>
-                {occupancy !== null && <p className={s.propOcc}>{occupancy}% occupancy</p>}
+                {occupancy !== null && (
+                  <p className={s.propOcc}>
+                    {occupancy}% occupancy{occupancyExcl !== null && occupancyExcl !== occupancy ? ` (${occupancyExcl}% excl. owner)` : ''}
+                  </p>
+                )}
               </div>
             </div>
 
