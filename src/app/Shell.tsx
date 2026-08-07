@@ -9,16 +9,20 @@ import { GlobalSearch } from '@/components/GlobalSearch'
 import { QuickAdd } from '@/components/QuickAdd'
 
 const useStyles = makeStyles({
-  root: { display: 'grid', gridTemplateColumns: '224px 1fr', minHeight: '100vh' },
-  rail: { backgroundColor: '#0B2E2A', color: '#CFE4E0', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: '2px' },
+  root: { display: 'grid', gridTemplateColumns: '224px 1fr', height: '100vh' },
+  rail: { backgroundColor: '#0B2E2A', color: '#CFE4E0', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: '2px', overflowY: 'auto' },
   brand: { color: '#fff', fontWeight: 700, fontSize: '16px', padding: '4px 10px 14px' },
   brandSub: { display: 'block', fontSize: '10px', letterSpacing: '0.14em', color: '#7FB0A8', textTransform: 'uppercase', marginTop: '3px' },
   link: { color: '#B9D2CD', textDecoration: 'none', padding: '8px 11px', borderRadius: tokens.borderRadiusMedium, fontSize: '14px' },
   subLink: { color: '#9FC0BA', textDecoration: 'none', padding: '6px 11px 6px 22px', borderRadius: tokens.borderRadiusMedium, fontSize: '13px' },
   on: { backgroundColor: '#0F766E', color: '#fff', fontWeight: 600 },
-  main: { display: 'flex', flexDirection: 'column', backgroundColor: tokens.colorNeutralBackground2, minHeight: '100vh', minWidth: 0 },
-  topbar: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px', padding: '10px 28px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground1 },
-  content: { padding: '20px 24px', maxWidth: '1690px', width: '100%', minWidth: 0, overflowX: 'auto' },
+  // height:100% (not minHeight) so this establishes a definite height for
+  // .content's flex:1 below — screens that themselves rely on height:100%
+  // (Properties, Invoices, the Dashboard calendar tab, ...) need a real,
+  // bounded height chain all the way from the viewport, not just a floor.
+  main: { display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, minHeight: 0 },
+  topbar: { display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '12px', padding: '10px 28px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground1, flexShrink: 0 },
+  content: { padding: '20px 24px', maxWidth: '1690px', width: '100%', minWidth: 0, minHeight: 0, flex: 1, overflow: 'auto', backgroundColor: tokens.colorNeutralBackground2 },
 })
 
 interface NavItem {
