@@ -1,73 +1,45 @@
-# React + TypeScript + Vite
+# PropTrack
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+A Power Apps Code App for managing a small portfolio of rental properties — invoices (income/expense), forecasting, occupancy tracking, and standard accounting reports — built with React, TypeScript, Vite, and [Fluent UI v9](https://react.fluentui.dev/), backed by Microsoft Dataverse.
 
-Currently, two official plugins are available:
+Two live deployments share this codebase's history:
+- **PropTrack** (V1) — the original Tailwind CSS build, left untouched as a fallback.
+- **PropTrack V2** (current `master`) — a full rewrite onto Fluent UI with a domain/data/hooks architecture, deployed as a separate Power App (its own `power.config.json` / app id) so V1 keeps running unaffected.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Stack
 
-## React Compiler
+- **UI**: React 19 + TypeScript, [@fluentui/react-components](https://react.fluentui.dev/) v9, `react-router-dom` for in-app navigation, `recharts` for charts, `react-big-calendar` for the booking calendar, `xlsx` for Excel import/export.
+- **Data**: [@microsoft/power-apps](https://www.npmjs.com/package/@microsoft/power-apps) generated Dataverse services/models under `src/generated/` (regenerated via `pac code add-data-source`, never hand-edited) — see [`docs/schema.md`](docs/schema.md) for the full table reference.
+- **State**: `@tanstack/react-query` for server-state caching where used; most screens still fetch directly via the generated services.
+- **Build/deploy**: Vite, deployed to Power Platform via the `pac` CLI (`pac code push`).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Documentation
 
-## Expanding the ESLint configuration
+- [`docs/schema.md`](docs/schema.md) — every Dataverse table the app reads/writes, columns, and known schema quirks (mixed publisher prefixes, opposite Income/Expense numbering between tables, etc.)
+- [`docs/screens-overview.md`](docs/screens-overview.md) — what each screen is for and what you can do with it, business-user-facing.
+- [`docs/user-enhancements.md`](docs/user-enhancements.md) — proposed and shipped user-facing features, each with the exact Maker Portal steps where a schema change is required.
+- [`docs/efficiency-enhancements.md`](docs/efficiency-enhancements.md) — proposed and shipped performance/efficiency improvements, same format.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## Local development
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm install
+npm run dev      # Vite dev server
+npm run build    # tsc -b && vite build
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+## Deploying
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+pac auth list                # confirm the right environment profile is selected
+npx tsc -b && npm run build   # verify typecheck + build are clean
+pac code push                 # deploy to the app registered in power.config.json
 ```
+
+`power.config.json` points at **PropTrack V2**; `power.config.v1.backup.json` is a snapshot of the original V1 config kept purely as a rollback reference — it is not used by any script.
+
+## Conventions
+
+- Files under `src/generated/` are autogenerated by `pac code add-data-source` — never edit them directly; re-run the command after a Dataverse schema change instead.
+- New Dataverse tables/columns are created in the Maker Portal (make.powerapps.com), not scripted — see the enhancement docs above for the exact steps for each proposed change.
+- `tsconfig.app.json` has `erasableSyntaxOnly` enabled, so real TypeScript `enum`s aren't usable — domain enums use the `as const` object + derived-type pattern instead (see `src/domain/types.ts`).

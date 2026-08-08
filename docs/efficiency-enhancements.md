@@ -26,6 +26,7 @@
 | 18 | Attachment folder-id caching (property + invoice level) | ⬜ Not started |
 | 19 | Activity log archiving/retention flow | ⬜ Not started |
 | 20 | Batch category/contact existence checks during import | ✅ Done |
+| 21 | Route-level code-splitting | ✅ Done |
 
 ---
 
@@ -310,3 +311,16 @@ The Excel import wizard checks whether each new category name already exists wit
 
 **Implementation notes**
 Shipped in [InvoiceImport.tsx](../src/screens/InvoiceImport.tsx)'s `runImport()`: deduplicated new category names are grouped by reference type (Income/Expense) and checked with one `or`-chain filtered query per type (at most 2 queries total) instead of one query per name; any names still missing afterward are created concurrently via `Promise.all` rather than serially.
+
+---
+
+## 21. Route-level code-splitting ✅ Done
+
+**Business description**
+Every screen — Dashboard's charting libraries, the Excel import/export dependency, every other screen — shipped in a single JavaScript bundle, so visiting any one screen downloaded and parsed all of them. Splitting by route means a user only downloads the code for the screen they're actually on, speeding up first load and navigation to lighter screens.
+
+**Dataverse changes (Maker Portal steps)**
+> None. Build/client-code-only.
+
+**Implementation notes**
+Shipped in [routes.tsx](../src/app/routes.tsx): every top-level screen is now a `React.lazy()` import wrapped in a single `<Suspense>` with a centered spinner fallback, instead of static imports. Dropped the single ~2.2MB production chunk to a ~400KB shell (app framework + Fluent UI core) plus per-screen chunks fetched on navigation — Dashboard's Recharts-heavy chunk (~680KB) and the `xlsx` dependency (~420KB, only needed by Invoice Import/Export) no longer block loading any other screen.

@@ -1,6 +1,6 @@
 # PropTrack User-Facing Enhancement Proposals
 
-20 proposals, each with a business description and the exact Dataverse changes to make in the **Power Apps maker portal** (make.powerapps.com → your environment → Tables). Items 21 (Dark/Light Mode) and 22 (Standard Reports) were added after the original 20 and implemented directly.
+20 proposals, each with a business description and the exact Dataverse changes to make in the **Power Apps maker portal** (make.powerapps.com → your environment → Tables). Items 21+ were added after the original 20 and implemented directly.
 
 ## Status
 
@@ -28,6 +28,14 @@
 | 20 | Custom fields per property type | ⬜ Not started |
 | 21 | Dark / Light mode | ✅ Done |
 | 22 | Standard Reports (P&L, IGIC, Rental, Tax) | ✅ Done |
+| 23 | PropTrack V2 — Fluent UI design-system rewrite | ✅ Done |
+| 24 | Owner occupancy tracking (incl./excl. occupancy %) | ✅ Done |
+| 25 | Global search | ✅ Done |
+| 26 | Quick Add menu | ✅ Done |
+| 27 | Alerts | ✅ Done |
+| 28 | Booking/occupancy conflict warnings | ✅ Done |
+| 29 | Optional Internal ID (skip auto-numbering) | ✅ Done |
+| 30 | Downloadable Excel import template | ✅ Done |
 
 ---
 
@@ -355,3 +363,115 @@ Shipped as a new **Reports** screen ([Reports.tsx](../src/screens/Reports.tsx)),
 - **Tax Report** — suppliers whose net expenses exceeded €3,000 in a selected calendar year, broken down by quarter (Q1–Q4) + annual total; a supplier is included once their full-year total crosses the threshold (equivalent to "exceeded it at some point year-to-date" for a completed year). Reuses the same threshold logic already present in the Dashboard's Tax tab.
 
 Every report also has a "↓ Export PDF" button using the same print-CSS approach as the Dashboard (`window.print()` with a print-only stylesheet that hides everything except the active report's title and content).
+
+---
+
+## 23. PropTrack V2 — Fluent UI design-system rewrite ✅ Done
+
+**Business description**
+The original app used Tailwind CSS utility classes throughout with an ad hoc visual style. A full rewrite onto Microsoft's Fluent UI v9 component library gives PropTrack a consistent, accessible, theme-aware design system (including proper dark mode) matching the look and feel of the user's other Power Apps Code Apps, plus a cleaner domain/data/hooks architecture underneath.
+
+**Dataverse changes (Maker Portal steps)**
+> None. Purely a client rewrite — every screen re-skinned onto `@fluentui/react-components`, `react-router-dom` for navigation, and a domain-typed data layer wrapping the existing generated Dataverse services. No table/column changes.
+
+**Implementation notes**
+Deployed as a **separate Power App, "PropTrack V2"** (its own `power.config.json` / app registration — see the repo `README.md`), so the original PropTrack (V1) keeps running untouched as a fallback. Every screen — Dashboard and all its tabs, Reports, Forecast, Invoices (+ New/Edit/Import/Export), Regular Invoices, Properties, Contacts, Admin — was rewritten onto Fluent UI components (`makeStyles`/`tokens`) with the Tailwind plugin fully removed at the end. Added: a dark rail navigation + topbar shell, teal brand theme with light/dark mode, route-level code-splitting (`React.lazy`/`Suspense` per screen — cut the initial bundle from one ~2.2MB chunk to a ~400KB shell plus per-screen chunks loaded on navigation).
+
+---
+
+## 24. Owner occupancy tracking (incl./excl. occupancy %) ✅ Done
+
+**Business description**
+Occupancy percentages previously only measured paying-guest nights against total available nights, with no way to record or account for periods the owner blocks out for personal use. A dedicated Owner Occupancy log — property, date range, guest counts — lets occupancy be reported two ways: **incl. owner** (owner-use nights count as occupied too — overall utilization) and **excl. owner** (paying-guest nights only — true rental performance), both against the same available-nights denominator.
+
+**Dataverse changes (Maker Portal steps)**
+> 1. Tables → **+ New table** → Display name `pt_owneroccupancy` → save (creates entity set `svm_pt_owneroccupancies`, primary column `svm_pt_name`).
+> 2. Columns → **+ New column**:
+>    - Display name `Property`, Name `svm_pt_property`, Data type **Lookup** → `Properties` (`cr9b5_pt_property`).
+>    - Display name `From Date`, Name `svm_pt_fromdate`, Data type **Date only**.
+>    - Display name `To Date`, Name `svm_pt_todate`, Data type **Date only**.
+>    - Display name `Adults`, Name `svm_pt_adults`, Data type **Whole Number**, default `0`.
+>    - Display name `Children`, Name `svm_pt_children`, Data type **Whole Number**, default `0`.
+>    - Display name `Babies`, Name `svm_pt_babies`, Data type **Whole Number**, default `0`.
+> 3. Publish customizations.
+
+**Implementation notes**
+See [`docs/schema.md`](schema.md) for the full column reference. New **Owner Occupancy** screen (Invoices → Owner Occupancy) for managing blocks; also editable/deletable directly from a gray Calendar event. Occupancy math (`daysElapsedInYear()` for the current year's denominator, `ownerNightsForPeriod()` for the clipped owner-nights numerator adjustment) lives in [Dashboard.tsx](../src/screens/Dashboard.tsx) and is mirrored in [PropertyConnectionDiagram.tsx](../src/screens/PropertyConnectionDiagram.tsx) and the new [OccupancyTrend.tsx](../src/screens/OccupancyTrend.tsx) (per-month, per-property trend with an incl./excl. toggle).
+
+---
+
+## 25. Global search ✅ Done
+
+**Business description**
+Finding a specific property, contact, or invoice required navigating to the right screen first, then filtering. A search box available from anywhere in the app removes that extra hop.
+
+**Dataverse changes (Maker Portal steps)**
+> None. Client-code-only — debounced `contains()` OData queries against the existing `Properties`, `Contacts`, and `Invoices` tables.
+
+**Implementation notes**
+Shipped as [GlobalSearch.tsx](../src/components/GlobalSearch.tsx) in the app topbar ([Shell.tsx](../src/app/Shell.tsx)): a 300ms-debounced search across property name/short ID, contact name/tax ID, and invoice internal ID/description, grouped results dropdown, click-to-navigate (invoices deep-link via a `?search=` query param picked up by [Invoices.tsx](../src/screens/Invoices.tsx) on load).
+
+---
+
+## 26. Quick Add menu ✅ Done
+
+**Business description**
+Starting a new invoice, property, or contact always meant navigating to that screen first and finding the "+ Add" button. A single always-available menu shortcuts straight to a blank form for any of the three from wherever the user currently is.
+
+**Dataverse changes (Maker Portal steps)**
+> None. Client-code-only.
+
+**Implementation notes**
+Shipped as [QuickAdd.tsx](../src/components/QuickAdd.tsx) in the topbar: a menu with New Invoice / New Property / New Contact, each navigating to the relevant screen with a `?new=1` query param that the screen picks up on load to auto-open its existing create form (no new form logic — reuses each screen's own `openNew()`).
+
+---
+
+## 27. Alerts ✅ Done
+
+**Business description**
+Issues worth a look — overlapping bookings, an owner-occupancy block starting soon, an invoice missing a category — previously had no way to surface themselves; a user would only notice by chance while browsing the relevant screen. A single notifications entry point surfaces them proactively.
+
+**Dataverse changes (Maker Portal steps)**
+> None. Client-code-only — computed from existing `Invoices`, `Properties`, and `OwnerOccupancy` data.
+
+**Implementation notes**
+Shipped as [AlertsBell.tsx](../src/components/AlertsBell.tsx) in the topbar: a bell icon with a badge count and a dropdown listing (capped per category to keep it scannable) portfolio-wide booking/owner-occupancy overlap conflicts (reuses `nightsOverlap()`, see #28), owner occupancy blocks starting within the next 7 days, and invoices from the last 90 days with no category set. Clicking an alert navigates to the relevant screen.
+
+---
+
+## 28. Booking/occupancy conflict warnings ✅ Done
+
+**Business description**
+Nothing previously flagged when a new guest booking or owner-occupancy block was accidentally entered on dates that overlap an existing one for the same property — a mistake only caught later, if at all. A same-property, same-night overlap check surfaces this immediately as a warning, without blocking the save (a property can legitimately have more than one paying group under separate invoices at once, e.g. a group booking split across multiple invoices).
+
+**Dataverse changes (Maker Portal steps)**
+> None. Client-code-only.
+
+**Implementation notes**
+New `nightsOverlap()` helper ([src/domain/dateRanges.ts](../src/domain/dateRanges.ts)) treats two `[checkIn, checkOut)` ranges as conflicting only if they share an actual night — a checkout on the same date as another booking's check-in (normal same-day turnover) is not flagged. Used in [InvoiceForm.tsx](../src/screens/InvoiceForm.tsx) (guest-vs-guest and guest-vs-owner, on the Check-in/Check-out fields) and the new [OwnerOccupancyFormDialog.tsx](../src/components/OwnerOccupancyFormDialog.tsx) (owner-vs-guest and owner-vs-owner). Both render a non-blocking marigold warning banner listing the specific conflicting record(s); saving is never prevented.
+
+---
+
+## 29. Optional Internal ID (skip auto-numbering) ✅ Done
+
+**Business description**
+Every invoice previously required the auto-generated sequenced Internal ID (`{shortId}{seq}/{year}`). Some entries — miscellaneous or non-sequenced charges — don't need one, and forcing a sequence number on them wasted a slot in the running count.
+
+**Dataverse changes (Maker Portal steps)**
+> None. `Invoices.cr9b5_internalid` already allows blank values — this is a client-code-only change to skip the sequence-lookup/generation step when the option is selected.
+
+**Implementation notes**
+A "No Internal ID" / "Auto Internal ID" checkbox is available on: [InvoiceForm.tsx](../src/screens/InvoiceForm.tsx) (new invoices only), [RegularInvoices.tsx](../src/screens/RegularInvoices.tsx) (per row), and the Excel Import wizard ([InvoiceImport.tsx](../src/screens/InvoiceImport.tsx), per row, reserving sequence numbers up front for concurrent creates so they never collide). Everywhere an internal ID is displayed, a blank one renders as `—` / `(no internal ID)` rather than breaking the layout.
+
+---
+
+## 30. Downloadable Excel import template ✅ Done
+
+**Business description**
+Building an Excel file for the Invoice Import wizard from scratch meant guessing or reverse-engineering the exact expected column headers. A one-click "Download blank template" button removes that guesswork.
+
+**Dataverse changes (Maker Portal steps)**
+> None. Client-code-only.
+
+**Implementation notes**
+Shipped in [InvoiceImport.tsx](../src/screens/InvoiceImport.tsx)'s step 1: a "↓ Download blank template" button generates an `.xlsx` with the exact recognized header row (kept in sync with the parser's `HEADER_ALIASES`) plus one example data row, including the new "Auto Internal ID" column from #29.

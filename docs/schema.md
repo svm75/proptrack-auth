@@ -19,6 +19,8 @@ Properties ──┬──< Invoices >──┬── Contacts (Suppliers/Client
              │                                    │                  Contacts (counterparty)
              │                                    └── ForecastFlows (self, "Version Parent")
              │
+             ├──< OwnerOccupancy
+             │
 Invoices ──< Attachments
 Invoices ──< InvoiceComments
 InvoiceTemplates ──── References (Category)
@@ -42,7 +44,7 @@ The register of managed properties.
 | `cr9b5_notes` | Text (100) | Free-text notes |
 | `svm_pt_googledrivefolderid` | Text (100) | Cached Google Drive folder ID for this property's document library, resolved once and reused to avoid re-walking the Drive folder path on every attachment upload |
 
-Referenced by: `Invoices.cr9b5_property`, `SupplierContracts.svm_property`, `Attachments.cr9b5_propertyid`, `ForecastFlowProperties.cr9b5_propertyid`.
+Referenced by: `Invoices.cr9b5_property`, `SupplierContracts.svm_property`, `Attachments.cr9b5_propertyid`, `ForecastFlowProperties.cr9b5_propertyid`, `OwnerOccupancy.svm_pt_property`.
 
 ---
 
@@ -72,7 +74,7 @@ The core transaction ledger. Despite the name, both income and expense records l
 | Column | Type | Notes |
 |---|---|---|
 | `cr9b5_pt_invoiceid` | Guid | Primary key |
-| `cr9b5_internalid` | Text (850) | Primary name; the human-readable invoice number, e.g. `ABC001/2026` |
+| `cr9b5_internalid` | Text (850) | Primary name; the human-readable invoice number, e.g. `ABC001/2026`. Optional — a "No Internal ID" / "Auto Internal ID" checkbox on the New Invoice, Regular Invoices, and Excel Import screens can skip the auto-generated sequence, leaving this blank (never treated as a duplicate against another invoice's internal ID in that case) |
 | `cr9b5_globalsequence` | Whole number | The running sequence number encoded in `cr9b5_internalid`; queried (`orderby desc, top 1`) to compute the next value per year |
 | `cr9b5_year` | Whole number | Invoice year, denormalized for fast year-scoped queries |
 | `cr9b5_type` | Choice | **`Expense` = 233100000, `Income` = 233100001`** — note the code names these constants `TYPE_INCOMING`/`TYPE_OUTGOING` respectively (money incoming to/outgoing from the property owner), which reads backwards from the picklist labels — a common source of confusion when touching this field |
@@ -227,6 +229,22 @@ Pure many-to-many junction: which specific properties a `ForecastFlow` applies t
 
 ---
 
+## OwnerOccupancy — `svm_pt_owneroccupancy` (entity set `svm_pt_owneroccupancies`)
+
+Logs periods when a property is blocked for the owner's own use instead of being rented out. Feeds the "excl. owner occupancy" figure shown alongside occupancy percentages on the Dashboard sidebar, Overview, Property Comparison, Occupancy Trend, and the Connection Diagram, and shows as a gray block on the Calendar.
+
+| Column | Type | Notes |
+|---|---|---|
+| `svm_pt_owneroccupancyid` | Guid | Primary key |
+| `svm_pt_name` | Text (850) | Primary name; auto-built as `"{property name} {fromDate} – {toDate}"`, not user-edited directly |
+| `svm_pt_property` | Lookup → Properties | |
+| `svm_pt_fromdate` / `svm_pt_todate` | Date only | The blocked date range (nights = `todate − fromdate`, same `[from, to)` convention as invoice check-in/check-out) |
+| `svm_pt_adults` / `svm_pt_children` / `svm_pt_babies` | Whole number | Optional guest-count context for the owner's stay |
+
+Managed from its own screen (Invoices → Owner Occupancy) and directly from the Calendar (click a gray block to edit/delete). Saving checks — as a non-blocking warning only — for night-overlaps against other guest invoices and other owner-occupancy blocks on the same property (see `src/domain/dateRanges.ts`'s `nightsOverlap()`).
+
+---
+
 ## ActivityLogs — `cr9b5_pt_activitylog` (entity set `cr9b5_pt_activitylogs`)
 
 Append-only audit trail. No relationships — every action is recorded as free-standing facts rather than linked to the actual record (so the log survives even if the underlying record is later hard-deleted).
@@ -236,7 +254,7 @@ Append-only audit trail. No relationships — every action is recorded as free-s
 | `cr9b5_pt_activitylogid` | Guid | Primary key |
 | `cr9b5_logid` | Text (850) | Primary name |
 | `cr9b5_action` | Choice | `Created` / `Updated` / `Deleted` / `Exported` (233100000–233100003) |
-| `cr9b5_tablemame` | Choice | `Invoice` / `Contact` / `Property` / `Attachment` (233100000–233100003) — note the typo in the attribute name ("tablemame" instead of "tablename"), which is permanent since renaming a Dataverse column's logical name isn't supported |
+| `cr9b5_tablemame` | Choice | `Invoice` / `Contact` / `Property` / `Attachment` / `Forecast Flow` (233100000–233100004) — note the typo in the attribute name ("tablemame" instead of "tablename"), which is permanent since renaming a Dataverse column's logical name isn't supported. The picklist also has an unused `233100005` option (added, then deliberately left unused — Owner Occupancy activity is logged under `Property` instead, since a block is still an action on a property record) |
 | `cr9b5_recordname` | Text (100) | Human-readable identifier of the affected record (e.g. an invoice's internal ID) |
 | `cr9b5_details` | Memo (100) | Optional extra context (e.g. which fields changed) |
 | `cr9b5_timestamp` | DateTime | |
@@ -253,3 +271,5 @@ Append-only audit trail. No relationships — every action is recorded as free-s
 5. **`Attachments.cr9b5_referencetype` is an unrelated picklist that happens to share a name** with `References.cr9b5_referencetype` — don't assume they're the same option set.
 6. **No dedicated Category or Tax-Rate-History tables exist** — categories are References rows filtered by type; tax rate is a flat 7% constant in the client code, not a Dataverse column (see the enhancement docs for proposals to change both).
 7. **Alternate keys currently in place**: `Properties.cr9b5_shortid` (key name `svm_shortid`) is the only one — internal ID uniqueness on Invoices is still enforced client-side only (proposed as an enhancement, not yet implemented).
+8. **`Invoices.cr9b5_internalid` can legitimately be blank** — the "No/Auto Internal ID" option on the invoice form, Regular Invoices, and Excel Import all support skipping the generated sequence number. Don't assume it's always populated when querying or displaying invoices.
+9. **Booking/occupancy overlap is never enforced server-side** — `nightsOverlap()` (`src/domain/dateRanges.ts`) only drives a client-side, non-blocking warning shown on the New/Edit Invoice form and the Owner Occupancy dialog; nothing prevents two overlapping `Invoices` rows or an `Invoices`/`OwnerOccupancy` overlap from actually being saved (deliberate — a property can have multiple simultaneous guests on separate invoices).
