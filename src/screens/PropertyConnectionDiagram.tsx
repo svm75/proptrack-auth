@@ -4,6 +4,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
 import { formatMoney } from '@/domain/money'
+import { dataColors } from '@/app/dataPalette'
 import InvoiceForm from './InvoiceForm'
 import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
 import type { Svm_pt_owneroccupancies } from '@/generated/models/Svm_pt_owneroccupanciesModel'
@@ -55,7 +56,7 @@ const useStyles = makeStyles({
   canvas: { position: 'relative', margin: '0 auto', minWidth: '480px' },
   svg: { position: 'absolute', inset: 0, pointerEvents: 'none', overflow: 'visible' },
   level1Row: { display: 'flex', justifyContent: 'center', marginBottom: '64px' },
-  propNode: { backgroundColor: '#0F766E', color: '#fff', borderRadius: tokens.borderRadiusXLarge, padding: '16px 24px', boxShadow: tokens.shadow8, textAlign: 'center', userSelect: 'none', minWidth: '200px' },
+  propNode: { backgroundColor: '#2F3538', color: '#fff', borderRadius: tokens.borderRadiusXLarge, padding: '16px 24px', boxShadow: tokens.shadow8, textAlign: 'center', userSelect: 'none', minWidth: '200px' },
   propName: { fontSize: '16px', fontWeight: 700, lineHeight: 1.2 },
   propShortId: { fontSize: '12px', fontFamily: 'monospace', marginTop: '4px', color: 'rgba(255,255,255,0.75)' },
   propOcc: { fontSize: '12px', marginTop: '6px', color: 'rgba(255,255,255,0.85)' },
@@ -63,7 +64,7 @@ const useStyles = makeStyles({
   row: { display: 'flex', justifyContent: 'center', gap: '16px', marginBottom: '64px', flexWrap: 'wrap' },
   rowTight: { display: 'flex', justifyContent: 'center', gap: '12px', flexWrap: 'wrap' },
   catNode: { borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow4, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '160px', backgroundColor: tokens.colorNeutralBackground3, border: `1px solid ${tokens.colorNeutralStroke2}` },
-  conNode: { backgroundColor: tokens.colorNeutralBackground1, borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow4, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '176px', border: '1px solid #2DD4BF' },
+  conNode: { backgroundColor: tokens.colorNeutralBackground1, borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow4, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '176px', border: `1px solid ${dataColors.informational}` },
   invNode: { backgroundColor: tokens.colorNeutralBackground1, borderRadius: tokens.borderRadiusXLarge, padding: '12px 16px', boxShadow: tokens.shadow2, cursor: 'pointer', textAlign: 'center', userSelect: 'none', minWidth: '152px' },
   nodeTitle: { fontSize: '14px', fontWeight: 600, color: tokens.colorNeutralForeground1, lineHeight: 1.2 },
   nodeSub: { fontSize: '12px', color: tokens.colorNeutralForeground4, marginTop: '4px' },
@@ -350,7 +351,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
                       })}
                       onMouseLeave={() => setTooltip(null)}
                       className={s.conNode}
-                      style={isExpanded ? { border: '2px solid #0F766E' } : undefined}
+                      style={isExpanded ? { border: `2px solid ${dataColors.informational}` } : undefined}
                     >
                       <p className={s.nodeTitle}>{con.name}</p>
                       <span className={s.badge} style={isIncome ? { backgroundColor: tokens.colorPaletteGreenBackground1, color: tokens.colorPaletteGreenForeground1 } : { backgroundColor: tokens.colorPaletteBlueBackground2, color: tokens.colorPaletteBlueForeground2 }}>{con.role}</span>

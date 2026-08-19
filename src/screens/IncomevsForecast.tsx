@@ -12,6 +12,7 @@ import type { Cr9b5_pt_invoices }           from '../generated/models/Cr9b5_pt_i
 import type { Cr9b5_pt_properties }         from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references }         from '../generated/models/Cr9b5_pt_referencesModel'
 import { formatMoney } from '@/domain/money'
+import { dataColors } from '@/app/dataPalette'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const INV_INCOME       = 233100001   // invoice type: outgoing = income
@@ -421,7 +422,7 @@ export default function IncomevsForecast({ invoices, properties, references }: P
             />
             <Legend wrapperStyle={{ fontSize: 12 }} />
             <Bar dataKey="Forecast" fill="#9ca3af" maxBarSize={28} radius={[4, 4, 0, 0]} />
-            <Bar dataKey="Actual"   fill="#0d9488" maxBarSize={28} radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Actual"   fill={dataColors.informational} maxBarSize={28} radius={[4, 4, 0, 0]} />
           </BarChart>
         </ResponsiveContainer>
       </div>

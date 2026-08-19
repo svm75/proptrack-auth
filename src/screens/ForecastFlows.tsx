@@ -423,7 +423,7 @@ export default function ForecastFlows() {
                       const active = form.daysOfWeek.includes(day)
                       return (
                         <button key={day} type="button" className={s.dowBtn}
-                          style={active ? { borderColor: '#0F766E', backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : { borderColor: tokens.colorNeutralStroke2 }}
+                          style={active ? { borderColor: tokens.colorBrandForeground1, backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : { borderColor: tokens.colorNeutralStroke2 }}
                           onClick={() => setForm(f => ({ ...f, daysOfWeek: active ? f.daysOfWeek.filter(d => d !== day) : [...f.daysOfWeek, day].sort() }))}>{lbl}</button>
                       )
                     })}

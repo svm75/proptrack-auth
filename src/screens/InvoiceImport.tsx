@@ -143,7 +143,7 @@ function downloadTemplate() {
 
 const useStyles = makeStyles({
   root: { position: 'fixed', inset: 0, zIndex: 50, display: 'flex', flexDirection: 'column', backgroundColor: tokens.colorNeutralBackground1 },
-  header: { height: '48px', backgroundColor: '#0F766E', display: 'flex', alignItems: 'center', padding: '0 24px', justifyContent: 'space-between', flexShrink: 0 },
+  header: { height: '48px', backgroundColor: tokens.colorBrandBackground, display: 'flex', alignItems: 'center', padding: '0 24px', justifyContent: 'space-between', flexShrink: 0 },
   steps: { padding: '12px 24px', backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, display: 'flex', gap: '24px', fontSize: '14px', flexShrink: 0 },
   stepBadge: { width: '24px', height: '24px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', border: '2px solid' },
   content: { flex: 1, overflow: 'auto' },
@@ -516,7 +516,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       <div className={s.steps}>
         {([[1, 'Upload File'], [2, 'Validate & Edit'], [3, 'Results']] as [number, string][]).map(([n, label]) => (
           <div key={n} style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 500, color: step === n ? tokens.colorBrandForeground1 : step > n ? tokens.colorNeutralForeground2 : tokens.colorNeutralForeground4 }}>
-            <span className={s.stepBadge} style={{ borderColor: step >= n ? '#0F766E' : tokens.colorNeutralStroke1, backgroundColor: step >= n ? '#0F766E' : 'transparent', color: step >= n ? 'white' : tokens.colorNeutralForeground4 }}>{n}</span>
+            <span className={s.stepBadge} style={{ borderColor: step >= n ? tokens.colorBrandBackground : tokens.colorNeutralStroke1, backgroundColor: step >= n ? tokens.colorBrandBackground : 'transparent', color: step >= n ? 'white' : tokens.colorNeutralForeground4 }}>{n}</span>
             {label}
           </div>
         ))}

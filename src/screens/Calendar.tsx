@@ -14,14 +14,12 @@ import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsMod
 import type { Svm_pt_owneroccupancies } from '../generated/models/Svm_pt_owneroccupanciesModel'
 import InvoiceForm from './InvoiceForm'
 import { OwnerOccupancyFormDialog } from '@/components/OwnerOccupancyFormDialog'
+import { categoricalPalette } from '@/app/dataPalette'
 
 const TYPE_OUTGOING = 233100001
 const OWNER_COLOR = '#9CA3AF'
 
-const PROPERTY_COLORS = [
-  '#4f46e5', '#059669', '#d97706', '#dc2626',
-  '#7c3aed', '#0891b2', '#be185d', '#65a30d',
-]
+const PROPERTY_COLORS = categoricalPalette
 
 const MONTH_FULL  = ['January','February','March','April','May','June','July','August','September','October','November','December']
 const MONTH_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']

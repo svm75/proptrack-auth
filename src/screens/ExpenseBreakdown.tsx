@@ -7,15 +7,12 @@ import type { Cr9b5_pt_invoices }   from '../generated/models/Cr9b5_pt_invoicesM
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import { formatMoney } from '@/domain/money'
+import { categoricalPalette } from '@/app/dataPalette'
 
 const TYPE_EXPENSE = 233100000
 const REF_EXP_CAT  = 233100006
 const MONTHS       = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const CAT_COLORS   = [
-  '#4f46e5','#059669','#d97706','#dc2626',
-  '#7c3aed','#0891b2','#be185d','#65a30d',
-  '#ea580c','#0369a1','#7e22ce','#15803d',
-]
+const CAT_COLORS   = categoricalPalette
 
 function isActive(inv: Cr9b5_pt_invoices) {
   return (inv.statecode as unknown as number) !== 1

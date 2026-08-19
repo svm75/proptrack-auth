@@ -8,17 +8,14 @@ import type { Cr9b5_pt_invoices }   from '../generated/models/Cr9b5_pt_invoicesM
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import { formatMoney } from '@/domain/money'
+import { dataColors, categoricalPalette } from '@/app/dataPalette'
 
 const TYPE_INCOME  = 233100001
 const TYPE_EXPENSE = 233100000
 const REF_INC_CAT  = 233100005
 const REF_EXP_CAT  = 233100006
 const MONTHS       = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
-const CAT_COLORS   = [
-  '#4f46e5','#059669','#d97706','#dc2626',
-  '#7c3aed','#0891b2','#be185d','#65a30d',
-  '#ea580c','#0369a1','#7e22ce','#15803d',
-]
+const CAT_COLORS   = categoricalPalette
 
 function isActive(inv: Cr9b5_pt_invoices) {
   return (inv.statecode as unknown as number) !== 1
@@ -53,7 +50,7 @@ const useStyles = makeStyles({
   filterRow: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' },
   segmented: { display: 'flex', borderRadius: tokens.borderRadiusMedium, border: `1px solid ${tokens.colorNeutralStroke2}`, overflow: 'hidden', fontSize: '14px' },
   segBtn: { padding: '6px 16px', fontWeight: 500, border: 'none', cursor: 'pointer', backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground2 },
-  segBtnActive: { backgroundColor: '#0F766E', color: '#fff' },
+  segBtnActive: { backgroundColor: dataColors.informational, color: '#fff' },
   chartCard: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusXLarge, padding: '16px' },
   empty: { padding: '64px', textAlign: 'center', color: tokens.colorNeutralForeground4, fontSize: '14px' },
   tooltipBox: { backgroundColor: tokens.colorNeutralBackground1, border: `1px solid ${tokens.colorNeutralStroke2}`, borderRadius: tokens.borderRadiusLarge, boxShadow: tokens.shadow16, padding: '8px 12px', fontSize: '13px' },

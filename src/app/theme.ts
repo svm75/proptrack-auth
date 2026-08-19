@@ -1,26 +1,30 @@
 import { webLightTheme, webDarkTheme, type Theme } from '@fluentui/react-components'
 
-// Teal brand ramp — PropTrack's own accent (it was the app's header color under the old
-// Tailwind theme), built the same way Wealth Ledger builds its petrol-green ramp: override
-// Fluent's brand tokens on top of the stock light/dark theme rather than hand-rolling one.
+// "Anthracite / carbon / off-white" identity — see docs/layout.md for the full spec.
+// Anthracite (RAL 7016) is the primary accent; Royal Blue is kept as a separate
+// informational/link accent since anthracite-on-white doesn't read as clickable.
 export const propTrackTheme: Theme = {
   ...webLightTheme,
-  colorBrandBackground: '#0F766E',
-  colorBrandBackgroundHover: '#0D9488',
-  colorBrandBackgroundPressed: '#115E59',
-  colorCompoundBrandBackground: '#0F766E',
-  colorBrandForeground1: '#0F766E',
-  colorBrandForegroundLink: '#0F766E',
+  colorBrandBackground: '#2F3538',
+  colorBrandBackgroundHover: '#262B2D',
+  colorBrandBackgroundPressed: '#1D2122',
+  colorCompoundBrandBackground: '#2F3538',
+  colorBrandForeground1: '#2F3538',
+  colorBrandForegroundLink: '#2563EB',
+  colorNeutralBackground1: '#FFFFFF', // cards
+  colorNeutralBackground2: '#F8F9FA', // page
 }
 
+// Anthracite nearly disappears against a dark background, so dark mode lifts the
+// accent to a lighter, still-desaturated neutral instead of just brightening the hue.
 export const propTrackThemeDark: Theme = {
   ...webDarkTheme,
-  colorBrandBackground: '#14B8A6',
-  colorBrandBackgroundHover: '#5EEAD4',
-  colorBrandBackgroundPressed: '#0D9488',
-  colorCompoundBrandBackground: '#14B8A6',
-  colorBrandForeground1: '#5EEAD4',
-  colorBrandForegroundLink: '#5EEAD4',
+  colorBrandBackground: '#94A3B8',
+  colorBrandBackgroundHover: '#B0BCC9',
+  colorBrandBackgroundPressed: '#7C8896',
+  colorCompoundBrandBackground: '#94A3B8',
+  colorBrandForeground1: '#94A3B8',
+  colorBrandForegroundLink: '#5B9BF5',
 }
 
 const STORAGE_KEY = 'pt-dark-mode'

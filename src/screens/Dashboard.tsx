@@ -21,6 +21,7 @@ import OccupancyTrend from './OccupancyTrend'
 import ExpenseBreakdown from './ExpenseBreakdown'
 import IncomevsForecast from './IncomevsForecast'
 import { formatMoney, formatMoneyShort } from '@/domain/money'
+import { dataColors, categoricalPalette } from '@/app/dataPalette'
 
 const TYPE_OUTGOING = 233100001
 const TYPE_INCOMING = 233100000
@@ -28,14 +29,11 @@ const TYPE_INCOMING = 233100000
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const MONTH_FULL   = ['January','February','March','April','May','June','July','August','September','October','November','December']
 
-const COLOR_INCOME  = '#15803D'
-const COLOR_EXPENSE = '#DC2626'
-const COLOR_PROFIT  = '#0F766E'
+const COLOR_INCOME  = dataColors.positive
+const COLOR_EXPENSE = dataColors.negative
+const COLOR_PROFIT  = dataColors.informational
 
-const PROPERTY_COLORS = [
-  '#4f46e5','#059669','#d97706','#dc2626',
-  '#7c3aed','#0891b2','#be185d','#65a30d',
-]
+const PROPERTY_COLORS = categoricalPalette
 
 // ---------- helpers ----------
 

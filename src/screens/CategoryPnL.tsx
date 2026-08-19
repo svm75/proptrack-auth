@@ -5,6 +5,7 @@ import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertie
 import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
 import type { Cr9b5_pt_contacts }   from '../generated/models/Cr9b5_pt_contactsModel'
 import { formatMoney } from '@/domain/money'
+import { dataColors } from '@/app/dataPalette'
 
 const TYPE_INCOME  = 233100001   // outgoing invoice = income
 const TYPE_EXPENSE = 233100000   // incoming invoice = expense
@@ -91,7 +92,7 @@ const useStyles = makeStyles({
   netProfitCellEnd: { padding: '8px 12px', textAlign: 'right', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap', borderLeft: `1px solid ${tokens.colorNeutralStroke2}` },
   pos: { color: tokens.colorPaletteGreenForeground1 },
   neg: { color: tokens.colorPaletteRedForeground1 },
-  expandBtn: { color: '#0F766E', fontWeight: 500 },
+  expandBtn: { color: dataColors.informational, fontWeight: 500 },
 })
 
 export default function CategoryPnL({ invoices, properties, references, contacts }: Props) {

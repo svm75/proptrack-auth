@@ -11,12 +11,23 @@ import { AlertsBell } from '@/components/AlertsBell'
 
 const useStyles = makeStyles({
   root: { display: 'grid', gridTemplateColumns: '224px 1fr', height: '100vh' },
-  rail: { backgroundColor: '#0B2E2A', color: '#CFE4E0', padding: '18px 14px', display: 'flex', flexDirection: 'column', gap: '2px', overflowY: 'auto' },
-  brand: { color: '#fff', fontWeight: 700, fontSize: '16px', padding: '4px 10px 14px' },
-  brandSub: { display: 'block', fontSize: '10px', letterSpacing: '0.14em', color: '#7FB0A8', textTransform: 'uppercase', marginTop: '3px' },
-  link: { color: '#B9D2CD', textDecoration: 'none', padding: '8px 11px', borderRadius: tokens.borderRadiusMedium, fontSize: '14px' },
-  subLink: { color: '#9FC0BA', textDecoration: 'none', padding: '6px 11px 6px 22px', borderRadius: tokens.borderRadiusMedium, fontSize: '13px' },
-  on: { backgroundColor: '#0F766E', color: '#fff', fontWeight: 600 },
+  rail: {
+    backgroundColor: '#2F3538',
+    backgroundImage:
+      'repeating-linear-gradient(45deg,  rgba(255,255,255,0.035) 0, rgba(255,255,255,0.035) 1px, transparent 1px, transparent 4px),' +
+      'repeating-linear-gradient(-45deg, rgba(255,255,255,0.035) 0, rgba(255,255,255,0.035) 1px, transparent 1px, transparent 4px)',
+    color: '#C7CBD1',
+    padding: '18px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    overflowY: 'auto',
+  },
+  brand: { color: '#F5F5F7', fontWeight: 700, fontSize: '16px', padding: '4px 10px 14px' },
+  brandSub: { display: 'block', fontSize: '10px', letterSpacing: '0.14em', color: '#868C94', textTransform: 'uppercase', marginTop: '3px' },
+  link: { color: '#C7CBD1', textDecoration: 'none', padding: '8px 11px', borderRadius: tokens.borderRadiusMedium, fontSize: '14px' },
+  subLink: { color: '#C7CBD1', textDecoration: 'none', padding: '6px 11px 6px 22px', borderRadius: tokens.borderRadiusMedium, fontSize: '13px' },
+  on: { backgroundColor: '#2563EB', color: '#F5F5F7', fontWeight: 600 },
   // height:100% (not minHeight) so this establishes a definite height for
   // .content's flex:1 below — screens that themselves rely on height:100%
   // (Properties, Invoices, the Dashboard calendar tab, ...) need a real,

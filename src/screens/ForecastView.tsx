@@ -503,7 +503,7 @@ export default function ForecastView() {
         {/* Property filter */}
         <div className={s.propFilter}>
           <Text weight="medium" size={300}>Properties:</Text>
-          <button onClick={() => setPropFilter([])} className={s.chip} style={propFilter.length === 0 ? { border: '1px solid #0F766E', backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}>All</button>
+          <button onClick={() => setPropFilter([])} className={s.chip} style={propFilter.length === 0 ? { border: `1px solid ${tokens.colorBrandForeground1}`, backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}>All</button>
           {properties.map(p => {
             const sel = propFilter.includes(p.cr9b5_pt_propertyid)
             return (
@@ -511,7 +511,7 @@ export default function ForecastView() {
                 key={p.cr9b5_pt_propertyid}
                 onClick={() => setPropFilter(prev => sel ? prev.filter(id => id !== p.cr9b5_pt_propertyid) : [...prev, p.cr9b5_pt_propertyid])}
                 className={s.chip}
-                style={sel ? { border: '1px solid #0F766E', backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}
+                style={sel ? { border: `1px solid ${tokens.colorBrandForeground1}`, backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}
               >
                 {p.cr9b5_name}
               </button>
@@ -529,7 +529,7 @@ export default function ForecastView() {
             <thead>
               <tr className={s.theadRow}>
                 <th className={s.thLabel}>
-                  <Button appearance="transparent" size="small" onClick={toggleExpandAll} style={{ color: '#0F766E', fontWeight: 500 }}>
+                  <Button appearance="transparent" size="small" onClick={toggleExpandAll} style={{ color: tokens.colorBrandForeground1, fontWeight: 500 }}>
                     {allExpanded ? '− Collapse All' : '+ Expand All'}
                   </Button>
                 </th>
