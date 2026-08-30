@@ -578,6 +578,44 @@
           "x-ms-schema-name": "statuscodeName",
           "x-ms-read-only": true
         },
+        "svm_amountsource": {
+          "type": "string",
+          "title": "Amount Source",
+          "x-ms-dataverse-attribute": "svm_amountsource",
+          "x-ms-dataverse-type": "PicklistType",
+          "x-ms-schema-name": "svm_AmountSource",
+          "enum": [
+            "Fixed",
+            "Calculated"
+          ],
+          "x-ms-enum-values": [
+            925060000,
+            925060001
+          ],
+          "Color": [
+            null,
+            null
+          ],
+          "x-ms-optionsetmetadataid": "7a2cc27e-86a4-f111-b8dc-002248749827",
+          "x-ms-isGlobal": false,
+          "x-ms-optionsetdisplayname": "Amount Source",
+          "x-ms-optionSetType": "Picklist"
+        },
+        "svm_amountsourcename": {
+          "type": "string",
+          "title": "svm_amountsourcename",
+          "x-ms-dataverse-attribute": "svm_amountsourcename",
+          "x-ms-dataverse-type": "VirtualType",
+          "x-ms-schema-name": "svm_amountsourceName",
+          "x-ms-read-only": true
+        },
+        "svm_percentage": {
+          "type": "string",
+          "title": "Percentage",
+          "x-ms-dataverse-attribute": "svm_percentage",
+          "x-ms-dataverse-type": "DecimalType",
+          "x-ms-schema-name": "svm_Percentage"
+        },
         "timezoneruleversionnumber": {
           "type": "string",
           "title": "Time Zone Rule Version Number",

@@ -3564,6 +3564,13 @@ export const dataSourcesInfo = {
     "dataSourceType": "Dataverse",
     "apis": {}
   },
+  "svm_forecastflowcomponents": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "svm_forecastflowcomponentid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
   "cr9b5_forecastproperties": {
     "tableId": "",
     "version": "",
@@ -3575,6 +3582,13 @@ export const dataSourcesInfo = {
     "tableId": "",
     "version": "",
     "primaryKey": "cr9b5_pt_forecastflowid",
+    "dataSourceType": "Dataverse",
+    "apis": {}
+  },
+  "svm_forecastscenarios": {
+    "tableId": "",
+    "version": "",
+    "primaryKey": "svm_forecastscenarioid",
     "dataSourceType": "Dataverse",
     "apis": {}
   },

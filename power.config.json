@@ -72,6 +72,14 @@
         "owneroccupancies": {
           "entitySetName": "svm_pt_owneroccupancies",
           "logicalName": "svm_pt_owneroccupancy"
+        },
+        "forecastscenarios": {
+          "entitySetName": "svm_forecastscenarios",
+          "logicalName": "svm_forecastscenario"
+        },
+        "forecastflowcomponents": {
+          "entitySetName": "svm_forecastflowcomponents",
+          "logicalName": "svm_forecastflowcomponent"
         }
       },
       "actions": null

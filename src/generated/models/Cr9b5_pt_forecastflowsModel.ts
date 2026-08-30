@@ -27,6 +27,11 @@ export const Cr9b5_pt_forecastflowsstatuscode = {
   2: 'Inactive'
 } as const;
 export type Cr9b5_pt_forecastflowsstatuscode = keyof typeof Cr9b5_pt_forecastflowsstatuscode;
+export const Cr9b5_pt_forecastflowssvm_amountsource = {
+  925060000: 'Fixed',
+  925060001: 'Calculated'
+} as const;
+export type Cr9b5_pt_forecastflowssvm_amountsource = keyof typeof Cr9b5_pt_forecastflowssvm_amountsource;
 
 export interface Cr9b5_pt_forecastflowsBase {
   cr9b5_allproperties?: boolean;
@@ -52,6 +57,8 @@ export interface Cr9b5_pt_forecastflowsBase {
   owneridtype: string;
   statecode: Cr9b5_pt_forecastflowsstatecode;
   statuscode?: Cr9b5_pt_forecastflowsstatuscode;
+  svm_amountsource?: Cr9b5_pt_forecastflowssvm_amountsource;
+  svm_percentage?: number;
   timezoneruleversionnumber?: number;
   "TransactionCurrencyId@odata.bind"?: string;
   utcconversiontimezonecode?: number;
@@ -84,6 +91,7 @@ export interface Cr9b5_pt_forecastflows extends Cr9b5_pt_forecastflowsBase {
   owningbusinessunitname: string;
   statecodename?: string;
   statuscodename?: string;
+  svm_amountsourcename?: string;
   transactioncurrencyidname?: string;
   versionnumber?: number;
   cr9b5_categoryid?: object;
