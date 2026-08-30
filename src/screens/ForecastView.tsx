@@ -499,7 +499,13 @@ export default function ForecastView() {
     if (propFilter.length === 0) return 1
     return properties.length > 0 ? propFilter.length / properties.length : 0
   }
-  function actualNetForCategoryMonth(categoryId: string, flowType: number, mk: MonthKey): number {
+  type ActualField = 'net' | 'gross' | 'vat'
+  function invoiceFieldValue(inv: Cr9b5_pt_invoices, field: ActualField): number {
+    if (field === 'gross') return inv.cr9b5_totalgross ?? 0
+    if (field === 'vat') return inv.cr9b5_taxamount ?? 0
+    return inv.cr9b5_baseamount ?? 0
+  }
+  function actualForCategoryMonth(categoryId: string, flowType: number, mk: MonthKey, field: ActualField = 'net'): number {
     if (!isMonthClosed(mk)) return 0
     const invType = flowType === TYPE_INCOME ? INV_TYPE_INCOME : INV_TYPE_EXPENSE
     const ratio = actualRatio()
@@ -513,21 +519,40 @@ export default function ForecastView() {
       if (!inv.cr9b5_date) continue
       const d = new Date(inv.cr9b5_date)
       if (d.getFullYear() !== mk.year || d.getMonth() !== mk.month) continue
-      const net = inv.cr9b5_baseamount ?? 0
-      if (raw['cr9b5_allproperties']) total += net * ratio
-      else if (propFilter.length === 0 || propFilter.includes(raw['_cr9b5_property_value'] as string)) total += net
+      const val = invoiceFieldValue(inv, field)
+      if (raw['cr9b5_allproperties']) total += val * ratio
+      else if (propFilter.length === 0 || propFilter.includes(raw['_cr9b5_property_value'] as string)) total += val
     }
     return total
   }
-  function actualNetForTypeMonth(type: number, mk: MonthKey): number {
-    const cats = type === TYPE_INCOME ? incomeCategories : expenseCategories
-    return cats.reduce((s, c) => s + actualNetForCategoryMonth(c.cr9b5_pt_referenceid, type, mk), 0)
+  // Type-level actuals sum ALL invoices of that type/month directly (not via
+  // categories), so uncategorised invoices are still counted in the total.
+  function actualForTypeMonth(type: number, mk: MonthKey, field: ActualField = 'net'): number {
+    if (!isMonthClosed(mk)) return 0
+    const invType = type === TYPE_INCOME ? INV_TYPE_INCOME : INV_TYPE_EXPENSE
+    const ratio = actualRatio()
+    if (ratio === 0 && propFilter.length > 0) return 0
+    let total = 0
+    for (const inv of invoices) {
+      if (!isActiveInvoice(inv)) continue
+      if (Number(inv.cr9b5_type) !== invType) continue
+      if (!inv.cr9b5_date) continue
+      const d = new Date(inv.cr9b5_date)
+      if (d.getFullYear() !== mk.year || d.getMonth() !== mk.month) continue
+      const raw = inv as unknown as Record<string, unknown>
+      const val = invoiceFieldValue(inv, field)
+      if (raw['cr9b5_allproperties']) total += val * ratio
+      else if (propFilter.length === 0 || propFilter.includes(raw['_cr9b5_property_value'] as string)) total += val
+    }
+    return total
   }
+  function actualNetForCategoryMonth(categoryId: string, flowType: number, mk: MonthKey): number { return actualForCategoryMonth(categoryId, flowType, mk, 'net') }
+  function actualNetForTypeMonth(type: number, mk: MonthKey): number { return actualForTypeMonth(type, mk, 'net') }
   function yearActualCategoryTotal(categoryId: string, type: number): number {
-    return months.reduce((s, mk) => s + actualNetForCategoryMonth(categoryId, type, mk), 0)
+    return months.reduce((s, mk) => s + actualForCategoryMonth(categoryId, type, mk, 'net'), 0)
   }
-  function yearActualTypeTotal(type: number): number {
-    return months.reduce((s, mk) => s + actualNetForTypeMonth(type, mk), 0)
+  function yearActualTypeTotal(type: number, field: ActualField = 'net'): number {
+    return months.reduce((s, mk) => s + actualForTypeMonth(type, mk, field), 0)
   }
 
   // ── Expand / collapse ─────────────────────────────────────────────────────
@@ -799,23 +824,35 @@ export default function ForecastView() {
               {renderSpacer()}
 
               {/* VAT */}
-              {renderAmountRow('VAT COLLECTED (income)', mk => sumType(TYPE_INCOME,  mk, 'vat'), () => yearTypeTotal(TYPE_INCOME,  'vat'), { subtle: true })}
-              {renderAmountRow('VAT PAID (expenses)',    mk => sumType(TYPE_EXPENSE, mk, 'vat'), () => yearTypeTotal(TYPE_EXPENSE, 'vat'), { subtle: true })}
+              {renderAmountRow('VAT COLLECTED (income)', mk => sumType(TYPE_INCOME,  mk, 'vat'), () => yearTypeTotal(TYPE_INCOME,  'vat'),
+                { subtle: true, getActualMonthVal: mk => actualForTypeMonth(TYPE_INCOME, mk, 'vat'), getActualYearVal: () => yearActualTypeTotal(TYPE_INCOME, 'vat') })}
+              {renderAmountRow('VAT PAID (expenses)',    mk => sumType(TYPE_EXPENSE, mk, 'vat'), () => yearTypeTotal(TYPE_EXPENSE, 'vat'),
+                { subtle: true, getActualMonthVal: mk => actualForTypeMonth(TYPE_EXPENSE, mk, 'vat'), getActualYearVal: () => yearActualTypeTotal(TYPE_EXPENSE, 'vat') })}
               {renderAmountRow('NET VAT',
                 mk => round2(sumType(TYPE_INCOME, mk, 'vat') - sumType(TYPE_EXPENSE, mk, 'vat')),
                 () => round2(yearTypeTotal(TYPE_INCOME, 'vat') - yearTypeTotal(TYPE_EXPENSE, 'vat')),
-                { bold: true, separator: true },
+                {
+                  bold: true, separator: true,
+                  getActualMonthVal: mk => round2(actualForTypeMonth(TYPE_INCOME, mk, 'vat') - actualForTypeMonth(TYPE_EXPENSE, mk, 'vat')),
+                  getActualYearVal: () => round2(yearActualTypeTotal(TYPE_INCOME, 'vat') - yearActualTypeTotal(TYPE_EXPENSE, 'vat')),
+                },
               )}
 
               {renderSpacer()}
 
               {/* CASH FLOW */}
-              {renderAmountRow('CASH INFLOW',  mk => sumType(TYPE_INCOME,  mk, 'gross'), () => yearTypeTotal(TYPE_INCOME,  'gross'), { positive: true })}
-              {renderAmountRow('CASH OUTFLOW', mk => sumType(TYPE_EXPENSE, mk, 'gross'), () => yearTypeTotal(TYPE_EXPENSE, 'gross'), { negative: true })}
+              {renderAmountRow('CASH INFLOW',  mk => sumType(TYPE_INCOME,  mk, 'gross'), () => yearTypeTotal(TYPE_INCOME,  'gross'),
+                { positive: true, getActualMonthVal: mk => actualForTypeMonth(TYPE_INCOME, mk, 'gross'), getActualYearVal: () => yearActualTypeTotal(TYPE_INCOME, 'gross') })}
+              {renderAmountRow('CASH OUTFLOW', mk => sumType(TYPE_EXPENSE, mk, 'gross'), () => yearTypeTotal(TYPE_EXPENSE, 'gross'),
+                { negative: true, getActualMonthVal: mk => actualForTypeMonth(TYPE_EXPENSE, mk, 'gross'), getActualYearVal: () => yearActualTypeTotal(TYPE_EXPENSE, 'gross') })}
               {renderAmountRow('NET CASH FLOW',
                 mk => round2(sumType(TYPE_INCOME, mk, 'gross') - sumType(TYPE_EXPENSE, mk, 'gross')),
                 () => round2(yearTypeTotal(TYPE_INCOME, 'gross') - yearTypeTotal(TYPE_EXPENSE, 'gross')),
-                { bold: true, separator: true },
+                {
+                  bold: true, separator: true,
+                  getActualMonthVal: mk => round2(actualForTypeMonth(TYPE_INCOME, mk, 'gross') - actualForTypeMonth(TYPE_EXPENSE, mk, 'gross')),
+                  getActualYearVal: () => round2(yearActualTypeTotal(TYPE_INCOME, 'gross') - yearActualTypeTotal(TYPE_EXPENSE, 'gross')),
+                },
               )}
             </tbody>
           </table>
