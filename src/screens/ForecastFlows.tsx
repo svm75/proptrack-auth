@@ -9,6 +9,7 @@ import { Cr9b5_forecastpropertiesService } from '@/generated/services/Cr9b5_fore
 import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
 import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
 import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
+import { Svm_forecastflowcomponentsService } from '@/generated/services/Svm_forecastflowcomponentsService'
 import type { Cr9b5_pt_forecastflows } from '@/generated/models/Cr9b5_pt_forecastflowsModel'
 import type { Cr9b5_forecastproperties } from '@/generated/models/Cr9b5_forecastpropertiesModel'
 import type { Cr9b5_pt_references } from '@/generated/models/Cr9b5_pt_referencesModel'
@@ -22,6 +23,11 @@ const TYPE_EXPENSE = 233100001
 const FREQ_ONE_OFF = 233100000
 const FREQ_DAILY = 233100001
 const FREQ_MONTHLY = 233100003
+
+const AMOUNT_SOURCE_FIXED = 925060000
+const AMOUNT_SOURCE_CALCULATED = 925060001
+const DIRECTION_ADD = 925060000
+const DIRECTION_SUBTRACT = 925060001
 
 const FREQ_LABELS: Record<number, string> = {
   233100000: 'One-off', 233100001: 'Daily', 233100002: 'Weekly', 233100003: 'Monthly',
@@ -54,11 +60,14 @@ function calcVat(gross: string): string {
   return String(Math.round((g / 1.07) * 0.07 * 100) / 100)
 }
 
+interface ComponentRow { sourceFlowId: string; direction: number }
+
 interface FlowForm {
   id: string | null; parentFlowId: string | null; name: string; type: number; categoryId: string; contactId: string
   frequency: number; daysOfWeek: number[]; startDate: string; endDate: string; grossAmount: string
   vatRate: string; vatAmount: string; vatIsManual: boolean; allProperties: boolean; propertyIds: string[]
   notes: string; effectiveFrom: string
+  amountSource: number; percentage: string; components: ComponentRow[]
 }
 
 function emptyForm(): FlowForm {
@@ -66,13 +75,14 @@ function emptyForm(): FlowForm {
     id: null, parentFlowId: null, name: '', type: TYPE_INCOME, categoryId: '', contactId: '', frequency: FREQ_MONTHLY,
     daysOfWeek: [1, 2, 3, 4, 5], startDate: firstOfNextMonth(), endDate: '', grossAmount: '', vatRate: '7', vatAmount: '',
     vatIsManual: false, allProperties: true, propertyIds: [], notes: '', effectiveFrom: firstOfNextMonth(),
+    amountSource: AMOUNT_SOURCE_FIXED, percentage: '', components: [],
   }
 }
 function parseDaysOfWeek(s: string): number[] {
   if (!s) return [1, 2, 3, 4, 5]
   return s.split(',').map(Number).filter(n => n >= 1 && n <= 7)
 }
-function flowToForm(flow: Cr9b5_pt_forecastflows, linkedPropIds: string[]): FlowForm {
+function flowToForm(flow: Cr9b5_pt_forecastflows, linkedPropIds: string[], components: ComponentRow[]): FlowForm {
   const raw = flow as unknown as Record<string, unknown>
   return {
     id: flow.cr9b5_pt_forecastflowid,
@@ -86,6 +96,8 @@ function flowToForm(flow: Cr9b5_pt_forecastflows, linkedPropIds: string[]): Flow
     vatAmount: String(flow.cr9b5_vatamount ?? ''), vatIsManual: flow.cr9b5_vatismanual ?? false,
     allProperties: flow.cr9b5_allproperties ?? true, propertyIds: linkedPropIds, notes: flow.cr9b5_notes ?? '',
     effectiveFrom: firstOfNextMonth(),
+    amountSource: (raw['svm_amountsource'] as number) ?? AMOUNT_SOURCE_FIXED,
+    percentage: String((raw['svm_percentage'] as number) ?? ''), components,
   }
 }
 
@@ -180,11 +192,27 @@ export default function ForecastFlows() {
   })
 
   function openNew() { setForm(emptyForm()); setFormError(''); setFormOpen(true) }
-  function openEdit(flow: Cr9b5_pt_forecastflows) {
-    setForm(flowToForm(flow, propIdsForFlow(flow.cr9b5_pt_forecastflowid)))
+  async function openEdit(flow: Cr9b5_pt_forecastflows) {
+    const compRes = await Svm_forecastflowcomponentsService.getAll({ filter: `_svm_targetflcow_value eq '${flow.cr9b5_pt_forecastflowid}'` })
+    const components: ComponentRow[] = (compRes.data ?? []).map(c => ({
+      sourceFlowId: (c as unknown as Record<string, unknown>)['_svm_sourceflow_value'] as string,
+      direction: (c.svm_direction as unknown as number) ?? DIRECTION_ADD,
+    })).filter(c => c.sourceFlowId)
+    setForm(flowToForm(flow, propIdsForFlow(flow.cr9b5_pt_forecastflowid), components))
     setFormError(''); setFormOpen(true)
   }
   function closeForm() { setFormOpen(false); setFormError('') }
+
+  function addComponent() {
+    const first = flows.find(f => isActiveFlow(f) && f.cr9b5_pt_forecastflowid !== form.id)
+    setForm(f => ({ ...f, components: [...f.components, { sourceFlowId: first?.cr9b5_pt_forecastflowid ?? '', direction: DIRECTION_ADD }] }))
+  }
+  function updateComponent(idx: number, patch: Partial<ComponentRow>) {
+    setForm(f => ({ ...f, components: f.components.map((c, i) => i === idx ? { ...c, ...patch } : c) }))
+  }
+  function removeComponent(idx: number) {
+    setForm(f => ({ ...f, components: f.components.filter((_, i) => i !== idx) }))
+  }
 
   function handleGrossChange(val: string) { setForm(f => f.vatIsManual ? { ...f, grossAmount: val } : { ...f, grossAmount: val, vatAmount: calcVat(val) }) }
   function handleVatChange(val: string) { setForm(f => ({ ...f, vatAmount: val, vatIsManual: true, vatRate: 'n/a' })) }
@@ -196,7 +224,11 @@ export default function ForecastFlows() {
     if (!form.categoryId) { setFormError('Category is required.'); return }
     if (!form.startDate) { setFormError('Start date is required.'); return }
     if (!isFirstOfMonth(form.startDate)) { setFormError('Start date must be the first day of a month.'); return }
-    if (!form.grossAmount || parseFloat(form.grossAmount) <= 0) { setFormError('Gross amount must be > 0.'); return }
+    if (form.amountSource === AMOUNT_SOURCE_CALCULATED) {
+      if (!form.percentage || parseFloat(form.percentage) <= 0) { setFormError('Percentage must be > 0.'); return }
+      if (form.components.length === 0) { setFormError('Add at least one linked flow.'); return }
+      if (form.components.some(c => !c.sourceFlowId)) { setFormError('Every linked flow row needs a flow selected.'); return }
+    } else if (!form.grossAmount || parseFloat(form.grossAmount) <= 0) { setFormError('Gross amount must be > 0.'); return }
     if (!form.allProperties && form.propertyIds.length === 0) { setFormError('Select at least one property.'); return }
     if ((form.frequency as number) === FREQ_DAILY && form.daysOfWeek.length === 0) { setFormError('Select at least one day of the week.'); return }
     if (form.id) {
@@ -222,6 +254,7 @@ export default function ForecastFlows() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const newId = (res.data as any)?.cr9b5_pt_forecastflowid as string
     await savePropertyLinks(newId)
+    await saveComponents(newId)
     await logActivity('Created', 'Forecast Flow', form.name.trim())
   }
 
@@ -243,12 +276,14 @@ export default function ForecastFlows() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const newId = (res.data as any)?.cr9b5_pt_forecastflowid as string
     await savePropertyLinks(newId)
+    await saveComponents(newId)
     await logActivity('Updated', 'Forecast Flow', form.name.trim(), `Versioned from ${form.effectiveFrom}`)
   }
 
   function buildPayload() {
-    const gross = parseFloat(form.grossAmount) || 0
-    const vat = parseFloat(form.vatAmount) || 0
+    const isCalculated = form.amountSource === AMOUNT_SOURCE_CALCULATED
+    const gross = isCalculated ? 0 : (parseFloat(form.grossAmount) || 0)
+    const vat = isCalculated ? 0 : (parseFloat(form.vatAmount) || 0)
     const net = Math.round((gross - vat) * 100) / 100
     return {
       cr9b5_name: form.name.trim(),
@@ -261,10 +296,30 @@ export default function ForecastFlows() {
       ...(form.frequency === FREQ_DAILY && form.daysOfWeek.length > 0 ? { cr9b5_daysofweek: form.daysOfWeek.join(',') } : {}),
       cr9b5_startdate: form.startDate,
       ...(form.endDate && form.frequency !== FREQ_ONE_OFF ? { cr9b5_enddate: form.endDate } : form.frequency === FREQ_ONE_OFF ? { cr9b5_enddate: form.startDate } : {}),
-      cr9b5_grossamount: gross, cr9b5_vatrate: form.vatIsManual ? 'n/a' : form.vatRate, cr9b5_vatamount: vat,
-      cr9b5_netamount: net, cr9b5_vatismanual: form.vatIsManual, cr9b5_allproperties: form.allProperties,
+      cr9b5_grossamount: isCalculated ? null : gross,
+      cr9b5_vatrate: isCalculated ? null : (form.vatIsManual ? 'n/a' : form.vatRate),
+      cr9b5_vatamount: isCalculated ? null : vat,
+      cr9b5_netamount: isCalculated ? null : net,
+      cr9b5_vatismanual: isCalculated ? false : form.vatIsManual,
+      cr9b5_allproperties: form.allProperties,
       cr9b5_notes: form.notes.trim() || null,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      svm_amountsource: form.amountSource as any,
+      svm_percentage: isCalculated ? (parseFloat(form.percentage) || 0) : null,
     }
+  }
+
+  async function saveComponents(flowId: string) {
+    if (form.amountSource !== AMOUNT_SOURCE_CALCULATED) return
+    await Promise.all(form.components.filter(c => c.sourceFlowId).map(c =>
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      Svm_forecastflowcomponentsService.create({
+        svm_name: `${form.name.trim()} component`,
+        'svm_TargetFlcow@odata.bind': `/cr9b5_pt_forecastflows(${flowId})`,
+        'svm_SourceFlow@odata.bind': `/cr9b5_pt_forecastflows(${c.sourceFlowId})`,
+        svm_direction: c.direction as any,
+      } as any)
+    ))
   }
 
   async function savePropertyLinks(flowId: string) {
@@ -347,7 +402,11 @@ export default function ForecastFlows() {
                     <TableCell>{FREQ_LABELS[Number(f.cr9b5_frequency)] ?? '—'}</TableCell>
                     <TableCell>{f.cr9b5_startdate?.slice(0, 10) ?? '—'}</TableCell>
                     <TableCell>{f.cr9b5_enddate?.slice(0, 10) ?? '∞'}</TableCell>
-                    <TableCell style={{ fontWeight: 600 }}>{raw['cr9b5_grossamount'] != null ? formatMoney(raw['cr9b5_grossamount'] as number) : '—'}</TableCell>
+                    <TableCell style={{ fontWeight: 600 }}>
+                      {Number(raw['svm_amountsource']) === AMOUNT_SOURCE_CALCULATED
+                        ? <Badge appearance="tint" color="brand">Calculated · {String(raw['svm_percentage'] ?? '')}%</Badge>
+                        : raw['cr9b5_grossamount'] != null ? formatMoney(raw['cr9b5_grossamount'] as number) : '—'}
+                    </TableCell>
                     <TableCell style={{ fontSize: '12px' }}>{f.cr9b5_allproperties ? <em>All</em> : linked.map(id => propertyName(id)).join(', ') || '—'}</TableCell>
                     <TableCell>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
@@ -442,26 +501,68 @@ export default function ForecastFlows() {
                 )}
               </div>
 
-              <div className={s.grid2}>
-                <Field label="Gross Amount (€)" required>
-                  <Input type="number" min={0} step={0.01} value={form.grossAmount} onChange={(_, d) => handleGrossChange(d.value)} placeholder="0.00" />
-                </Field>
-                <Field label={
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    VAT Amount (€)
-                    {form.vatIsManual && <Text size={100} weight="semibold" style={{ backgroundColor: tokens.colorPaletteMarigoldBackground2, color: tokens.colorPaletteMarigoldForeground1, padding: '1px 6px', borderRadius: 4 }}>manual</Text>}
-                    <Button appearance="transparent" size="small" onClick={resetVat} title="Reset to 7%" style={{ marginLeft: 'auto' }}>↺</Button>
-                  </span>
-                }>
-                  <Input type="number" min={0} step={0.01} value={form.vatAmount} onChange={(_, d) => handleVatChange(d.value)} placeholder="0.00" />
-                  <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>Rate: {form.vatIsManual ? 'n/a (manual)' : `${form.vatRate}%`}</Text>
-                </Field>
+              <div>
+                <Text weight="medium" size={300} style={{ display: 'block', marginBottom: 8 }}>Amount Source *</Text>
+                <div style={{ display: 'flex', gap: '12px' }}>
+                  {[{ val: AMOUNT_SOURCE_FIXED, label: 'Fixed Amount' }, { val: AMOUNT_SOURCE_CALCULATED, label: 'Calculated from Other Flows' }].map(t => (
+                    <button key={t.val} type="button" className={s.toggle}
+                      style={form.amountSource === t.val ? { borderColor: tokens.colorBrandForeground1, backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : { borderColor: tokens.colorNeutralStroke2 }}
+                      onClick={() => setForm(f => ({ ...f, amountSource: t.val }))}>{t.label}</button>
+                  ))}
+                </div>
               </div>
 
-              <div className={s.totalRow}>
-                <Text weight="medium">Net Amount</Text>
-                <Text size={500} weight="semibold">{grossNum > 0 ? formatMoney(netNum) : '—'}</Text>
-              </div>
+              {form.amountSource === AMOUNT_SOURCE_FIXED ? (
+                <>
+                  <div className={s.grid2}>
+                    <Field label="Gross Amount (€)" required>
+                      <Input type="number" min={0} step={0.01} value={form.grossAmount} onChange={(_, d) => handleGrossChange(d.value)} placeholder="0.00" />
+                    </Field>
+                    <Field label={
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        VAT Amount (€)
+                        {form.vatIsManual && <Text size={100} weight="semibold" style={{ backgroundColor: tokens.colorPaletteMarigoldBackground2, color: tokens.colorPaletteMarigoldForeground1, padding: '1px 6px', borderRadius: 4 }}>manual</Text>}
+                        <Button appearance="transparent" size="small" onClick={resetVat} title="Reset to 7%" style={{ marginLeft: 'auto' }}>↺</Button>
+                      </span>
+                    }>
+                      <Input type="number" min={0} step={0.01} value={form.vatAmount} onChange={(_, d) => handleVatChange(d.value)} placeholder="0.00" />
+                      <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>Rate: {form.vatIsManual ? 'n/a (manual)' : `${form.vatRate}%`}</Text>
+                    </Field>
+                  </div>
+
+                  <div className={s.totalRow}>
+                    <Text weight="medium">Net Amount</Text>
+                    <Text size={500} weight="semibold">{grossNum > 0 ? formatMoney(netNum) : '—'}</Text>
+                  </div>
+                </>
+              ) : (
+                <div className={s.panel} style={{ backgroundColor: tokens.colorBrandBackground2, borderColor: tokens.colorBrandStroke2 }}>
+                  <Text weight="semibold" size={300} style={{ color: tokens.colorBrandForeground1 }}>Calculated Amount</Text>
+                  <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                    Each month's amount is <strong>Percentage %</strong> of the signed sum of the linked flows below (e.g. A + B − D), recomputed from each flow's own amount for that month.
+                  </Text>
+                  <Field label="Percentage (%)" required>
+                    <Input type="number" min={0} step={0.01} value={form.percentage} onChange={(_, d) => setForm(f => ({ ...f, percentage: d.value }))} placeholder="25" />
+                  </Field>
+                  <Text weight="medium" size={300}>Linked Flows</Text>
+                  {form.components.map((c, idx) => (
+                    <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <Select style={{ flex: 1 }} value={c.sourceFlowId} onChange={e => updateComponent(idx, { sourceFlowId: e.target.value })}>
+                        <option value="">— Select flow —</option>
+                        {flows.filter(f => isActiveFlow(f) && f.cr9b5_pt_forecastflowid !== form.id).map(f => (
+                          <option key={f.cr9b5_pt_forecastflowid} value={f.cr9b5_pt_forecastflowid}>{f.cr9b5_name}</option>
+                        ))}
+                      </Select>
+                      <Select value={c.direction} onChange={e => updateComponent(idx, { direction: Number(e.target.value) })}>
+                        <option value={DIRECTION_ADD}>+ Add</option>
+                        <option value={DIRECTION_SUBTRACT}>− Subtract</option>
+                      </Select>
+                      <Button appearance="subtle" size="small" onClick={() => removeComponent(idx)}>✕</Button>
+                    </div>
+                  ))}
+                  <Button appearance="outline" size="small" onClick={addComponent} style={{ alignSelf: 'flex-start' }}>+ Add Linked Flow</Button>
+                </div>
+              )}
 
               <div>
                 <Text weight="medium" size={300} style={{ display: 'block', marginBottom: 8 }}>Properties</Text>
