@@ -19,6 +19,9 @@ const useStyles = makeStyles({
   tableWrap: { flex: 1, overflow: 'auto' },
   table: { width: '100%', borderCollapse: 'collapse', fontSize: '14px', minWidth: '1400px' },
   th: { position: 'sticky', top: 0, backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left', padding: '10px 10px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground3, textTransform: 'uppercase', whiteSpace: 'nowrap' },
+  thSortable: { cursor: 'pointer', userSelect: 'none' },
+  filters: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+  filterLabel: { fontSize: '12px', color: tokens.colorNeutralForeground3 },
   td: { padding: '6px 8px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
   input: { border: `1px solid ${tokens.colorNeutralStroke1}`, borderRadius: tokens.borderRadiusMedium, padding: '6px 8px', fontSize: '14px', width: '100%', backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground1 },
   footer: { padding: '14px 24px', borderTop: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2, display: 'flex', alignItems: 'center', gap: '16px' },
@@ -76,6 +79,26 @@ const FIELD_KEYS: (keyof Row)[] = [
   'baseAmount', 'taxAmount', 'totalAmount', 'adults', 'children', 'babies', 'bookingRef',
 ]
 
+type SortKey = 'property' | 'checkin' | 'checkout' | 'nights' | 'days' | 'contact' | 'baseAmount' | 'taxAmount' | 'totalAmount' | 'adults' | 'children' | 'babies' | 'bookingRef'
+
+const COLUMNS: { key: SortKey; label: string }[] = [
+  { key: 'property', label: 'Property' },
+  { key: 'checkin', label: 'Check-in' },
+  { key: 'checkout', label: 'Check-out' },
+  { key: 'nights', label: 'Nights' },
+  { key: 'days', label: 'Days' },
+  { key: 'contact', label: 'Contact' },
+  { key: 'baseAmount', label: 'Base Amount' },
+  { key: 'taxAmount', label: 'Tax Amount' },
+  { key: 'totalAmount', label: 'Total Amount' },
+  { key: 'adults', label: 'Adults' },
+  { key: 'children', label: 'Children' },
+  { key: 'babies', label: 'Babies' },
+  { key: 'bookingRef', label: 'Booking Reference' },
+]
+
+const NUMERIC_SORT_KEYS = new Set<SortKey>(['nights', 'days', 'baseAmount', 'taxAmount', 'totalAmount', 'adults', 'children', 'babies'])
+
 export default function ClientOccupancy() {
   const s = useStyles()
   const [rows, setRows] = useState<Row[]>([])
@@ -86,6 +109,12 @@ export default function ClientOccupancy() {
   const [saving, setSaving] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+
+  const [filterPropertyId, setFilterPropertyId] = useState('')
+  const [filterCheckinFrom, setFilterCheckinFrom] = useState('')
+  const [filterCheckinTo, setFilterCheckinTo] = useState('')
+  const [sortKey, setSortKey] = useState<SortKey>('checkin')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
 
   async function load() {
     setLoading(true)
@@ -187,6 +216,46 @@ export default function ClientOccupancy() {
       : undefined
   }
 
+  function propertyName(id: string): string {
+    return properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? ''
+  }
+  function contactName(id: string): string {
+    return contacts.find(c => c.cr9b5_pt_contactid === id)?.cr9b5_name ?? ''
+  }
+
+  const displayRows = useMemo(() => {
+    let filtered = rows
+    if (filterPropertyId) filtered = filtered.filter(r => r.propertyId === filterPropertyId)
+    if (filterCheckinFrom) filtered = filtered.filter(r => r.checkin && r.checkin >= filterCheckinFrom)
+    if (filterCheckinTo) filtered = filtered.filter(r => r.checkin && r.checkin <= filterCheckinTo)
+
+    function sortValue(row: Row): string | number {
+      switch (sortKey) {
+        case 'property': return propertyName(row.propertyId).toLowerCase()
+        case 'contact': return contactName(row.contactId).toLowerCase()
+        case 'checkin': return row.checkin || ''
+        case 'checkout': return row.checkout || ''
+        case 'bookingRef': return row.bookingRef.toLowerCase()
+        default: return NUMERIC_SORT_KEYS.has(sortKey) ? (parseFloat(row[sortKey]) || 0) : ''
+      }
+    }
+    const sorted = [...filtered].sort((a, b) => {
+      const va = sortValue(a); const vb = sortValue(b)
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return sorted
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, properties, contacts, filterPropertyId, filterCheckinFrom, filterCheckinTo, sortKey, sortDir])
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortKey(key); setSortDir('asc') }
+  }
+  function sortIndicator(key: SortKey): string {
+    return sortKey !== key ? '' : sortDir === 'asc' ? ' ▲' : ' ▼'
+  }
+
   if (loading) return <Spinner label="Loading…" style={{ padding: '24px' }} />
 
   return (
@@ -195,35 +264,43 @@ export default function ClientOccupancy() {
         <div>
           <Text size={600} weight="semibold" style={{ display: 'block' }}>Client Occupancy</Text>
           <Text className={s.intro} size={200}>
-            Guest bookings, editable in place. Changed fields are highlighted until saved.
+            Guest bookings, editable in place. Changed fields are highlighted until saved. Click a column header to sort.
           </Text>
+        </div>
+        <div className={s.filters}>
+          <span className={s.filterLabel}>Property</span>
+          <select className={s.input} style={{ width: '180px' }} value={filterPropertyId} onChange={e => setFilterPropertyId(e.target.value)}>
+            <option value="">All properties</option>
+            {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+          </select>
+          <span className={s.filterLabel}>Check-in from</span>
+          <input type="date" className={s.input} style={{ width: '150px' }} value={filterCheckinFrom} onChange={e => setFilterCheckinFrom(e.target.value)} />
+          <span className={s.filterLabel}>to</span>
+          <input type="date" className={s.input} style={{ width: '150px' }} value={filterCheckinTo} onChange={e => setFilterCheckinTo(e.target.value)} />
+          {(filterPropertyId || filterCheckinFrom || filterCheckinTo) && (
+            <Button appearance="subtle" size="small" onClick={() => { setFilterPropertyId(''); setFilterCheckinFrom(''); setFilterCheckinTo('') }}>Clear filters</Button>
+          )}
         </div>
       </div>
 
       {rows.length === 0 ? (
         <div className={s.empty}>No client bookings recorded yet.</div>
+      ) : displayRows.length === 0 ? (
+        <div className={s.empty}>No bookings match the current filters.</div>
       ) : (
         <div className={s.tableWrap}>
           <table className={s.table}>
             <thead>
               <tr>
-                <th className={s.th}>Property</th>
-                <th className={s.th}>Check-in</th>
-                <th className={s.th}>Check-out</th>
-                <th className={s.th}>Nights</th>
-                <th className={s.th}>Days</th>
-                <th className={s.th}>Contact</th>
-                <th className={s.th}>Base Amount</th>
-                <th className={s.th}>Tax Amount</th>
-                <th className={s.th}>Total Amount</th>
-                <th className={s.th}>Adults</th>
-                <th className={s.th}>Children</th>
-                <th className={s.th}>Babies</th>
-                <th className={s.th}>Booking Reference</th>
+                {COLUMNS.map(col => (
+                  <th key={col.key} className={`${s.th} ${s.thSortable}`} onClick={() => toggleSort(col.key)}>
+                    {col.label}{sortIndicator(col.key)}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {rows.map(row => (
+              {displayRows.map(row => (
                 <tr key={row.id}>
                   <td className={s.td}>
                     <select className={s.input} style={changedStyle(row.id, 'propertyId')} value={row.propertyId} onChange={e => updateRow(row.id, { propertyId: e.target.value })}>
