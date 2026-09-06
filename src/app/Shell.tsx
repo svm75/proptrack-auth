@@ -1,8 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import { makeStyles, tokens, Button } from '@fluentui/react-components'
 import { WeatherMoonRegular, WeatherSunnyRegular } from '@fluentui/react-icons'
 import { useDarkMode } from './darkMode'
+import { useGuardedNavigate } from './unsavedChangesContext'
 import { AppErrorBoundary } from '@/components/AppErrorBoundary'
 import { QueryErrorBanner } from '@/components/QueryErrorBanner'
 import { GlobalSearch } from '@/components/GlobalSearch'
@@ -52,6 +53,7 @@ const NAV: NavItem[] = [
   { to: '/invoices', label: 'Invoices' },
   { to: '/invoices/regular', label: 'Regular Invoices', parent: '/invoices' },
   { to: '/invoices/owner-occupancy', label: 'Owner Occupancy', parent: '/invoices' },
+  { to: '/invoices/client-occupancy', label: 'Client Occupancy', parent: '/invoices' },
   { to: '/properties', label: 'Properties' },
   { to: '/contacts', label: 'Contacts' },
   { to: '/admin', label: 'Admin' },
@@ -90,6 +92,7 @@ function Topbar() {
 export function Shell({ children }: { children: ReactNode }) {
   const s = useStyles()
   const { pathname } = useLocation()
+  const guardedNavigate = useGuardedNavigate()
   const isActive = (to: string) => (to === '/' ? pathname === '/' : pathname === to)
 
   return (
@@ -97,9 +100,14 @@ export function Shell({ children }: { children: ReactNode }) {
       <nav className={s.rail}>
         <div className={s.brand}>Property Tracker<span className={s.brandSub}>PropTrack</span></div>
         {NAV.map(n => (
-          <Link key={n.to} to={n.to} className={`${n.parent ? s.subLink : s.link} ${isActive(n.to) ? s.on : ''}`}>
+          <a
+            key={n.to}
+            href={n.to}
+            className={`${n.parent ? s.subLink : s.link} ${isActive(n.to) ? s.on : ''}`}
+            onClick={e => { e.preventDefault(); guardedNavigate(n.to) }}
+          >
             {n.label}
-          </Link>
+          </a>
         ))}
       </nav>
       <div className={s.main}>

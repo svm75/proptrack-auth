@@ -7,6 +7,7 @@ import { propTrackTheme, propTrackThemeDark, getStoredDarkMode } from '@/app/the
 import { DarkModeContext } from '@/app/darkMode'
 import { Shell } from '@/app/Shell'
 import { AppRoutes } from '@/app/routes'
+import { UnsavedChangesProvider } from '@/app/unsavedChanges'
 
 export default function App() {
   const [dark, setDark] = useState(getStoredDarkMode)
@@ -20,9 +21,11 @@ export default function App() {
       <FluentProvider theme={dark ? propTrackThemeDark : propTrackTheme}>
         <QueryClientProvider client={queryClient}>
           <BrowserRouter>
-            <Shell>
-              <AppRoutes />
-            </Shell>
+            <UnsavedChangesProvider>
+              <Shell>
+                <AppRoutes />
+              </Shell>
+            </UnsavedChangesProvider>
           </BrowserRouter>
         </QueryClientProvider>
       </FluentProvider>

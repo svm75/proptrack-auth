@@ -9,6 +9,7 @@ const ForecastView      = lazy(() => import('@/screens/ForecastView'))
 const Invoices           = lazy(() => import('@/screens/Invoices'))
 const RegularInvoices    = lazy(() => import('@/screens/RegularInvoices'))
 const OwnerOccupancy     = lazy(() => import('@/screens/OwnerOccupancy'))
+const ClientOccupancy    = lazy(() => import('@/screens/ClientOccupancy'))
 const Properties         = lazy(() => import('@/screens/Properties'))
 const Contacts           = lazy(() => import('@/screens/Contacts'))
 const Admin              = lazy(() => import('@/screens/Admin'))
@@ -33,6 +34,7 @@ export function AppRoutes() {
         <Route path="/invoices" element={<Invoices />} />
         <Route path="/invoices/regular" element={<RegularInvoices />} />
         <Route path="/invoices/owner-occupancy" element={<OwnerOccupancy />} />
+        <Route path="/invoices/client-occupancy" element={<ClientOccupancy />} />
         <Route path="/properties" element={<Properties />} />
         <Route path="/contacts" element={<Contacts />} />
         <Route path="/admin" element={<Admin />} />
