@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type CSSProperties } from 'react'
 import { makeStyles, tokens, Button, Text, Spinner } from '@fluentui/react-components'
 import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
 import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
@@ -21,7 +21,6 @@ const useStyles = makeStyles({
   th: { position: 'sticky', top: 0, backgroundColor: tokens.colorNeutralBackground2, borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, textAlign: 'left', padding: '10px 10px', fontSize: '11px', fontWeight: 600, color: tokens.colorNeutralForeground3, textTransform: 'uppercase', whiteSpace: 'nowrap' },
   td: { padding: '6px 8px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` },
   input: { border: `1px solid ${tokens.colorNeutralStroke1}`, borderRadius: tokens.borderRadiusMedium, padding: '6px 8px', fontSize: '14px', width: '100%', backgroundColor: tokens.colorNeutralBackground1, color: tokens.colorNeutralForeground1 },
-  changed: { backgroundColor: tokens.colorPaletteRedBackground1, borderColor: tokens.colorPaletteRedBorder1 },
   footer: { padding: '14px 24px', borderTop: `1px solid ${tokens.colorNeutralStroke2}`, backgroundColor: tokens.colorNeutralBackground2, display: 'flex', alignItems: 'center', gap: '16px' },
   empty: { textAlign: 'center', padding: '48px', color: tokens.colorNeutralForeground4 },
 })
@@ -182,8 +181,10 @@ export default function ClientOccupancy() {
     onReset: resetAll,
   })
 
-  function inputClass(id: string, key: keyof Row): string {
-    return isChanged(id, key) ? `${s.input} ${s.changed}` : s.input
+  function changedStyle(id: string, key: keyof Row): CSSProperties | undefined {
+    return isChanged(id, key)
+      ? { backgroundColor: tokens.colorPaletteRedBackground1, borderColor: tokens.colorPaletteRedBorder1 }
+      : undefined
   }
 
   if (loading) return <Spinner label="Loading…" style={{ padding: '24px' }} />
@@ -225,28 +226,28 @@ export default function ClientOccupancy() {
               {rows.map(row => (
                 <tr key={row.id}>
                   <td className={s.td}>
-                    <select className={inputClass(row.id, 'propertyId')} value={row.propertyId} onChange={e => updateRow(row.id, { propertyId: e.target.value })}>
+                    <select className={s.input} style={changedStyle(row.id, 'propertyId')} value={row.propertyId} onChange={e => updateRow(row.id, { propertyId: e.target.value })}>
                       <option value="">Select property…</option>
                       {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
                     </select>
                   </td>
-                  <td className={s.td}><input type="date" className={inputClass(row.id, 'checkin')} value={row.checkin} onChange={e => updateRow(row.id, { checkin: e.target.value })} /></td>
-                  <td className={s.td}><input type="date" className={inputClass(row.id, 'checkout')} value={row.checkout} onChange={e => updateRow(row.id, { checkout: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" min={0} className={inputClass(row.id, 'nights')} style={{ width: '70px' }} value={row.nights} onChange={e => updateRow(row.id, { nights: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" min={0} className={inputClass(row.id, 'days')} style={{ width: '70px' }} value={row.days} onChange={e => updateRow(row.id, { days: e.target.value })} /></td>
+                  <td className={s.td}><input type="date" className={s.input} style={changedStyle(row.id, 'checkin')} value={row.checkin} onChange={e => updateRow(row.id, { checkin: e.target.value })} /></td>
+                  <td className={s.td}><input type="date" className={s.input} style={changedStyle(row.id, 'checkout')} value={row.checkout} onChange={e => updateRow(row.id, { checkout: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" min={0} className={s.input} style={{ width: '70px', ...changedStyle(row.id, 'nights') }} value={row.nights} onChange={e => updateRow(row.id, { nights: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" min={0} className={s.input} style={{ width: '70px', ...changedStyle(row.id, 'days') }} value={row.days} onChange={e => updateRow(row.id, { days: e.target.value })} /></td>
                   <td className={s.td}>
-                    <select className={inputClass(row.id, 'contactId')} value={row.contactId} onChange={e => updateRow(row.id, { contactId: e.target.value })}>
+                    <select className={s.input} style={changedStyle(row.id, 'contactId')} value={row.contactId} onChange={e => updateRow(row.id, { contactId: e.target.value })}>
                       <option value="">Select contact…</option>
                       {contacts.map(c => <option key={c.cr9b5_pt_contactid} value={c.cr9b5_pt_contactid}>{c.cr9b5_name}</option>)}
                     </select>
                   </td>
-                  <td className={s.td}><input type="number" step="0.01" className={inputClass(row.id, 'baseAmount')} style={{ width: '100px', textAlign: 'right' }} value={row.baseAmount} onChange={e => updateRow(row.id, { baseAmount: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" step="0.01" className={inputClass(row.id, 'taxAmount')} style={{ width: '100px', textAlign: 'right' }} value={row.taxAmount} onChange={e => updateRow(row.id, { taxAmount: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" step="0.01" className={inputClass(row.id, 'totalAmount')} style={{ width: '100px', textAlign: 'right' }} value={row.totalAmount} onChange={e => updateRow(row.id, { totalAmount: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" min={0} className={inputClass(row.id, 'adults')} style={{ width: '64px' }} value={row.adults} onChange={e => updateRow(row.id, { adults: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" min={0} className={inputClass(row.id, 'children')} style={{ width: '64px' }} value={row.children} onChange={e => updateRow(row.id, { children: e.target.value })} /></td>
-                  <td className={s.td}><input type="number" min={0} className={inputClass(row.id, 'babies')} style={{ width: '64px' }} value={row.babies} onChange={e => updateRow(row.id, { babies: e.target.value })} /></td>
-                  <td className={s.td}><input className={inputClass(row.id, 'bookingRef')} style={{ width: '140px' }} value={row.bookingRef} onChange={e => updateRow(row.id, { bookingRef: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" step="0.01" className={s.input} style={{ width: '100px', textAlign: 'right', ...changedStyle(row.id, 'baseAmount') }} value={row.baseAmount} onChange={e => updateRow(row.id, { baseAmount: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" step="0.01" className={s.input} style={{ width: '100px', textAlign: 'right', ...changedStyle(row.id, 'taxAmount') }} value={row.taxAmount} onChange={e => updateRow(row.id, { taxAmount: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" step="0.01" className={s.input} style={{ width: '100px', textAlign: 'right', ...changedStyle(row.id, 'totalAmount') }} value={row.totalAmount} onChange={e => updateRow(row.id, { totalAmount: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" min={0} className={s.input} style={{ width: '64px', ...changedStyle(row.id, 'adults') }} value={row.adults} onChange={e => updateRow(row.id, { adults: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" min={0} className={s.input} style={{ width: '64px', ...changedStyle(row.id, 'children') }} value={row.children} onChange={e => updateRow(row.id, { children: e.target.value })} /></td>
+                  <td className={s.td}><input type="number" min={0} className={s.input} style={{ width: '64px', ...changedStyle(row.id, 'babies') }} value={row.babies} onChange={e => updateRow(row.id, { babies: e.target.value })} /></td>
+                  <td className={s.td}><input className={s.input} style={{ width: '140px', ...changedStyle(row.id, 'bookingRef') }} value={row.bookingRef} onChange={e => updateRow(row.id, { bookingRef: e.target.value })} /></td>
                 </tr>
               ))}
             </tbody>
