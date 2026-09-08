@@ -17,6 +17,11 @@
 #   cp .env.example .env   # fill in real values — nothing here is pre-filled
 #   docker compose up -d --build
 
+# Pins the Compose project name to "proptracker" — without this, Docker Compose names the
+# project after the directory it's run from (here, "deploy"), which is what Container Manager's
+# Project view was showing instead of a recognizable PropTrack entry.
+name: proptracker
+
 services:
   caddy:
     image: caddy:2-alpine
