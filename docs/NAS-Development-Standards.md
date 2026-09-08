@@ -340,6 +340,46 @@ Application rollback and database rollback are separate concerns.
 Do not assume that reverting application code automatically reverts
 the database schema.
 
+### Rebuilding an existing deployment (picking up new code, no rollback)
+
+The containers already exist; this replaces their images and recreates only what changed —
+volumes (Postgres data lives outside this compose stack entirely; the documents bind-mount is a
+host directory, not a Docker volume) and the shared `myplatform` instance are untouched either
+way.
+
+**If you deployed via the command line** (`docker compose up -d --build`, as PropTrack's
+production and test stacks currently are):
+
+    ssh SV_ADMIN@<nas-tailscale-hostname>
+    sudo /usr/local/bin/docker compose -f /volume1/docker/<app>/deploy/docker-compose.yml up -d --build
+
+For PropTrack specifically:
+
+    # production
+    sudo /usr/local/bin/docker compose -f /volume1/docker/proptracker/deploy/docker-compose.yml up -d --build
+
+    # test
+    sudo /usr/local/bin/docker compose -f /volume1/docker/proptracker-test/deploy/docker-compose.yml up -d --build
+
+This rebuilds only images whose build context actually changed (Docker's own layer cache skips
+unchanged steps — a pure documentation change, for instance, still triggers a rebuild of the
+`COPY . .` layer onward but reuses the cached `npm install` layer), and only recreates containers
+whose image or config actually differs from what's running — an unaffected container (a sibling
+app, or even a service within the same stack that didn't change) is left alone. Get the new code
+onto the NAS first (the same `tar`-over-SSH transfer used for the initial deployment, or `rsync`
+if that works on your NAS's SSH setup — it didn't on this one) before running this.
+
+**If you deployed via Container Manager's Project wizard**: open the project → **Action** →
+**Build** (or **Recreate**, depending on DSM version) — same effect, driven from the GUI instead.
+
+**Either way, verify afterward** — don't assume a clean exit code means it actually works:
+
+    curl -s http://127.0.0.1:<port>/api/health
+    curl -s http://127.0.0.1:<port>/api/health/db
+
+and check sibling containers' uptimes are unaffected (`docker ps` — a rebuild of one app's stack
+must never restart another app's containers).
+
 ---
 
 # 12. Development Workflow
