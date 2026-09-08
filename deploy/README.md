@@ -1,11 +1,11 @@
 # Deploying PropTrack V2 to the Synology NAS (frontend + API + Caddy)
 
-This supersedes `api/deploy/` (the earlier, API-only package built during Step 9, when the
-frontend was still Power-Apps-hosted). Now that the frontend is a standalone Vite build (final
-migration phase), it deploys alongside the API on this NAS, following the exact
-`wealth-ledger`/`TripOrganiser` same-origin pattern: one Caddy container proxies `/api/*` to the
-`api` container and everything else to the `frontend` container. `api/deploy/` is left in place,
-unmodified, for historical reference — it is not used by this package.
+This is the deployment package for PropTrack V2 (frontend + API + Caddy, same-origin), following
+the `wealth-ledger`/`TripOrganiser` pattern: one Caddy container proxies `/api/*` to the `api`
+container and everything else to the `frontend` container. (This superseded an earlier, API-only
+package built during Step 9, when the frontend was still Power-Apps-hosted and needed to be
+reached cross-origin; that package — `api/deploy/` — has since been removed, now that this one
+fully replaces it.)
 
 ## NAS directory convention
 

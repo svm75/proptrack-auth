@@ -40,9 +40,6 @@ on `127.0.0.1:8083`). PostgreSQL itself is **not** part of this compose file —
 outward to the NAS's existing shared `myplatform` instance as the least-privilege `proptrack_app`
 role, exactly as it has since Step 6.
 
-`api/deploy/` (the earlier, API-only package built when the frontend was still Power-Apps-hosted)
-is retained for historical reference only — do not deploy from it; use `deploy/` instead.
-
 ## 2. Configuring secrets
 
 Create `deploy/.env` on the deployment host — **never commit this file**. Use
@@ -82,6 +79,18 @@ address reachable **from inside the Docker network** the `api` container runs in
 correct internal address/port on the NAS itself before deploying (a Tailscale-forwarded external
 port is not necessarily the same as the container-network-internal one). `PGPOOL_MAX` controls
 the connection pool ceiling (default 5).
+
+### 4a. Test database (development only — never used in production)
+
+A dedicated `proptrack_test` database exists on the same shared PostgreSQL instance, with its own
+least-privilege role `proptrack_test_app` (identical privilege shape to `proptrack_app` — see
+`db/004_application_role.sql`'s pattern) and the same schema (`proptrack`) and structure
+(`db/001`-`007` applied). It is completely isolated from `myplatform`/`proptrack_app` — separate
+database, separate role, zero shared data. Local development and `cd api && npm test` should
+point `api/.env` at this database (see `api/.env.example`'s defaults) rather than production, so
+day-to-day work and test runs never touch real data. The production deployment
+(`deploy/docker-compose.yml`/`deploy/.env`) always points at `myplatform`/`proptrack_app` — the
+test database is never referenced by anything deployed to the NAS.
 
 ## 5. HTTPS and exposure (Tailscale Serve vs Funnel)
 

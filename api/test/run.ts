@@ -1,8 +1,14 @@
 /**
  * Focused checks for Step 6 (migration.md §6 "Focused tests only"). Not a broad test suite —
- * one representative check per required area, run against the real migrated Postgres data.
- * Every mutation runs inside a transaction that is rolled back, or creates a row tagged
- * `__step6_test__` that is deleted at the end — nothing is left behind in production data.
+ * one representative check per required area. Every mutation runs inside a transaction that is
+ * rolled back, or creates a row tagged `__step6_test__` that is deleted at the end (including
+ * its Activity Log rows, per migration.md's "Clean NAS deployment attempt" — a real leak found
+ * and fixed there) — nothing is left behind, whichever database this runs against.
+ *
+ * Point `api/.env` at the dedicated `proptrack_test` database (see `api/.env.example`) for
+ * day-to-day development — it's isolated from production, so nothing here needs to be quite as
+ * careful about residue as when this was run directly against production during migration. Only
+ * run this against `myplatform`/`proptrack_app` for a deliberate, authorized production check.
  */
 import 'dotenv/config'
 import { pool, withTransaction } from '../src/db.js'

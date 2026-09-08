@@ -115,6 +115,16 @@ Example:
 
 Production and test application directories must never be confused.
 
+### Port convention
+
+Test deployments publish on production port + 1000, so the two can run side by side on the same
+NAS without colliding, and the relationship between a production and test port is always obvious
+at a glance:
+
+    PropTrack:      8083 (prod)  →  9083 (test)
+    TripOrganiser:  8080 (prod)  →  9080 (test, when one exists)
+    wealth-ledger:  8081 (prod)  →  9081 (test, when one exists)
+
 ---
 
 # 4. Persistent Application Data

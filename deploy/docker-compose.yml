@@ -17,20 +17,25 @@
 #   cp .env.example .env   # fill in real values — nothing here is pre-filled
 #   docker compose up -d --build
 
-# Pins the Compose project name to "proptracker" — without this, Docker Compose names the
-# project after the directory it's run from (here, "deploy"), which is what Container Manager's
-# Project view was showing instead of a recognizable PropTrack entry.
-name: proptracker
+# Pins the Compose project name — without this, Docker Compose names the project after the
+# directory it's run from, which is what Container Manager's Project view would otherwise show
+# instead of a recognizable entry. Defaults to "proptracker" (production); the test deployment
+# under /volume1/docker/proptracker-test/ sets COMPOSE_PROJECT_NAME=proptracker-test in its own
+# .env so both can run side by side on the same NAS without colliding.
+name: ${COMPOSE_PROJECT_NAME:-proptracker}
 
 services:
   caddy:
     image: caddy:2-alpine
-    container_name: proptrack-caddy
+    container_name: ${CONTAINER_PREFIX:-proptrack}-caddy
     restart: unless-stopped
     ports:
-      # Confirm this port is free on the NAS before deploying — distinct from wealth-ledger's
-      # 8081 and TripOrganiser's 8080 on the same host; 8083 is a placeholder, not confirmed free.
-      - "127.0.0.1:8083:80"
+      # Production: 8083 (distinct from wealth-ledger's 8081 and TripOrganiser's 8080 on the same
+      # host). Test: production port + 1000, i.e. 9083 — same convention TripOrganiser/
+      # wealth-ledger would use for their own test deployments (9080/9081) if/when they add one.
+      # Set via CADDY_PORT in .env; defaults to the production port so production's existing
+      # .env (which doesn't set this var) is unaffected.
+      - "127.0.0.1:${CADDY_PORT:-8083}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -50,7 +55,7 @@ services:
       args:
         VITE_API_BASE_URL: /api
         VITE_API_AUTH_TOKEN: "${API_AUTH_TOKEN:?set the shared bearer token — must match the api service's own API_AUTH_TOKEN}"
-    container_name: proptrack-frontend
+    container_name: ${CONTAINER_PREFIX:-proptrack}-frontend
     restart: unless-stopped
     networks:
       - edge
@@ -66,7 +71,7 @@ services:
     build:
       context: ../api
       dockerfile: Dockerfile
-    container_name: proptrack-api
+    container_name: ${CONTAINER_PREFIX:-proptrack}-api
     restart: unless-stopped
     networks:
       - edge
