@@ -1,40 +1,37 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   makeStyles, tokens, Button, Input, Textarea, Field, Select, Checkbox, Text, Badge,
   Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
   Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
 } from '@fluentui/react-components'
-import { Cr9b5_pt_forecastflowsService } from '@/generated/services/Cr9b5_pt_forecastflowsService'
-import { Cr9b5_forecastpropertiesService } from '@/generated/services/Cr9b5_forecastpropertiesService'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Svm_forecastflowcomponentsService } from '@/generated/services/Svm_forecastflowcomponentsService'
-import type { Cr9b5_pt_forecastflows } from '@/generated/models/Cr9b5_pt_forecastflowsModel'
-import type { Cr9b5_forecastproperties } from '@/generated/models/Cr9b5_forecastpropertiesModel'
-import type { Cr9b5_pt_references } from '@/generated/models/Cr9b5_pt_referencesModel'
-import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
+import {
+  useForecastFlows, useForecastFlowProperties, useForecastFlowComponents, useReferenceData,
+  useContacts, useProperties, useSaveForecastFlow, useSaveForecastFlowProperty, useSaveForecastFlowComponent,
+} from '@/hooks/data'
+import {
+  ForecastFlowType, ForecastFrequency, ForecastAmountSource, ForecastFlowComponentDirection, CategoryType,
+} from '@/domain/types'
+import type { ForecastFlow } from '@/domain/types'
 import { logActivity } from '@/services/activitylog'
 import { formatMoney } from '@/domain/money'
 
-const TYPE_INCOME  = 233100000
-const TYPE_EXPENSE = 233100001
-const FREQ_ONE_OFF = 233100000
-const FREQ_DAILY = 233100001
-const FREQ_MONTHLY = 233100003
+const TYPE_INCOME  = ForecastFlowType.Income
+const TYPE_EXPENSE = ForecastFlowType.Expense
+const FREQ_ONE_OFF = ForecastFrequency.OneOff
+const FREQ_DAILY = ForecastFrequency.Daily
+const FREQ_MONTHLY = ForecastFrequency.Monthly
 
-const AMOUNT_SOURCE_FIXED = 925060000
-const AMOUNT_SOURCE_CALCULATED = 925060001
-const DIRECTION_ADD = 925060000
-const DIRECTION_SUBTRACT = 925060001
+const AMOUNT_SOURCE_FIXED = ForecastAmountSource.Fixed
+const AMOUNT_SOURCE_CALCULATED = ForecastAmountSource.Calculated
+const DIRECTION_ADD = ForecastFlowComponentDirection.Add
+const DIRECTION_SUBTRACT = ForecastFlowComponentDirection.Subtract
 
 const FREQ_LABELS: Record<number, string> = {
   233100000: 'One-off', 233100001: 'Daily', 233100002: 'Weekly', 233100003: 'Monthly',
   233100004: 'Quarterly', 233100005: 'Semi-annually', 233100006: 'Annually',
 }
-const REF_INCOME_CATEGORY = 233100005
-const REF_EXPENSE_CATEGORY = 233100006
+const REF_INCOME_CATEGORY = CategoryType.Income
+const REF_EXPENSE_CATEGORY = CategoryType.Expense
 const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
 function today(): string { return new Date().toISOString().slice(0, 10) }
@@ -52,7 +49,7 @@ function lastDayOfCurrentMonth(): string {
   const d = new Date()
   return new Date(d.getFullYear(), d.getMonth() + 1, 0).toISOString().slice(0, 10)
 }
-function isActiveFlow(flow: Cr9b5_pt_forecastflows): boolean { return !flow.cr9b5_enddate || flow.cr9b5_enddate >= today() }
+function isActiveFlow(flow: ForecastFlow): boolean { return !flow.endDate || flow.endDate >= today() }
 function isFirstOfMonth(date: string): boolean { return date.endsWith('-01') }
 function calcVat(gross: string): string {
   const g = parseFloat(gross)
@@ -82,22 +79,21 @@ function parseDaysOfWeek(s: string): number[] {
   if (!s) return [1, 2, 3, 4, 5]
   return s.split(',').map(Number).filter(n => n >= 1 && n <= 7)
 }
-function flowToForm(flow: Cr9b5_pt_forecastflows, linkedPropIds: string[], components: ComponentRow[]): FlowForm {
-  const raw = flow as unknown as Record<string, unknown>
+function flowToForm(flow: ForecastFlow, linkedPropIds: string[], components: ComponentRow[]): FlowForm {
   return {
-    id: flow.cr9b5_pt_forecastflowid,
-    parentFlowId: (flow._cr9b5_parentflowid_value as string | undefined) ?? flow.cr9b5_pt_forecastflowid,
-    name: flow.cr9b5_name ?? '', type: (flow.cr9b5_type as unknown as number) ?? TYPE_INCOME,
-    categoryId: (flow._cr9b5_categoryid_value as string) ?? '', contactId: (flow._cr9b5_contactid_value as string) ?? '',
-    frequency: (flow.cr9b5_frequency as unknown as number) ?? FREQ_MONTHLY,
-    daysOfWeek: parseDaysOfWeek((raw['cr9b5_daysofweek'] as string) ?? ''),
-    startDate: flow.cr9b5_startdate?.slice(0, 10) ?? '', endDate: flow.cr9b5_enddate?.slice(0, 10) ?? '',
-    grossAmount: String((raw['cr9b5_grossamount'] as number) ?? ''), vatRate: flow.cr9b5_vatrate ?? '7',
-    vatAmount: String(flow.cr9b5_vatamount ?? ''), vatIsManual: flow.cr9b5_vatismanual ?? false,
-    allProperties: flow.cr9b5_allproperties ?? true, propertyIds: linkedPropIds, notes: flow.cr9b5_notes ?? '',
+    id: flow.id,
+    parentFlowId: flow.parentFlowId ?? flow.id,
+    name: flow.name ?? '', type: (flow.type as unknown as number) ?? TYPE_INCOME,
+    categoryId: flow.categoryId ?? '', contactId: flow.contactId ?? '',
+    frequency: (flow.frequency as unknown as number) ?? FREQ_MONTHLY,
+    daysOfWeek: parseDaysOfWeek(flow.daysOfWeek ?? ''),
+    startDate: flow.startDate?.slice(0, 10) ?? '', endDate: flow.endDate?.slice(0, 10) ?? '',
+    grossAmount: String(flow.grossAmount ?? ''), vatRate: flow.vatRate ?? '7',
+    vatAmount: String(flow.vatAmount ?? ''), vatIsManual: flow.vatIsManual ?? false,
+    allProperties: flow.allProperties ?? true, propertyIds: linkedPropIds, notes: flow.notes ?? '',
     effectiveFrom: firstOfNextMonth(),
-    amountSource: (raw['svm_amountsource'] as number) ?? AMOUNT_SOURCE_FIXED,
-    percentage: String((raw['svm_percentage'] as number) ?? ''), components,
+    amountSource: (flow.amountSource as unknown as number) ?? AMOUNT_SOURCE_FIXED,
+    percentage: String(flow.percentage ?? ''), components,
   }
 }
 
@@ -118,12 +114,16 @@ const useStyles = makeStyles({
 
 export default function ForecastFlows() {
   const s = useStyles()
-  const [flows, setFlows] = useState<Cr9b5_pt_forecastflows[]>([])
-  const [flowProps, setFlowProps] = useState<Cr9b5_forecastproperties[]>([])
-  const [references, setReferences] = useState<Cr9b5_pt_references[]>([])
-  const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [loading, setLoading] = useState(true)
+  const { data: flows = [], isLoading: loadingFlows } = useForecastFlows()
+  const { data: flowProps = [], isLoading: loadingFlowProps } = useForecastFlowProperties()
+  const { data: allComponents = [] } = useForecastFlowComponents()
+  const { data: references = [], isLoading: loadingRefs } = useReferenceData()
+  const { data: contacts = [], isLoading: loadingContacts } = useContacts()
+  const { data: properties = [], isLoading: loadingProperties } = useProperties()
+  const saveForecastFlow = useSaveForecastFlow()
+  const saveForecastFlowProperty = useSaveForecastFlowProperty()
+  const saveForecastFlowComponent = useSaveForecastFlowComponent()
+  const loading = loadingFlows || loadingFlowProps || loadingRefs || loadingContacts || loadingProperties
 
   const [search, setSearch] = useState('')
   const [typeFilter, setTypeFilter] = useState<number | null>(null)
@@ -136,76 +136,53 @@ export default function ForecastFlows() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState('')
 
-  const [deleteTarget, setDeleteTarget] = useState<Cr9b5_pt_forecastflows | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<ForecastFlow | null>(null)
   const [deleteError, setDeleteError] = useState('')
 
-  useEffect(() => { loadAll() }, [])
-
-  async function loadAll() {
-    setLoading(true)
-    try {
-      const [fRes, fpRes, rRes, cRes, pRes] = await Promise.all([
-        Cr9b5_pt_forecastflowsService.getAll({ orderBy: ['cr9b5_startdate desc'] }),
-        Cr9b5_forecastpropertiesService.getAll({}),
-        Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc', 'cr9b5_value asc'] }),
-        Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'] }),
-        Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
-      ])
-      setFlows(fRes.data ?? [])
-      setFlowProps(fpRes.data ?? [])
-      setReferences(rRes.data ?? [])
-      setContacts(cRes.data ?? [])
-      setProperties(pRes.data ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const incomeCategories = references.filter(r => Number(r.cr9b5_referencetype) === REF_INCOME_CATEGORY)
-  const expenseCategories = references.filter(r => Number(r.cr9b5_referencetype) === REF_EXPENSE_CATEGORY)
+  const incomeCategories = references.filter(r => Number(r.referenceType) === REF_INCOME_CATEGORY)
+  const expenseCategories = references.filter(r => Number(r.referenceType) === REF_EXPENSE_CATEGORY)
 
   function propIdsForFlow(flowId: string): string[] {
-    return flowProps.filter(fp => fp._cr9b5_forecastflowid_value === flowId).map(fp => fp._cr9b5_propertyid_value ?? '').filter(Boolean)
+    return flowProps.filter(fp => fp.forecastFlowId === flowId).map(fp => fp.propertyId ?? '').filter(Boolean)
   }
-  function categoryName(id: string): string { return references.find(r => r.cr9b5_pt_referenceid === id)?.cr9b5_value ?? '—' }
-  function contactName(id: string): string { return contacts.find(c => c.cr9b5_pt_contactid === id)?.cr9b5_name ?? '—' }
-  function propertyName(id: string): string { return properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? id }
+  function categoryName(id: string): string { return references.find(r => r.id === id)?.value ?? '—' }
+  function contactName(id: string): string { return contacts.find(c => c.id === id)?.name ?? '—' }
+  function propertyName(id: string): string { return properties.find(p => p.id === id)?.name ?? id }
 
   const visibleFlows = flows.filter(f => {
     const active = isActiveFlow(f)
     if (!showInactive && !active) return false
-    if (typeFilter !== null && Number(f.cr9b5_type) !== typeFilter) return false
-    if (freqFilter !== null && Number(f.cr9b5_frequency) !== freqFilter) return false
+    if (typeFilter !== null && Number(f.type) !== typeFilter) return false
+    if (freqFilter !== null && Number(f.frequency) !== freqFilter) return false
     if (propFilter) {
-      if (!f.cr9b5_allproperties) {
-        const linked = propIdsForFlow(f.cr9b5_pt_forecastflowid)
+      if (!f.allProperties) {
+        const linked = propIdsForFlow(f.id)
         if (!linked.includes(propFilter)) return false
       }
     }
     if (search) {
       const q = search.toLowerCase()
-      const name = (f.cr9b5_name ?? '').toLowerCase()
-      const contact = contactName(f._cr9b5_contactid_value ?? '').toLowerCase()
+      const name = (f.name ?? '').toLowerCase()
+      const contact = contactName(f.contactId ?? '').toLowerCase()
       if (!name.includes(q) && !contact.includes(q)) return false
     }
     return true
   })
 
   function openNew() { setForm(emptyForm()); setFormError(''); setFormOpen(true) }
-  async function openEdit(flow: Cr9b5_pt_forecastflows) {
-    const compRes = await Svm_forecastflowcomponentsService.getAll({ filter: `_svm_targetflcow_value eq '${flow.cr9b5_pt_forecastflowid}'` })
-    const components: ComponentRow[] = (compRes.data ?? []).map(c => ({
-      sourceFlowId: (c as unknown as Record<string, unknown>)['_svm_sourceflow_value'] as string,
-      direction: (c.svm_direction as unknown as number) ?? DIRECTION_ADD,
-    })).filter(c => c.sourceFlowId)
-    setForm(flowToForm(flow, propIdsForFlow(flow.cr9b5_pt_forecastflowid), components))
+  function openEdit(flow: ForecastFlow) {
+    const components: ComponentRow[] = allComponents
+      .filter(c => c.targetFlowId === flow.id)
+      .map(c => ({ sourceFlowId: c.sourceFlowId, direction: (c.direction as unknown as number) ?? DIRECTION_ADD }))
+      .filter(c => c.sourceFlowId)
+    setForm(flowToForm(flow, propIdsForFlow(flow.id), components))
     setFormError(''); setFormOpen(true)
   }
   function closeForm() { setFormOpen(false); setFormError('') }
 
   function addComponent() {
-    const first = flows.find(f => isActiveFlow(f) && f.cr9b5_pt_forecastflowid !== form.id)
-    setForm(f => ({ ...f, components: [...f.components, { sourceFlowId: first?.cr9b5_pt_forecastflowid ?? '', direction: DIRECTION_ADD }] }))
+    const first = flows.find(f => isActiveFlow(f) && f.id !== form.id)
+    setForm(f => ({ ...f, components: [...f.components, { sourceFlowId: first?.id ?? '', direction: DIRECTION_ADD }] }))
   }
   function updateComponent(idx: number, patch: Partial<ComponentRow>) {
     setForm(f => ({ ...f, components: f.components.map((c, i) => i === idx ? { ...c, ...patch } : c) }))
@@ -239,7 +216,7 @@ export default function ForecastFlows() {
     setSaving(true)
     try {
       if (form.id) await saveEdit(); else await saveNew()
-      await loadAll(); closeForm()
+      closeForm()
     } catch {
       setFormError('Save failed. Please try again.')
     } finally {
@@ -247,107 +224,96 @@ export default function ForecastFlows() {
     }
   }
 
-  async function saveNew() {
-    const payload = buildPayload()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await Cr9b5_pt_forecastflowsService.create(payload as any)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const newId = (res.data as any)?.cr9b5_pt_forecastflowid as string
-    await savePropertyLinks(newId)
-    await saveComponents(newId)
-    await logActivity('Created', 'Forecast Flow', form.name.trim())
-  }
-
-  async function saveEdit() {
-    const currentId = form.id!
-    const parentId = form.parentFlowId ?? currentId
-    const newEndDate = lastDayOfPrevMonth(form.effectiveFrom)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await Cr9b5_pt_forecastflowsService.update(currentId, { cr9b5_enddate: newEndDate } as any)
-    const currentFlow = flows.find(f => f.cr9b5_pt_forecastflowid === currentId)
-    const originalEndDate = currentFlow?.cr9b5_enddate ?? null
-    const payload = {
-      ...buildPayload(), cr9b5_startdate: form.effectiveFrom,
-      ...(originalEndDate ? { cr9b5_enddate: originalEndDate } : {}),
-      'cr9b5_parentflowid@odata.bind': `/cr9b5_pt_forecastflows(${parentId})`,
-    }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const res = await Cr9b5_pt_forecastflowsService.create(payload as any)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const newId = (res.data as any)?.cr9b5_pt_forecastflowid as string
-    await savePropertyLinks(newId)
-    await saveComponents(newId)
-    await logActivity('Updated', 'Forecast Flow', form.name.trim(), `Versioned from ${form.effectiveFrom}`)
-  }
-
-  function buildPayload() {
+  function buildPayload(): Omit<ForecastFlow, 'id'> {
     const isCalculated = form.amountSource === AMOUNT_SOURCE_CALCULATED
     const gross = isCalculated ? 0 : (parseFloat(form.grossAmount) || 0)
     const vat = isCalculated ? 0 : (parseFloat(form.vatAmount) || 0)
     const net = Math.round((gross - vat) * 100) / 100
     return {
-      cr9b5_name: form.name.trim(),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      cr9b5_type: form.type as any,
-      'cr9b5_categoryid@odata.bind': `/cr9b5_pt_references(${form.categoryId})`,
-      ...(form.contactId ? { 'cr9b5_contactid@odata.bind': `/cr9b5_pt_contacts(${form.contactId})` } : {}),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      cr9b5_frequency: form.frequency as any,
-      ...(form.frequency === FREQ_DAILY && form.daysOfWeek.length > 0 ? { cr9b5_daysofweek: form.daysOfWeek.join(',') } : {}),
-      cr9b5_startdate: form.startDate,
-      ...(form.endDate && form.frequency !== FREQ_ONE_OFF ? { cr9b5_enddate: form.endDate } : form.frequency === FREQ_ONE_OFF ? { cr9b5_enddate: form.startDate } : {}),
-      cr9b5_grossamount: isCalculated ? null : gross,
-      cr9b5_vatrate: isCalculated ? null : (form.vatIsManual ? 'n/a' : form.vatRate),
-      cr9b5_vatamount: isCalculated ? null : vat,
-      cr9b5_netamount: isCalculated ? null : net,
-      cr9b5_vatismanual: isCalculated ? false : form.vatIsManual,
-      cr9b5_allproperties: form.allProperties,
-      cr9b5_notes: form.notes.trim() || null,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      svm_amountsource: form.amountSource as any,
-      svm_percentage: isCalculated ? (parseFloat(form.percentage) || 0) : null,
+      name: form.name.trim(),
+      type: form.type as ForecastFlow['type'],
+      categoryId: form.categoryId,
+      contactId: form.contactId || undefined,
+      frequency: form.frequency as ForecastFlow['frequency'],
+      daysOfWeek: form.frequency === FREQ_DAILY && form.daysOfWeek.length > 0 ? form.daysOfWeek.join(',') : undefined,
+      startDate: form.startDate,
+      endDate: form.endDate && form.frequency !== FREQ_ONE_OFF ? form.endDate : form.frequency === FREQ_ONE_OFF ? form.startDate : undefined,
+      grossAmount: isCalculated ? 0 : gross,
+      vatRate: isCalculated ? '' : (form.vatIsManual ? 'n/a' : form.vatRate),
+      vatAmount: isCalculated ? 0 : vat,
+      netAmount: isCalculated ? 0 : net,
+      vatIsManual: isCalculated ? false : form.vatIsManual,
+      allProperties: form.allProperties,
+      notes: form.notes.trim() || undefined,
+      amountSource: form.amountSource as ForecastFlow['amountSource'],
+      percentage: isCalculated ? (parseFloat(form.percentage) || 0) : undefined,
     }
+  }
+
+  async function saveNew() {
+    const payload = buildPayload()
+    const created = await saveForecastFlow.mutateAsync(payload)
+    await savePropertyLinks(created.id)
+    await saveComponents(created.id)
+    await logActivity('Created', 'Forecast Flow', form.name.trim())
+  }
+
+  async function saveEdit() {
+    const currentId = form.id!
+    const currentFlow = flows.find(f => f.id === currentId)
+    const parentId = form.parentFlowId ?? currentId
+    const newEndDate = lastDayOfPrevMonth(form.effectiveFrom)
+    if (currentFlow) {
+      await saveForecastFlow.mutateAsync({ ...currentFlow, endDate: newEndDate })
+    }
+    const originalEndDate = currentFlow?.endDate ?? undefined
+    const payload: Omit<ForecastFlow, 'id'> = {
+      ...buildPayload(),
+      startDate: form.effectiveFrom,
+      ...(originalEndDate ? { endDate: originalEndDate } : {}),
+      parentFlowId: parentId,
+    }
+    const created = await saveForecastFlow.mutateAsync(payload)
+    await savePropertyLinks(created.id)
+    await saveComponents(created.id)
+    await logActivity('Updated', 'Forecast Flow', form.name.trim(), `Versioned from ${form.effectiveFrom}`)
   }
 
   async function saveComponents(flowId: string) {
     if (form.amountSource !== AMOUNT_SOURCE_CALCULATED) return
     await Promise.all(form.components.filter(c => c.sourceFlowId).map(c =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      Svm_forecastflowcomponentsService.create({
-        svm_name: `${form.name.trim()} component`,
-        'svm_TargetFlcow@odata.bind': `/cr9b5_pt_forecastflows(${flowId})`,
-        'svm_SourceFlow@odata.bind': `/cr9b5_pt_forecastflows(${c.sourceFlowId})`,
-        svm_direction: c.direction as any,
-      } as any)
+      saveForecastFlowComponent.mutateAsync({
+        name: `${form.name.trim()} component`,
+        targetFlowId: flowId,
+        sourceFlowId: c.sourceFlowId,
+        direction: c.direction as ForecastFlowComponentDirection,
+      })
     ))
   }
 
   async function savePropertyLinks(flowId: string) {
     if (form.allProperties) return
     await Promise.all(form.propertyIds.map(pid =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      Cr9b5_forecastpropertiesService.create({
-        cr9b5_name: `${form.name.trim()} - ${propertyName(pid)}`,
-        'cr9b5_forecastflowid@odata.bind': `/cr9b5_pt_forecastflows(${flowId})`,
-        'cr9b5_propertyid@odata.bind': `/cr9b5_pt_properties(${pid})`,
-      } as any)
+      saveForecastFlowProperty.mutateAsync({
+        forecastFlowId: flowId,
+        propertyId: pid,
+      })
     ))
   }
 
-  function requestDelete(flow: Cr9b5_pt_forecastflows) {
-    const endDate = flow.cr9b5_enddate?.slice(0, 10)
+  function requestDelete(flow: ForecastFlow) {
+    const endDate = flow.endDate?.slice(0, 10)
     if (endDate && endDate < today()) { setDeleteError('This flow has already ended and cannot be deleted.'); setDeleteTarget(flow); return }
     setDeleteError(''); setDeleteTarget(flow)
   }
   async function confirmDelete() {
     if (!deleteTarget) return
-    const endDate = deleteTarget.cr9b5_enddate?.slice(0, 10)
+    const endDate = deleteTarget.endDate?.slice(0, 10)
     if (endDate && endDate < today()) return
     const eom = lastDayOfCurrentMonth()
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await Cr9b5_pt_forecastflowsService.update(deleteTarget.cr9b5_pt_forecastflowid, { cr9b5_enddate: eom } as any)
-    await logActivity('Deleted', 'Forecast Flow', deleteTarget.cr9b5_name ?? '')
-    await loadAll(); setDeleteTarget(null)
+    await saveForecastFlow.mutateAsync({ ...deleteTarget, endDate: eom })
+    await logActivity('Deleted', 'Forecast Flow', deleteTarget.name ?? '')
+    setDeleteTarget(null)
   }
 
   const grossNum = parseFloat(form.grossAmount) || 0
@@ -375,7 +341,7 @@ export default function ForecastFlows() {
         </Select>
         <Select value={propFilter} onChange={e => setPropFilter(e.target.value)}>
           <option value="">All Properties</option>
-          {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+          {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
         <Checkbox label="Show inactive" checked={showInactive} onChange={(_, d) => setShowInactive(!!d.checked)} />
       </div>
@@ -391,23 +357,22 @@ export default function ForecastFlows() {
             <TableBody>
               {visibleFlows.map(f => {
                 const active = isActiveFlow(f)
-                const raw = f as unknown as Record<string, unknown>
-                const linked = propIdsForFlow(f.cr9b5_pt_forecastflowid)
+                const linked = propIdsForFlow(f.id)
                 return (
-                  <TableRow key={f.cr9b5_pt_forecastflowid} style={{ opacity: active ? 1 : 0.5 }}>
-                    <TableCell style={{ fontWeight: 600 }}>{f.cr9b5_name}</TableCell>
-                    <TableCell><Badge appearance="tint" color={Number(f.cr9b5_type) === TYPE_INCOME ? 'success' : 'danger'}>{Number(f.cr9b5_type) === TYPE_INCOME ? 'Income' : 'Expense'}</Badge></TableCell>
-                    <TableCell>{categoryName(f._cr9b5_categoryid_value ?? '')}</TableCell>
-                    <TableCell>{f._cr9b5_contactid_value ? contactName(f._cr9b5_contactid_value) : '—'}</TableCell>
-                    <TableCell>{FREQ_LABELS[Number(f.cr9b5_frequency)] ?? '—'}</TableCell>
-                    <TableCell>{f.cr9b5_startdate?.slice(0, 10) ?? '—'}</TableCell>
-                    <TableCell>{f.cr9b5_enddate?.slice(0, 10) ?? '∞'}</TableCell>
+                  <TableRow key={f.id} style={{ opacity: active ? 1 : 0.5 }}>
+                    <TableCell style={{ fontWeight: 600 }}>{f.name}</TableCell>
+                    <TableCell><Badge appearance="tint" color={Number(f.type) === TYPE_INCOME ? 'success' : 'danger'}>{Number(f.type) === TYPE_INCOME ? 'Income' : 'Expense'}</Badge></TableCell>
+                    <TableCell>{categoryName(f.categoryId ?? '')}</TableCell>
+                    <TableCell>{f.contactId ? contactName(f.contactId) : '—'}</TableCell>
+                    <TableCell>{FREQ_LABELS[Number(f.frequency)] ?? '—'}</TableCell>
+                    <TableCell>{f.startDate?.slice(0, 10) ?? '—'}</TableCell>
+                    <TableCell>{f.endDate?.slice(0, 10) ?? '∞'}</TableCell>
                     <TableCell style={{ fontWeight: 600 }}>
-                      {Number(raw['svm_amountsource']) === AMOUNT_SOURCE_CALCULATED
-                        ? <Badge appearance="tint" color="brand">Calculated · {String(raw['svm_percentage'] ?? '')}%</Badge>
-                        : raw['cr9b5_grossamount'] != null ? formatMoney(raw['cr9b5_grossamount'] as number) : '—'}
+                      {Number(f.amountSource) === AMOUNT_SOURCE_CALCULATED
+                        ? <Badge appearance="tint" color="brand">Calculated · {String(f.percentage ?? '')}%</Badge>
+                        : f.grossAmount != null ? formatMoney(f.grossAmount) : '—'}
                     </TableCell>
-                    <TableCell style={{ fontSize: '12px' }}>{f.cr9b5_allproperties ? <em>All</em> : linked.map(id => propertyName(id)).join(', ') || '—'}</TableCell>
+                    <TableCell style={{ fontSize: '12px' }}>{f.allProperties ? <em>All</em> : linked.map(id => propertyName(id)).join(', ') || '—'}</TableCell>
                     <TableCell>
                       <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
                         <Button size="small" appearance="subtle" onClick={() => openEdit(f)}>Edit</Button>
@@ -456,14 +421,14 @@ export default function ForecastFlows() {
               <Field label="Category" required hint={categories.length === 0 ? `No ${form.type === TYPE_INCOME ? 'Income' : 'Expense'} Categories found. Add them in Admin → Reference Data.` : undefined}>
                 <Select value={form.categoryId} onChange={e => setForm(f => ({ ...f, categoryId: e.target.value }))}>
                   <option value="">— Select —</option>
-                  {categories.map(c => <option key={c.cr9b5_pt_referenceid} value={c.cr9b5_pt_referenceid}>{c.cr9b5_value}</option>)}
+                  {categories.map(c => <option key={c.id} value={c.id}>{c.value}</option>)}
                 </Select>
               </Field>
 
               <Field label="Counterparty">
                 <Select value={form.contactId} onChange={e => setForm(f => ({ ...f, contactId: e.target.value }))}>
                   <option value="">— None —</option>
-                  {contacts.map(c => <option key={c.cr9b5_pt_contactid} value={c.cr9b5_pt_contactid}>{c.cr9b5_name}</option>)}
+                  {contacts.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </Select>
               </Field>
 
@@ -549,8 +514,8 @@ export default function ForecastFlows() {
                     <div key={idx} style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                       <Select style={{ flex: 1 }} value={c.sourceFlowId} onChange={e => updateComponent(idx, { sourceFlowId: e.target.value })}>
                         <option value="">— Select flow —</option>
-                        {flows.filter(f => isActiveFlow(f) && f.cr9b5_pt_forecastflowid !== form.id).map(f => (
-                          <option key={f.cr9b5_pt_forecastflowid} value={f.cr9b5_pt_forecastflowid}>{f.cr9b5_name}</option>
+                        {flows.filter(f => isActiveFlow(f) && f.id !== form.id).map(f => (
+                          <option key={f.id} value={f.id}>{f.name}</option>
                         ))}
                       </Select>
                       <Select value={c.direction} onChange={e => updateComponent(idx, { direction: Number(e.target.value) })}>
@@ -571,11 +536,11 @@ export default function ForecastFlows() {
                 {!form.allProperties && (
                   <div className={s.propList} style={{ marginTop: 8 }}>
                     {properties.map(p => {
-                      const checked = form.propertyIds.includes(p.cr9b5_pt_propertyid)
+                      const checked = form.propertyIds.includes(p.id)
                       return (
-                        <label key={p.cr9b5_pt_propertyid} className={s.propRow}>
-                          <input type="checkbox" checked={checked} onChange={() => setForm(f => ({ ...f, propertyIds: checked ? f.propertyIds.filter(id => id !== p.cr9b5_pt_propertyid) : [...f.propertyIds, p.cr9b5_pt_propertyid] }))} />
-                          <Text size={300}>{p.cr9b5_name}</Text>
+                        <label key={p.id} className={s.propRow}>
+                          <input type="checkbox" checked={checked} onChange={() => setForm(f => ({ ...f, propertyIds: checked ? f.propertyIds.filter(id => id !== p.id) : [...f.propertyIds, p.id] }))} />
+                          <Text size={300}>{p.name}</Text>
                         </label>
                       )
                     })}
@@ -605,7 +570,7 @@ export default function ForecastFlows() {
             ) : (
               <>
                 <DialogTitle>End Forecast Flow?</DialogTitle>
-                <DialogContent><Text><strong>{deleteTarget?.cr9b5_name}</strong> will end on <strong>{lastDayOfCurrentMonth()}</strong>. Confirm?</Text></DialogContent>
+                <DialogContent><Text><strong>{deleteTarget?.name}</strong> will end on <strong>{lastDayOfCurrentMonth()}</strong>. Confirm?</Text></DialogContent>
                 <DialogActions>
                   <Button appearance="secondary" onClick={() => setDeleteTarget(null)}>Cancel</Button>
                   <Button appearance="primary" onClick={confirmDelete}>Confirm</Button>

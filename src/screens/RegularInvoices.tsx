@@ -1,17 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { makeStyles, tokens, Button, Text, Spinner } from '@fluentui/react-components'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import { Svm_pt_suppliercontractsService } from '@/generated/services/Svm_pt_suppliercontractsService'
-import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_references } from '@/generated/models/Cr9b5_pt_referencesModel'
+import { useContacts, useProperties, useCategories, useSupplierContracts, useCreateInvoice, useNextInvoiceSequence } from '@/hooks/data'
+import type { Contact } from '@/domain/types'
+import { CategoryType, ContactRole } from '@/domain/types'
 import { formatMoney } from '@/domain/money'
 
 const TYPE_INCOMING   = 233100000
-const REF_CAT_EXPENSE = 233100006
 
 const useStyles = makeStyles({
   root: { display: 'flex', flexDirection: 'column', height: '100%' },
@@ -36,11 +30,6 @@ function calcTax(base: string): string {
   if (!n || n <= 0) return ''
   return String(Math.round(n * 0.07 * 100) / 100)
 }
-async function getNextSequence(year: number): Promise<number> {
-  const res = await Cr9b5_pt_invoicesService.getAll({ filter: `cr9b5_year eq ${year}`, select: ['cr9b5_globalsequence'], orderBy: ['cr9b5_globalsequence desc'], top: 1 })
-  const records = res.data ?? []
-  return records.length === 0 ? 1 : (records[0].cr9b5_globalsequence ?? 0) + 1
-}
 function buildInternalId(shortId: string, seq: number, year: number): string {
   return `${shortId}${String(seq).padStart(3, '0')}/${year}`
 }
@@ -52,7 +41,7 @@ type SortKey = 'supplier' | 'property' | 'category' | 'date' | 'amount' | 'ready
 
 interface Row {
   key: string
-  supplier: Cr9b5_pt_contacts
+  supplier: Contact
   description: string
   date: string
   propertyId: string
@@ -66,10 +55,19 @@ interface Row {
 
 export default function RegularInvoices() {
   const s = useStyles()
+  const { data: supplierContracts = [], isLoading: loadingContracts } = useSupplierContracts()
+  const { data: allContacts = [], isLoading: loadingContacts2 } = useContacts()
+  const { data: properties = [], isLoading: loadingProps } = useProperties()
+  const { data: allCategories = [], isLoading: loadingCats } = useCategories()
+  const createInvoiceMutation = useCreateInvoice()
+  const nextSequenceMutation = useNextInvoiceSequence()
+
+  const loading = loadingContracts || loadingContacts2 || loadingProps || loadingCats
+
+  const contacts = useMemo(() => allContacts.filter(c => c.role === ContactRole.Supplier).sort((a, b) => a.name.localeCompare(b.name)), [allContacts])
+  const categories = useMemo(() => allCategories.filter(c => c.type === CategoryType.Expense).sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)), [allCategories])
+
   const [rows, setRows] = useState<Row[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [categories, setCategories] = useState<Cr9b5_pt_references[]>([])
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [summary, setSummary] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -79,40 +77,30 @@ export default function RegularInvoices() {
   const [nextSeqByYear, setNextSeqByYear] = useState<Record<number, number>>({})
   const pendingYearsRef = useRef<Set<number>>(new Set())
 
-  async function load() {
-    setLoading(true)
-    const [contractRes, contactRes, propRes, catRes] = await Promise.all([
-      Svm_pt_suppliercontractsService.getAll({ filter: 'svm_pt_active eq true', maxPageSize: 5000 }),
-      Cr9b5_pt_contactsService.getAll({ filter: `cr9b5_role eq 233100000`, orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_EXPENSE}`, orderBy: ['cr9b5_sortorder asc'], maxPageSize: 500 }),
-    ])
-    const contacts = contactRes.data ?? []
-    setProperties(propRes.data ?? [])
-    setCategories(catRes.data ?? [])
-    const contactById = new Map(contacts.map(c => [c.cr9b5_pt_contactid, c]))
+  useEffect(() => {
+    if (loading) return
+    const contactById = new Map(contacts.map(c => [c.id, c]))
     const newRows: Row[] = []
-    const contracts = [...(contractRes.data ?? [])].sort((a, b) =>
-      (contactById.get(a._svm_pt_contact_value ?? '')?.cr9b5_name ?? '').localeCompare(contactById.get(b._svm_pt_contact_value ?? '')?.cr9b5_name ?? '')
-    )
-    for (const contract of contracts) {
-      const supplier = contactById.get(contract._svm_pt_contact_value ?? '')
+    const activeContracts = [...supplierContracts]
+      .filter(c => c.active)
+      .sort((a, b) => (contactById.get(a.contactId)?.name ?? '').localeCompare(contactById.get(b.contactId)?.name ?? ''))
+    for (const contract of activeContracts) {
+      const supplier = contactById.get(contract.contactId)
       if (!supplier) continue
-      const count = contract.svm_pt_contractcount && contract.svm_pt_contractcount > 0 ? contract.svm_pt_contractcount : 1
-      const allProperties = !!contract.svm_pt_allproperties
-      const propertyId = allProperties ? '' : (contract._svm_property_value ?? '')
-      const categoryId = contract._svm_defaultcategory_value ?? supplier._svm_defaultcategory_value ?? ''
-      const description = contract.svm_pt_defaultdescription || supplier.cr9b5_defaultdescription || ''
+      const count = contract.contractCount && contract.contractCount > 0 ? contract.contractCount : 1
+      const allProperties = !!contract.allProperties
+      const propertyId = allProperties ? '' : (contract.propertyId ?? '')
+      const categoryId = contract.defaultCategoryId ?? supplier.defaultCategoryId ?? ''
+      const description = contract.defaultDescription || supplier.defaultDescription || ''
       for (let i = 0; i < count; i++) {
-        newRows.push({ key: `${contract.svm_pt_suppliercontractid}-${i}`, supplier, description, date: '', propertyId, allProperties, categoryId, baseAmount: '', taxAmount: '', taxIsManual: false, skipInternalId: false })
+        newRows.push({ key: `${contract.id}-${i}`, supplier, description, date: '', propertyId, allProperties, categoryId, baseAmount: '', taxAmount: '', taxIsManual: false, skipInternalId: false })
       }
     }
     setRows(newRows)
     setNextSeqByYear({})
     pendingYearsRef.current.clear()
-    setLoading(false)
-  }
-  useEffect(() => { load() }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, supplierContracts, contacts])
 
   useEffect(() => {
     const years = new Set<number>()
@@ -121,13 +109,14 @@ export default function RegularInvoices() {
     if (missing.length === 0) return
     missing.forEach(y => pendingYearsRef.current.add(y))
     ;(async () => {
-      const entries = await Promise.all(missing.map(async y => [y, await getNextSequence(y)] as const))
+      const entries = await Promise.all(missing.map(async y => [y, await nextSequenceMutation.mutateAsync(y)] as const))
       setNextSeqByYear(prev => {
         const next = { ...prev }
         for (const [y, seq] of entries) next[y] = seq
         return next
       })
     })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rows, nextSeqByYear])
 
   const previewIds = useMemo(() => {
@@ -138,8 +127,8 @@ export default function RegularInvoices() {
       if (row.skipInternalId) return '(no ID)'
       const year = new Date(row.date).getFullYear() // note: counters only advance for non-skip rows below
       if (!(year in counters)) return null
-      const property = row.allProperties ? null : properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
-      const shortId = row.allProperties ? 'ALL' : (property?.cr9b5_shortid ?? '')
+      const property = row.allProperties ? null : properties.find(p => p.id === row.propertyId)
+      const shortId = row.allProperties ? 'ALL' : (property?.shortId ?? '')
       const seq = counters[year]
       counters[year] = seq + 1
       return buildInternalId(shortId, seq, year)
@@ -147,11 +136,11 @@ export default function RegularInvoices() {
   }, [rows, nextSeqByYear, properties])
 
   const displayIndices = useMemo(() => {
-    const propertyName = (id: string) => properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? ''
-    const categoryName = (id: string) => categories.find(c => c.cr9b5_pt_referenceid === id)?.cr9b5_value ?? ''
+    const propertyName = (id: string) => properties.find(p => p.id === id)?.name ?? ''
+    const categoryName = (id: string) => categories.find(c => c.id === id)?.value ?? ''
     const sortValue = (row: Row): string | number => {
       switch (sortKey) {
-        case 'supplier': return row.supplier.cr9b5_name.toLowerCase()
+        case 'supplier': return row.supplier.name.toLowerCase()
         case 'property': return (row.allProperties ? 'All properties' : propertyName(row.propertyId)).toLowerCase()
         case 'category': return categoryName(row.categoryId).toLowerCase()
         case 'date': return row.date || '9999-99-99'
@@ -195,29 +184,26 @@ export default function RegularInvoices() {
     try {
       for (const row of toSave) {
         const rowYear = new Date(row.date).getFullYear()
-        const property = row.allProperties ? null : properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
-        if (!row.allProperties && !property) throw new Error(`Property not found for ${row.supplier.cr9b5_name}.`)
+        const property = row.allProperties ? null : properties.find(p => p.id === row.propertyId)
+        if (!row.allProperties && !property) throw new Error(`Property not found for ${row.supplier.name}.`)
         let internalId = ''
         let seq = 0
         if (!row.skipInternalId) {
-          seq = await getNextSequence(rowYear)
-          const shortId = property?.cr9b5_shortid ?? 'ALL'
+          seq = await nextSequenceMutation.mutateAsync(rowYear)
+          const shortId = property?.shortId ?? 'ALL'
           internalId = buildInternalId(shortId, seq, rowYear)
         }
         const base = parseAmount(row.baseAmount)
         const tax = parseAmount(row.taxAmount) || 0
-        const payload: Record<string, unknown> = {
-          cr9b5_internalid: internalId, cr9b5_globalsequence: seq, cr9b5_year: rowYear, cr9b5_type: TYPE_INCOMING,
-          cr9b5_date: toIso(row.date), cr9b5_description: row.description.trim() || undefined,
-          cr9b5_baseamount: base, cr9b5_taxrate: row.taxIsManual ? 'n/a' : '7', cr9b5_taxamount: tax,
-          cr9b5_taxismanual: row.taxIsManual, cr9b5_totalgross: base + tax, cr9b5_allproperties: row.allProperties,
-          'cr9b5_Contact@odata.bind': `/cr9b5_pt_contacts(${row.supplier.cr9b5_pt_contactid})`,
-        }
-        if (property) payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${property.cr9b5_pt_propertyid})`
-        if (row.categoryId) payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${row.categoryId})`
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const result = await Cr9b5_pt_invoicesService.create(payload as any)
-        if (!result.success) throw (result.error as Error) ?? new Error(`Failed to create invoice for ${row.supplier.cr9b5_name}.`)
+        await createInvoiceMutation.mutateAsync({
+          internalId, globalSequence: seq, year: rowYear, type: TYPE_INCOMING as never,
+          date: toIso(row.date), description: row.description.trim() || undefined,
+          baseAmount: base, taxRate: row.taxIsManual ? 'n/a' : '7', taxAmount: tax,
+          taxIsManual: row.taxIsManual, totalGross: base + tax, allProperties: row.allProperties,
+          contactId: row.supplier.id,
+          propertyId: property ? property.id : undefined,
+          categoryId: row.categoryId || undefined,
+        })
       }
       const savedKeys = new Set(toSave.map(r => r.key))
       setRows(rs => rs.map(r => savedKeys.has(r.key) ? { ...r, date: '', propertyId: '', allProperties: false, categoryId: '', baseAmount: '', taxAmount: '', taxIsManual: false, skipInternalId: false } : r))
@@ -303,19 +289,19 @@ export default function RegularInvoices() {
                   <td className={s.td} style={{ textAlign: 'center' }}>
                     <input type="checkbox" checked={row.skipInternalId} onChange={e => updateRow(idx, { skipInternalId: e.target.checked })} title="Don't auto-generate an Internal ID for this invoice" />
                   </td>
-                  <td className={s.td} style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{row.supplier.cr9b5_name}</td>
+                  <td className={s.td} style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{row.supplier.name}</td>
                   <td className={s.td}><input className={s.input} value={row.description} onChange={e => updateRow(idx, { description: e.target.value })} placeholder="Description" /></td>
                   <td className={s.td}><input className={s.input} type="date" value={row.date} onChange={e => updateRow(idx, { date: e.target.value })} /></td>
                   <td className={s.td}>
                     <select className={s.input} value={row.categoryId} onChange={e => updateRow(idx, { categoryId: e.target.value })}>
                       <option value="">No category</option>
-                      {categories.map(c => <option key={c.cr9b5_pt_referenceid} value={c.cr9b5_pt_referenceid}>{c.cr9b5_value}</option>)}
+                      {categories.map(c => <option key={c.id} value={c.id}>{c.value}</option>)}
                     </select>
                   </td>
                   <td className={s.td}>
                     <select className={s.input} value={row.propertyId} disabled={row.allProperties} onChange={e => updateRow(idx, { propertyId: e.target.value })}>
                       <option value="">Select property…</option>
-                      {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+                      {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                     </select>
                   </td>
                   <td className={s.td} style={{ textAlign: 'center' }}>

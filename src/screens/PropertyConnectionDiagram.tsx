@@ -1,23 +1,19 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { makeStyles, tokens, mergeClasses, Text, Select } from '@fluentui/react-components'
-import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
-import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
+import type { Property, Contact, Invoice } from '@/domain/types'
+import { InvoiceType } from '@/domain/types'
+import { useCategories, useOwnerOccupancies } from '@/hooks/data'
 import { formatMoney } from '@/domain/money'
 import { dataColors } from '@/app/dataPalette'
 import InvoiceForm from './InvoiceForm'
-import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
-import type { Svm_pt_owneroccupancies } from '@/generated/models/Svm_pt_owneroccupanciesModel'
-
-const TYPE_OUTGOING = 233100001 // Income
 
 interface Line { x1: number; y1: number; x2: number; y2: number }
 
 interface Props {
-  property: Cr9b5_pt_properties
-  allProperties: Cr9b5_pt_properties[]
-  invoices: Cr9b5_pt_invoices[]
-  contacts: Cr9b5_pt_contacts[]
+  property: Property
+  allProperties: Property[]
+  invoices: Invoice[]
+  contacts: Contact[]
   onClose: () => void
 }
 
@@ -36,12 +32,12 @@ function daysElapsedInYear(year: number): number {
   return Math.floor((now.getTime() - start.getTime()) / 86400000) + 1
 }
 
-function invType(inv: Cr9b5_pt_invoices): 'Income' | 'Expense' {
-  return (inv as unknown as Record<string, unknown>)['cr9b5_type'] as number === TYPE_OUTGOING ? 'Income' : 'Expense'
+function invType(inv: Invoice): 'Income' | 'Expense' {
+  return inv.type === InvoiceType.Income ? 'Income' : 'Expense'
 }
 
-function contactId(inv: Cr9b5_pt_invoices): string {
-  return ((inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined) ?? '__none__'
+function contactIdOf(inv: Invoice): string {
+  return inv.contactId ?? '__none__'
 }
 
 const useStyles = makeStyles({
@@ -82,16 +78,19 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
   const [diagYear, setDiagYear] = useState<string>(String(currentYear))
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
   const [expandedContact, setExpandedContact] = useState<string | null>(null)
-  const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
+  const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null)
   const [tooltip, setTooltip] = useState<{ x: number; y: number; content: React.ReactNode } | null>(null)
   const [lines, setLines] = useState<Line[]>([])
-  const [ownerOccupancy, setOwnerOccupancy] = useState<Svm_pt_owneroccupancies[]>([])
 
-  useEffect(() => {
-    Svm_pt_owneroccupanciesService.getAll({ filter: `_svm_pt_property_value eq '${property.cr9b5_pt_propertyid}'` })
-      .then(res => setOwnerOccupancy(res.data ?? []))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [property.cr9b5_pt_propertyid])
+  const { data: categories = [] } = useCategories()
+  const categoryNameById = useMemo(() => new Map(categories.map(c => [c.id, c.value])), [categories])
+
+  const { data: allOwnerOccupancy = [] } = useOwnerOccupancies()
+  const ownerOccupancy = useMemo(
+    () => allOwnerOccupancy.filter(r => r.propertyId === property.id),
+    [allOwnerOccupancy, property.id],
+  )
+
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -101,46 +100,46 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
   }, [onClose, viewInvoice])
 
   const years = Array.from(new Set(
-    invoices.map(i => i.cr9b5_date ? new Date(i.cr9b5_date).getFullYear() : null).filter((y): y is number => y !== null)
+    invoices.map(i => i.date ? new Date(i.date).getFullYear() : null).filter((y): y is number => y !== null)
   )).sort((a, b) => b - a)
 
   const filtered = diagYear === 'all'
     ? invoices
-    : invoices.filter(inv => inv.cr9b5_date && new Date(inv.cr9b5_date).getFullYear() === Number(diagYear))
+    : invoices.filter(inv => inv.date && new Date(inv.date).getFullYear() === Number(diagYear))
 
   // Level 2: categories
-  const categoryMap = new Map<string, Cr9b5_pt_invoices[]>()
+  const categoryMap = new Map<string, Invoice[]>()
   for (const inv of filtered) {
-    const cat = inv.cr9b5_categoryidname?.trim() || 'Uncategorised'
+    const cat = (inv.categoryId ? categoryNameById.get(inv.categoryId) : undefined)?.trim() || 'Uncategorised'
     if (!categoryMap.has(cat)) categoryMap.set(cat, [])
     categoryMap.get(cat)!.push(inv)
   }
-  const categories = Array.from(categoryMap.entries()).map(([name, invs]) => ({
+  const categoryNodes = Array.from(categoryMap.entries()).map(([name, invs]) => ({
     name,
     count: invs.length,
-    net: invs.reduce((s, i) => s + ((i as unknown as Record<string, unknown>)['cr9b5_baseamount'] as number ?? 0), 0),
-    gross: invs.reduce((s, i) => s + (i.cr9b5_totalgross ?? 0), 0),
-    vat: invs.reduce((s, i) => s + ((i as unknown as Record<string, unknown>)['cr9b5_taxamount'] as number ?? 0), 0),
+    net: invs.reduce((s, i) => s + (i.baseAmount ?? 0), 0),
+    gross: invs.reduce((s, i) => s + (i.totalGross ?? 0), 0),
+    vat: invs.reduce((s, i) => s + (i.taxAmount ?? 0), 0),
   }))
 
   // Level 3: contacts within expanded category
   const catInvoices = expandedCategory ? (categoryMap.get(expandedCategory) ?? []) : []
-  const contactMap = new Map<string, Cr9b5_pt_invoices[]>()
+  const contactMap = new Map<string, Invoice[]>()
   for (const inv of catInvoices) {
-    const cid = contactId(inv)
+    const cid = contactIdOf(inv)
     if (!contactMap.has(cid)) contactMap.set(cid, [])
     contactMap.get(cid)!.push(inv)
   }
   const contactNodes = Array.from(contactMap.entries()).map(([cid, invs]) => {
-    const contact = contacts.find(c => c.cr9b5_pt_contactid === cid)
-    const dates = invs.map(i => i.cr9b5_date).filter(Boolean).sort() as string[]
+    const contact = contacts.find(c => c.id === cid)
+    const dates = invs.map(i => i.date).filter(Boolean).sort() as string[]
     return {
       id: cid,
-      name: contact?.cr9b5_name ?? '—',
-      email: contact?.cr9b5_email,
+      name: contact?.name ?? '—',
+      email: contact?.email,
       role: invType(invs[0]),
       count: invs.length,
-      net: invs.reduce((s, i) => s + ((i as unknown as Record<string, unknown>)['cr9b5_baseamount'] as number ?? 0), 0),
+      net: invs.reduce((s, i) => s + (i.baseAmount ?? 0), 0),
       firstDate: dates[0],
       lastDate: dates.at(-1),
       invoices: invs,
@@ -154,7 +153,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
 
   // Occupancy from income invoices
   const incomeInvs = filtered.filter(i => invType(i) === 'Income')
-  const totalNights = incomeInvs.reduce((s, i) => s + (i.cr9b5_nights ?? 0), 0)
+  const totalNights = incomeInvs.reduce((s, i) => s + (i.nights ?? 0), 0)
   const daysInPeriod = diagYear === 'all' ? 365 : daysElapsedInYear(Number(diagYear))
   const occupancy = daysInPeriod > 0 && totalNights > 0 ? Math.round(totalNights / daysInPeriod * 100) : null
   const ownerNightsInPeriod = diagYear === 'all' ? 0 : (() => {
@@ -163,9 +162,9 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
     const yearStart = new Date(year, 0, 1)
     const yearEndExclusive = year === now.getFullYear() ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : new Date(year + 1, 0, 1)
     return ownerOccupancy.reduce((sum, r) => {
-      if (!r.svm_pt_fromdate || !r.svm_pt_todate) return sum
-      const from = new Date(r.svm_pt_fromdate) < yearStart ? yearStart : new Date(r.svm_pt_fromdate)
-      const to = new Date(r.svm_pt_todate) > yearEndExclusive ? yearEndExclusive : new Date(r.svm_pt_todate)
+      if (!r.fromDate || !r.toDate) return sum
+      const from = new Date(r.fromDate) < yearStart ? yearStart : new Date(r.fromDate)
+      const to = new Date(r.toDate) > yearEndExclusive ? yearEndExclusive : new Date(r.toDate)
       const nights = Math.round((to.getTime() - from.getTime()) / 86400000)
       return sum + (nights > 0 ? nights : 0)
     }, 0)
@@ -241,7 +240,7 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
         <div className={s.header}>
           <div>
             <Text size={500} weight="semibold">Connection Diagram</Text>
-            <Text size={300} block style={{ color: tokens.colorNeutralForeground4 }}>{property.cr9b5_name} · {property.cr9b5_shortid}</Text>
+            <Text size={300} block style={{ color: tokens.colorNeutralForeground4 }}>{property.name} · {property.shortId}</Text>
           </div>
           <div className={s.headerRight}>
             <div className={s.yearGroup}>
@@ -271,8 +270,8 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
             {/* Level 1 — Property */}
             <div className={s.level1Row}>
               <div data-node-level="1" className={s.propNode}>
-                <p className={s.propName}>{property.cr9b5_name}</p>
-                <p className={s.propShortId}>{property.cr9b5_shortid}</p>
+                <p className={s.propName}>{property.name}</p>
+                <p className={s.propShortId}>{property.shortId}</p>
                 {occupancy !== null && (
                   <p className={s.propOcc}>
                     {occupancyIncl}% occupancy{occupancyIncl !== occupancy ? ` (${occupancy}% excl. owner)` : ''}
@@ -282,11 +281,11 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
             </div>
 
             {/* Level 2 — Categories */}
-            {categories.length === 0 ? (
+            {categoryNodes.length === 0 ? (
               <p className={s.emptyMsg}>No invoices for this period.</p>
             ) : (
               <div className={s.row}>
-                {categories.map(cat => {
+                {categoryNodes.map(cat => {
                   const isExpanded = expandedCategory === cat.name
                   return (
                     <div
@@ -368,29 +367,27 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
               <div className={s.rowTight}>
                 {invoiceNodes.map(inv => {
                   const isIncome = invType(inv) === 'Income'
-                  const raw = inv as unknown as Record<string, unknown>
-                  const cid = raw['_cr9b5_contact_value'] as string | undefined
-                  const con = cid ? contacts.find(c => c.cr9b5_pt_contactid === cid) : undefined
+                  const con = inv.contactId ? contacts.find(c => c.id === inv.contactId) : undefined
                   return (
                     <div
-                      key={inv.cr9b5_pt_invoiceid}
-                      data-node-invoice={inv.cr9b5_pt_invoiceid}
+                      key={inv.id}
+                      data-node-invoice={inv.id}
                       onClick={() => setViewInvoice(inv)}
                       onMouseEnter={e => setTooltip({
                         x: e.clientX, y: e.clientY,
                         content: (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-                            <Text weight="semibold">{inv.cr9b5_internalid}</Text>
-                            <Text>Date: {fmtDate(inv.cr9b5_date)}</Text>
+                            <Text weight="semibold">{inv.internalId}</Text>
+                            <Text>Date: {fmtDate(inv.date)}</Text>
                             <Text>Type: {invType(inv)}</Text>
-                            {con && <Text>Contact: {con.cr9b5_name}</Text>}
-                            {inv.cr9b5_description && <Text>Desc: {inv.cr9b5_description}</Text>}
-                            <Text>Net: {formatMoney((raw['cr9b5_baseamount'] as number) ?? 0)}</Text>
-                            <Text>VAT: {formatMoney((raw['cr9b5_taxamount'] as number) ?? 0)}</Text>
-                            <Text>Gross: {formatMoney(inv.cr9b5_totalgross ?? 0)}</Text>
-                            {inv.cr9b5_checkin && <Text>Check-in: {fmtDate(inv.cr9b5_checkin)}</Text>}
-                            {inv.cr9b5_checkout && <Text>Check-out: {fmtDate(inv.cr9b5_checkout)}</Text>}
-                            {inv.cr9b5_nights != null && isIncome && <Text>Nights: {inv.cr9b5_nights}</Text>}
+                            {con && <Text>Contact: {con.name}</Text>}
+                            {inv.description && <Text>Desc: {inv.description}</Text>}
+                            <Text>Net: {formatMoney(inv.baseAmount ?? 0)}</Text>
+                            <Text>VAT: {formatMoney(inv.taxAmount ?? 0)}</Text>
+                            <Text>Gross: {formatMoney(inv.totalGross ?? 0)}</Text>
+                            {inv.checkIn && <Text>Check-in: {fmtDate(inv.checkIn)}</Text>}
+                            {inv.checkOut && <Text>Check-out: {fmtDate(inv.checkOut)}</Text>}
+                            {inv.nights != null && isIncome && <Text>Nights: {inv.nights}</Text>}
                           </div>
                         ),
                       })}
@@ -398,10 +395,10 @@ export default function PropertyConnectionDiagram({ property, allProperties, inv
                       className={s.invNode}
                       style={{ border: `1px solid ${isIncome ? tokens.colorPaletteGreenBorder1 : tokens.colorPaletteRedBorder1}` }}
                     >
-                      <p className={s.invId}>{inv.cr9b5_internalid}</p>
-                      <p className={s.nodeSub} style={{ marginTop: '2px' }}>{fmtDate(inv.cr9b5_date)}</p>
+                      <p className={s.invId}>{inv.internalId}</p>
+                      <p className={s.nodeSub} style={{ marginTop: '2px' }}>{fmtDate(inv.date)}</p>
                       <span className={mergeClasses(s.badge, isIncome ? s.badgeIncome : s.badgeExpense)}>{isIncome ? 'Income' : 'Expense'}</span>
-                      <p className={s.nodeTitle} style={{ fontSize: '13px', marginTop: '4px' }}>{formatMoney(inv.cr9b5_totalgross ?? 0)}</p>
+                      <p className={s.nodeTitle} style={{ fontSize: '13px', marginTop: '4px' }}>{formatMoney(inv.totalGross ?? 0)}</p>
                     </div>
                   )
                 })}

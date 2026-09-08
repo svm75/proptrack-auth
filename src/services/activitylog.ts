@@ -1,29 +1,42 @@
-import { Cr9b5_pt_activitylogsService } from '../generated/services/Cr9b5_pt_activitylogsService'
+/**
+ * Activity Log write helper. Rewired in Step 8 (migration.md) to route through
+ * `src/data/index.ts`'s `repositories` — previously called `Cr9b5_pt_activitylogsService`
+ * (Dataverse) directly and unconditionally, bypassing `VITE_DATA_BACKEND` entirely. Call sites
+ * (InvoiceForm.tsx, Invoices.tsx, Reports.tsx, ForecastFlows.tsx, ClientOccupancy.tsx,
+ * OwnerOccupancyFormDialog.tsx) are unchanged — same signature, same string labels — only the
+ * data path changed.
+ *
+ * `repositories.activityLog.record()` already existed (used by `hooks/data.ts`'s
+ * `useRecordActivity`) and is implemented for both backends:
+ *  - dataverseRepositories: writes `cr9b5_pt_activitylogs` directly (identical behavior to what
+ *    this file used to do inline).
+ *  - postgresRepositories: a documented no-op — Postgres-mode Activity Log rows for invoices are
+ *    written server-side in `api/src/services/invoiceService.ts`, in the same transaction as the
+ *    mutation. Note (carried forward, not fixed here — out of this step's scope): that server-side
+ *    write only covers the invoices bespoke routes; the plain-CRUD Postgres endpoints these other
+ *    call sites exercise (owner-occupancies, forecast-flows, attachments) do not yet write
+ *    activity_logs server-side, so in Postgres mode those specific actions are not logged. This
+ *    is a pre-existing Step 6 gap (the no-op assumption), not introduced by this rewire, and is
+ *    unrelated to the "no silent Dataverse fallback" requirement — no data is fetched from
+ *    Dataverse in Postgres mode, it's just not yet mirrored into `activity_logs` for these tables.
+ */
+import { repositories } from '@/data'
+import { ActivityAction, ActivityTable } from '@/domain/types'
+import type { ActivityAction as ActivityActionType, ActivityTable as ActivityTableType } from '@/domain/types'
 
-const ACTION_MAP = {
-  Created:  233100000,
-  Updated:  233100001,
-  Deleted:  233100002,
-  Exported: 233100003,
-} as const
+const ACTION_MAP: Record<'Created' | 'Updated' | 'Deleted' | 'Exported', ActivityActionType> = {
+  Created: ActivityAction.Created,
+  Updated: ActivityAction.Updated,
+  Deleted: ActivityAction.Deleted,
+  Exported: ActivityAction.Exported,
+}
 
-const TABLE_MAP = {
-  Invoice:         233100000,
-  Contact:         233100001,
-  Property:        233100002,
-  Attachment:      233100003,
-  'Forecast Flow': 233100004,
-} as const
-
-function getCurrentUser(): string {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const win = window as any
-    const xrm = win.Xrm ?? win.parent?.Xrm
-    return xrm?.Utility?.getGlobalContext?.()?.getUserName?.() || 'Unknown'
-  } catch {
-    return 'Unknown'
-  }
+const TABLE_MAP: Record<'Invoice' | 'Contact' | 'Property' | 'Attachment' | 'Forecast Flow', ActivityTableType> = {
+  Invoice: ActivityTable.Invoice,
+  Contact: ActivityTable.Contact,
+  Property: ActivityTable.Property,
+  Attachment: ActivityTable.Attachment,
+  'Forecast Flow': ActivityTable.ForecastFlow,
 }
 
 export async function logActivity(
@@ -33,16 +46,7 @@ export async function logActivity(
   details?: string,
 ): Promise<void> {
   try {
-    // ownerid / owneridtype / statecode are injected by the platform at runtime
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await Cr9b5_pt_activitylogsService.create({
-      cr9b5_action:     ACTION_MAP[action] as any,
-      cr9b5_tablemame:  TABLE_MAP[table] as any,
-      cr9b5_timestamp:  new Date().toISOString(),
-      cr9b5_user:       getCurrentUser(),
-      cr9b5_recordname: recordName,
-      cr9b5_details:    details,
-    } as any)
+    await repositories.activityLog.record(ACTION_MAP[action], TABLE_MAP[table], recordName, details)
   } catch {
     // log failure must never break the app
   }

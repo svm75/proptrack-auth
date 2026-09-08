@@ -1,0 +1,9 @@
+# Reverse-proxies every request straight through to the api container — PropTrack's frontend is
+# hosted by Power Platform, not served from this NAS, so unlike wealth-ledger's/TripOrganiser's
+# Caddyfile there is no /srv/dist static-file block here at all. HTTPS itself is handled in front
+# of Caddy by `tailscale serve`/`funnel` (see api/deploy/README.md) — Caddy answers plain HTTP on
+# :80 inside the container.
+:80 {
+	reverse_proxy api:8787
+	encode gzip
+}

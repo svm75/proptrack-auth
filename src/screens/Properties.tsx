@@ -5,31 +5,20 @@ import {
   Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
   Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
 } from '@fluentui/react-components'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_attachmentsService } from '@/generated/services/Cr9b5_pt_attachmentsService'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
-import type { Cr9b5_pt_attachments } from '@/generated/models/Cr9b5_pt_attachmentsModel'
-import type { Cr9b5_pt_references } from '@/generated/models/Cr9b5_pt_referencesModel'
-import type { Cr9b5_pt_invoices } from '@/generated/models/Cr9b5_pt_invoicesModel'
-import { useRecordActivity } from '@/hooks/data'
-import { ActivityAction, ActivityTable } from '@/domain/types'
+import {
+  useProperties, useContacts, useInvoices, useAttachments, useReferenceData,
+  useRecordActivity, useSaveProperty, useDeleteProperty, usePropertyDeletable,
+  useDeleteAttachment,
+} from '@/hooks/data'
+import { ActivityAction, ActivityTable, InvoiceType } from '@/domain/types'
+import type { Property, Invoice, Attachment } from '@/domain/types'
 import { formatMoney } from '@/domain/money'
-import { uploadFile, deleteFile, getOrCreateFolder, propertyFolderPath, isAuthorized, authorizeWithPopup } from '@/services/googledrive'
+import { isPostgresBackend } from '@/data/backend'
+import { listFolders, createFolder, uploadDocument, deleteDocument, documentDownloadUrl, type FolderEntry } from '@/services/documents'
 import InvoiceForm from './InvoiceForm'
 import PropertyConnectionDiagram from './PropertyConnectionDiagram'
 
-// NOTE: InvoiceForm and PropertyConnectionDiagram haven't been migrated to the domain-typed
-// hooks yet, so this screen still fetches raw Cr9b5_pt_* records directly (like the
-// pre-migration version) rather than via `useProperties()`/`useContacts()` — the Fluent UI
-// rewrite here is presentation-only. Revisit once those two are migrated.
-
 const PROP_REF_TYPE = 233100000
-const TYPE_INCOMING = 233100000
-const TYPE_OUTGOING = 233100001
 
 const useStyles = makeStyles({
   root: { display: 'flex', height: '100%', overflow: 'hidden', gap: '0' },
@@ -55,8 +44,13 @@ function fmtDate(iso: string | undefined): string {
 interface PropForm { id: string | null; name: string; shortid: string; address: string; notes: string }
 const EMPTY_FORM: PropForm = { id: null, name: '', shortid: '', address: '', notes: '' }
 
-interface AttachForm { typeRefId: string; fileName: string; file: File | null; uploading: boolean; driveId: string; driveUrl: string }
-const EMPTY_ATTACH: AttachForm = { typeRefId: '', fileName: '', file: null, uploading: false, driveId: '', driveUrl: '' }
+// NAS-native document storage. Uploads go to /documents (api/src/routes/documentsRoutes.ts) and
+// are only available when this build is wired to the Postgres/NAS backend — see isPostgresBackend
+// in src/data/backend.ts. Google Drive has been fully removed (zero attachment rows referenced
+// it in production); on the legacy Power Platform/Dataverse backend the upload UI stays visible
+// but disabled, per migration.md's Google-removal addendum.
+interface AttachForm { typeRefId: string; file: File | null }
+const EMPTY_ATTACH: AttachForm = { typeRefId: '', file: null }
 
 interface YearSummary { year: number; income: number; expenses: number }
 
@@ -65,66 +59,68 @@ export default function Properties() {
   const recordActivity = useRecordActivity()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contactsList, setContactsList] = useState<Cr9b5_pt_contacts[]>([])
-  const [loading, setLoading] = useState(true)
-  const [invoiceCounts, setInvoiceCounts] = useState<Record<string, number>>({})
+  const { data: properties = [], isLoading: loadingProps } = useProperties()
+  const { data: contactsList = [], isLoading: loadingContacts } = useContacts()
+  const { data: invoices = [], isLoading: loadingInvoices } = useInvoices()
+  const { data: allAttachments = [] } = useAttachments()
+  const { data: referenceData = [] } = useReferenceData()
+
+  const saveProperty = useSaveProperty()
+  const deleteProperty = useDeleteProperty()
+  const propertyDeletable = usePropertyDeletable()
+  const deleteAttachmentMutation = useDeleteAttachment()
+
+  const loading = loadingProps || loadingContacts || loadingInvoices
   const [saving, setSaving] = useState(false)
 
-  async function load() {
-    setLoading(true)
-    const [propsRes, invRes, conRes] = await Promise.all([
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_invoicesService.getAll({ select: ['cr9b5_pt_invoiceid', '_cr9b5_property_value'], maxPageSize: 5000 }),
-      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-    ])
+  const invoiceCounts = useMemo(() => {
     const counts: Record<string, number> = {}
-    for (const inv of (invRes.data ?? []) as unknown as Array<Record<string, unknown>>) {
-      const pid = inv['_cr9b5_property_value'] as string | undefined
-      if (pid) counts[pid] = (counts[pid] ?? 0) + 1
+    for (const inv of invoices) {
+      if (inv.propertyId) counts[inv.propertyId] = (counts[inv.propertyId] ?? 0) + 1
     }
-    setProperties(propsRes.data ?? [])
-    setContactsList(conRes.data ?? [])
-    setInvoiceCounts(counts)
-    setLoading(false)
-  }
-  useEffect(() => { load() }, [])
+    return counts
+  }, [invoices])
 
   const [formOpen, setFormOpen] = useState(false)
   const [form, setForm] = useState<PropForm>(EMPTY_FORM)
   const [formError, setFormError] = useState<string | null>(null)
 
   const [diagramPropId, setDiagramPropId] = useState<string | null>(null)
-  const [diagramInvoices, setDiagramInvoices] = useState<Cr9b5_pt_invoices[]>([])
-  const [diagramLoading, setDiagramLoading] = useState(false)
+  const diagramInvoices = useMemo(
+    () => diagramPropId ? invoices.filter(i => i.propertyId === diagramPropId) : [],
+    [invoices, diagramPropId],
+  )
 
-  async function openDiagram(propId: string) {
-    setDiagramLoading(true)
+  function openDiagram(propId: string) {
     setDiagramPropId(propId)
-    const res = await Cr9b5_pt_invoicesService.getAll({
-      filter: `_cr9b5_property_value eq '${propId}'`, orderBy: ['cr9b5_date desc'], maxPageSize: 5000,
-    })
-    setDiagramInvoices(res.data ?? [])
-    setDiagramLoading(false)
   }
 
   const [selectedPropId, setSelectedPropId] = useState<string | null>(null)
-  const [propInvoices, setPropInvoices] = useState<Cr9b5_pt_invoices[]>([])
-  const [propInvLoading, setPropInvLoading] = useState(false)
   const [selectedYear, setSelectedYear] = useState<number | null>(null)
-  const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
+  const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null)
 
   const [attachOpen, setAttachOpen] = useState(false)
-  const [attachments, setAttachments] = useState<Cr9b5_pt_attachments[]>([])
-  const [attachRefTypes, setAttachRefTypes] = useState<Cr9b5_pt_references[]>([])
   const [attachForm, setAttachForm] = useState<AttachForm>(EMPTY_ATTACH)
   const [attachSaving, setAttachSaving] = useState(false)
   const [attachError, setAttachError] = useState<string | null>(null)
-  const [attachLoading, setAttachLoading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [gdConnected, setGdConnected] = useState(isAuthorized())
 
-  const contactById = useMemo(() => new Map(contactsList.map(c => [c.cr9b5_pt_contactid, c])), [contactsList])
+  // NAS document folder browser state — starts at Properties/<name> for the selected property.
+  const [docPath, setDocPath] = useState('')
+  const [docFolders, setDocFolders] = useState<FolderEntry[]>([])
+  const [docLoading, setDocLoading] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+
+  const contactById = useMemo(() => new Map(contactsList.map(c => [c.id, c])), [contactsList])
+
+  const attachments = useMemo(
+    () => allAttachments.filter(a => a.propertyId === selectedPropId),
+    [allAttachments, selectedPropId],
+  )
+  const attachRefTypes = useMemo(
+    () => referenceData.filter(r => r.referenceType === PROP_REF_TYPE),
+    [referenceData],
+  )
 
   // Deep-link support from the global Quick Add menu (?new=1)
   useEffect(() => {
@@ -136,8 +132,8 @@ export default function Properties() {
   }, [searchParams, setSearchParams])
 
   function openNew() { setForm(EMPTY_FORM); setFormError(null); setFormOpen(true) }
-  function openEdit(p: Cr9b5_pt_properties) {
-    setForm({ id: p.cr9b5_pt_propertyid, name: p.cr9b5_name, shortid: p.cr9b5_shortid, address: p.cr9b5_address, notes: p.cr9b5_notes ?? '' })
+  function openEdit(p: Property) {
+    setForm({ id: p.id, name: p.name, shortid: p.shortId, address: p.address, notes: p.notes ?? '' })
     setFormError(null); setFormOpen(true)
   }
   function closeForm() { setFormOpen(false); setForm(EMPTY_FORM); setFormError(null) }
@@ -148,28 +144,26 @@ export default function Properties() {
       return
     }
     const shortIdUpper = form.shortid.trim().toUpperCase()
-    const duplicate = properties.find(p => p.cr9b5_shortid.toUpperCase() === shortIdUpper && p.cr9b5_pt_propertyid !== form.id)
+    const duplicate = properties.find(p => p.shortId.toUpperCase() === shortIdUpper && p.id !== form.id)
     if (duplicate) {
-      setFormError(`Short ID "${shortIdUpper}" is already used by "${duplicate.cr9b5_name}".`)
+      setFormError(`Short ID "${shortIdUpper}" is already used by "${duplicate.name}".`)
       return
     }
     setFormError(null)
     setSaving(true)
     try {
       const payload = {
-        cr9b5_name: form.name.trim(), cr9b5_shortid: shortIdUpper,
-        cr9b5_address: form.address.trim(), cr9b5_notes: form.notes.trim() || undefined,
+        name: form.name.trim(), shortId: shortIdUpper,
+        address: form.address.trim(), notes: form.notes.trim() || undefined,
       }
       if (form.id) {
-        await Cr9b5_pt_propertiesService.update(form.id, payload)
+        await saveProperty.mutateAsync({ id: form.id, ...payload })
         recordActivity.mutate({ action: ActivityAction.Updated, table: ActivityTable.Property, recordName: form.name.trim() })
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Cr9b5_pt_propertiesService.create(payload as any)
+        await saveProperty.mutateAsync(payload)
         recordActivity.mutate({ action: ActivityAction.Created, table: ActivityTable.Property, recordName: form.name.trim() })
       }
       closeForm()
-      await load()
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Save failed.')
     } finally {
@@ -177,124 +171,127 @@ export default function Properties() {
     }
   }
 
-  async function handleDeleteProperty(p: Cr9b5_pt_properties) {
-    const count = invoiceCounts[p.cr9b5_pt_propertyid] ?? 0
-    if (count > 0) { alert(`Cannot delete — "${p.cr9b5_name}" has ${count} invoice(s).`); return }
-    if (!confirm(`Delete property "${p.cr9b5_name}"?`)) return
-    await Cr9b5_pt_propertiesService.delete(p.cr9b5_pt_propertyid)
-    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Property, recordName: p.cr9b5_name })
-    if (selectedPropId === p.cr9b5_pt_propertyid) setSelectedPropId(null)
-    await load()
+  async function handleDeleteProperty(p: Property) {
+    const result = await propertyDeletable.mutateAsync(p.id)
+    if (!result.deletable) { alert(result.reason ?? `Cannot delete — "${p.name}" is referenced elsewhere.`); return }
+    if (!confirm(`Delete property "${p.name}"?`)) return
+    await deleteProperty.mutateAsync(p.id)
+    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Property, recordName: p.name })
+    if (selectedPropId === p.id) setSelectedPropId(null)
   }
 
-  async function openDetail(propId: string) {
+  function openDetail(propId: string) {
     if (selectedPropId === propId) { setSelectedPropId(null); return }
-    setSelectedPropId(propId); setAttachOpen(false); setPropInvLoading(true); setSelectedYear(null); setPropInvoices([])
-    const res = await Cr9b5_pt_invoicesService.getAll({
-      filter: `_cr9b5_property_value eq '${propId}'`, orderBy: ['cr9b5_date desc'], maxPageSize: 5000,
-    })
-    const invs = res.data ?? []
-    setPropInvoices(invs)
+    setSelectedPropId(propId); setAttachOpen(false)
+    const invs = invoices.filter(i => i.propertyId === propId)
     const years = Array.from(new Set(
-      invs.map(i => i.cr9b5_date ? new Date(i.cr9b5_date).getFullYear() : null).filter((y): y is number => y !== null && y > 2020)
+      invs.map(i => i.date ? new Date(i.date).getFullYear() : null).filter((y): y is number => y !== null && y > 2020)
     )).sort((a, b) => b - a)
     setSelectedYear(years[0] ?? null)
-    setPropInvLoading(false)
   }
   function closeDetail() { setSelectedPropId(null); setAttachOpen(false) }
+
+  const propInvoices = useMemo(
+    () => selectedPropId ? invoices.filter(i => i.propertyId === selectedPropId) : [],
+    [invoices, selectedPropId],
+  )
 
   const yearSummaries: YearSummary[] = useMemo(() => {
     const map = new Map<number, YearSummary>()
     for (const inv of propInvoices) {
-      if (!inv.cr9b5_date) continue
-      const y = new Date(inv.cr9b5_date).getFullYear()
+      if (!inv.date) continue
+      const y = new Date(inv.date).getFullYear()
       if (y <= 2020) continue
       if (!map.has(y)) map.set(y, { year: y, income: 0, expenses: 0 })
       const summary = map.get(y)!
-      const type = (inv.cr9b5_type as unknown as number)
-      const gross = inv.cr9b5_totalgross ?? 0
-      if (type === TYPE_OUTGOING) summary.income += gross
-      else if (type === TYPE_INCOMING) summary.expenses += gross
+      const gross = inv.totalGross ?? 0
+      if (inv.type === InvoiceType.Income) summary.income += gross
+      else summary.expenses += gross
     }
     return Array.from(map.values()).sort((a, b) => b.year - a.year)
   }, [propInvoices])
 
-  const yearInvoices = propInvoices.filter(inv => inv.cr9b5_date && selectedYear && new Date(inv.cr9b5_date).getFullYear() === selectedYear)
+  const yearInvoices = propInvoices.filter(inv => inv.date && selectedYear && new Date(inv.date).getFullYear() === selectedYear)
 
-  function contactName(inv: Cr9b5_pt_invoices): string {
-    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined
-    return (id && contactById.get(id)?.cr9b5_name) ?? '—'
+  function contactName(inv: Invoice): string {
+    return (inv.contactId && contactById.get(inv.contactId)?.name) ?? '—'
   }
-  function invType(inv: Cr9b5_pt_invoices): string {
-    return (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense'
-  }
-
-  async function openAttachments(propId: string) {
-    setAttachOpen(true); setAttachForm(EMPTY_ATTACH); setAttachError(null); setAttachLoading(true)
-    const [attachRes, refRes] = await Promise.all([
-      Cr9b5_pt_attachmentsService.getAll({ filter: `_cr9b5_propertyid_value eq '${propId}'`, orderBy: ['cr9b5_uploadedon desc'] }),
-      Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${PROP_REF_TYPE}`, orderBy: ['cr9b5_sortorder asc'] }),
-    ])
-    setAttachments(attachRes.data ?? [])
-    setAttachRefTypes(refRes.data ?? [])
-    setAttachLoading(false)
+  function invType(inv: Invoice): string {
+    return inv.type === InvoiceType.Income ? 'Income' : 'Expense'
   }
 
-  async function handleFileSelect(file: File, propId: string) {
-    const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
-    if (!prop) return
-    setAttachForm(f => ({ ...f, file, fileName: file.name, uploading: true, driveId: '', driveUrl: '' }))
+  async function refreshDocFolders(path: string) {
+    setDocLoading(true)
+    try {
+      const listing = await listFolders(path)
+      setDocFolders(listing.folders)
+      setDocPath(listing.path)
+    } catch (e: unknown) {
+      setAttachError(e instanceof Error ? e.message : 'Failed to browse folders.')
+    } finally {
+      setDocLoading(false)
+    }
+  }
+
+  function openAttachments(propId: string) {
+    setAttachOpen(true); setAttachForm(EMPTY_ATTACH); setAttachError(null); setNewFolderName('')
+    const prop = properties.find(p => p.id === propId)
+    const startPath = prop ? `Properties/${prop.name}` : 'General'
+    void refreshDocFolders(startPath)
+  }
+
+  async function handleCreateFolder() {
+    if (!newFolderName.trim()) return
     setAttachError(null)
     try {
-      let folderId = prop.svm_pt_googledrivefolderid
-      if (!folderId) {
-        folderId = await getOrCreateFolder(propertyFolderPath(prop.cr9b5_name, prop.cr9b5_shortid))
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        Cr9b5_pt_propertiesService.update(propId, { svm_pt_googledrivefolderid: folderId } as any).catch(() => {})
-      }
-      const { id, webViewLink } = await uploadFile(file, folderId)
-      setAttachForm(f => ({ ...f, uploading: false, driveId: id, driveUrl: webViewLink }))
+      await createFolder(docPath, newFolderName.trim())
+      setNewFolderName('')
+      await refreshDocFolders(docPath)
     } catch (e: unknown) {
-      setAttachForm(f => ({ ...f, uploading: false, file: null }))
-      setAttachError(e instanceof Error ? e.message : 'Upload failed.')
+      setAttachError(e instanceof Error ? e.message : 'Failed to create folder.')
     }
   }
 
   async function addAttachment(propId: string) {
-    if (!attachForm.fileName.trim()) { setAttachError('Choose a file first.'); return }
-    if (attachForm.uploading) return
+    if (!attachForm.file) { setAttachError('Choose a file first.'); return }
     setAttachSaving(true); setAttachError(null)
     try {
-      const payload: Record<string, unknown> = {
-        cr9b5_filename: attachForm.fileName.trim(), cr9b5_referencetype: PROP_REF_TYPE,
-        cr9b5_uploadedon: new Date().toISOString(), 'cr9b5_PropertyId@odata.bind': `/cr9b5_pt_properties(${propId})`,
-      }
-      if (attachForm.typeRefId) payload['cr9b5_AttachType@odata.bind'] = `/cr9b5_pt_references(${attachForm.typeRefId})`
-      if (attachForm.driveId) payload.cr9b5_googledriveid = attachForm.driveId
-      if (attachForm.driveUrl) payload.cr9b5_googledriveurl = attachForm.driveUrl
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await Cr9b5_pt_attachmentsService.create(payload as any)
-      const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
-      recordActivity.mutate({ action: ActivityAction.Created, table: ActivityTable.Attachment, recordName: attachForm.fileName.trim(), details: `Uploaded to: ${prop?.cr9b5_name ?? propId}` })
+      const row = await uploadDocument(attachForm.file, {
+        path: docPath,
+        propertyId: propId,
+        attachTypeId: attachForm.typeRefId || undefined,
+      })
+      const prop = properties.find(p => p.id === propId)
+      recordActivity.mutate({ action: ActivityAction.Created, table: ActivityTable.Attachment, recordName: row.original_filename ?? row.file_name, details: `Uploaded to: ${prop?.name ?? propId} / ${docPath || '(root)'}` })
       setAttachForm(EMPTY_ATTACH)
       if (fileInputRef.current) fileInputRef.current.value = ''
-      await openAttachments(propId)
     } catch (e: unknown) {
-      setAttachError(e instanceof Error ? e.message : 'Failed to add attachment.')
+      setAttachError(e instanceof Error ? e.message : 'Failed to upload document.')
     } finally {
       setAttachSaving(false)
     }
   }
 
-  async function deleteAttachment(a: Cr9b5_pt_attachments, propId: string) {
+  async function deleteAttachment(a: Attachment) {
     if (!confirm('Delete this attachment?')) return
-    if (a.cr9b5_googledriveid) { try { await deleteFile(a.cr9b5_googledriveid) } catch { /* ignore */ } }
-    await Cr9b5_pt_attachmentsService.delete(a.cr9b5_pt_attachmentid)
-    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Attachment, recordName: a.cr9b5_filename })
-    await openAttachments(propId)
+    if (a.storagePath) {
+      // NAS-native document — remove the physical file + metadata via the new API.
+      try {
+        const result = await deleteDocument(a.id)
+        if (result.warning) console.warn('[documents] delete warning:', result.warning)
+      } catch (e: unknown) {
+        setAttachError(e instanceof Error ? e.message : 'Failed to delete document.')
+        return
+      }
+    } else {
+      // Legacy row with no NAS storage_path (pre-dates NAS document storage). Google Drive
+      // integration has been removed entirely — no drive-side cleanup is performed or possible.
+      await deleteAttachmentMutation.mutateAsync(a.id)
+    }
+    recordActivity.mutate({ action: ActivityAction.Deleted, table: ActivityTable.Attachment, recordName: a.fileName })
   }
 
-  const selectedProp = properties.find(p => p.cr9b5_pt_propertyid === selectedPropId)
+  const selectedProp = properties.find(p => p.id === selectedPropId)
 
   return (
     <div className={s.root}>
@@ -307,28 +304,28 @@ export default function Properties() {
           {loading ? <Spinner label="Loading…" /> : properties.length === 0 ? (
             <Text style={{ color: tokens.colorNeutralForeground3 }}>No properties yet.</Text>
           ) : properties.map(p => {
-            const invCount = invoiceCounts[p.cr9b5_pt_propertyid] ?? 0
-            const isSelected = selectedPropId === p.cr9b5_pt_propertyid
+            const invCount = invoiceCounts[p.id] ?? 0
+            const isSelected = selectedPropId === p.id
             return (
               <div
-                key={p.cr9b5_pt_propertyid}
+                key={p.id}
                 className={s.card}
                 style={isSelected ? { borderColor: tokens.colorBrandStroke1, boxShadow: `0 0 0 2px ${tokens.colorBrandBackground2}` } : undefined}
-                onClick={() => openDetail(p.cr9b5_pt_propertyid)}
+                onClick={() => openDetail(p.id)}
               >
                 <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '8px' }}>
                   <div>
-                    <Text weight="semibold">{p.cr9b5_name}</Text>
-                    <div><Badge appearance="tint" color="brand" style={{ marginTop: 4, fontFamily: 'monospace' }}>{p.cr9b5_shortid}</Badge></div>
+                    <Text weight="semibold">{p.name}</Text>
+                    <div><Badge appearance="tint" color="brand" style={{ marginTop: 4, fontFamily: 'monospace' }}>{p.shortId}</Badge></div>
                   </div>
                   <div style={{ display: 'flex', gap: '4px' }} onClick={e => e.stopPropagation()}>
-                    <Button size="small" appearance="subtle" onClick={() => openDiagram(p.cr9b5_pt_propertyid)}>Diagram</Button>
+                    <Button size="small" appearance="subtle" onClick={() => openDiagram(p.id)}>Diagram</Button>
                     <Button size="small" appearance="subtle" onClick={() => openEdit(p)}>Edit</Button>
                     <Button size="small" appearance="subtle" onClick={() => handleDeleteProperty(p)}>Delete</Button>
                   </div>
                 </div>
-                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>{p.cr9b5_address}</Text>
-                {p.cr9b5_notes && <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>{p.cr9b5_notes}</Text>}
+                <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>{p.address}</Text>
+                {p.notes && <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>{p.notes}</Text>}
                 <Text size={200} style={{ color: tokens.colorNeutralForeground4, borderTop: `1px solid ${tokens.colorNeutralStroke2}`, paddingTop: '6px' }}>
                   {invCount} invoice{invCount !== 1 ? 's' : ''}
                 </Text>
@@ -349,8 +346,8 @@ export default function Properties() {
               <div className={s.panelHeader}>
                 <div style={{ minWidth: 0 }}>
                   <Text size={200} style={{ color: tokens.colorNeutralForeground3, textTransform: 'uppercase' }}>Property</Text>
-                  <div><Text weight="semibold">{selectedProp.cr9b5_name}</Text></div>
-                  <Text size={200} style={{ fontFamily: 'monospace', color: tokens.colorNeutralForeground4 }}>{selectedProp.cr9b5_shortid}</Text>
+                  <div><Text weight="semibold">{selectedProp.name}</Text></div>
+                  <Text size={200} style={{ fontFamily: 'monospace', color: tokens.colorNeutralForeground4 }}>{selectedProp.shortId}</Text>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
                   <Button size="small" appearance={attachOpen ? 'primary' : 'outline'} onClick={() => attachOpen ? setAttachOpen(false) : openAttachments(selectedPropId)}>Attachments</Button>
@@ -359,41 +356,58 @@ export default function Properties() {
               </div>
 
               {attachOpen && (
-                <div style={{ borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, maxHeight: '50%', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, maxHeight: '55%', display: 'flex', flexDirection: 'column' }}>
                   <div style={{ padding: '8px 16px', display: 'flex', flexDirection: 'column', gap: '6px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
-                    <select value={attachForm.typeRefId} onChange={e => setAttachForm(f => ({ ...f, typeRefId: e.target.value }))}
-                      style={{ padding: '6px 8px', fontSize: '12px', borderRadius: 4, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
-                      <option value="">Type (optional)…</option>
-                      {attachRefTypes.map(r => <option key={r.cr9b5_pt_referenceid} value={r.cr9b5_pt_referenceid}>{r.cr9b5_value}</option>)}
-                    </select>
-                    <input ref={fileInputRef} type="file" style={{ display: 'none' }}
-                      onChange={e => { const f = e.target.files?.[0]; if (f && selectedPropId) handleFileSelect(f, selectedPropId) }} />
-                    {gdConnected ? (
-                      <Button size="small" appearance="outline" onClick={() => fileInputRef.current?.click()}>
-                        {attachForm.uploading ? '⏳ Uploading…' : attachForm.driveId ? `✓ ${attachForm.fileName}` : '📎 Choose file…'}
-                      </Button>
+                    <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                      Folder: <span style={{ fontFamily: 'monospace' }}>{docPath || '(root)'}</span>
+                    </Text>
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                      <Button size="small" appearance="subtle" disabled={!docPath || docLoading}
+                        onClick={() => refreshDocFolders(docPath.split('/').slice(0, -1).join('/'))}>⬆ Up</Button>
+                      {docLoading ? <Spinner size="tiny" /> : docFolders.map(f => (
+                        <Button key={f.path} size="small" appearance="outline" onClick={() => refreshDocFolders(f.path)}>📁 {f.name}</Button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <Input size="small" placeholder="New folder name…" value={newFolderName}
+                        onChange={(_, d) => setNewFolderName(d.value)} style={{ flex: 1 }} />
+                      <Button size="small" appearance="outline" onClick={handleCreateFolder} disabled={!newFolderName.trim()}>+ Folder</Button>
+                    </div>
+
+                    {!isPostgresBackend ? (
+                      <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>
+                        Document upload is disabled in the legacy Power Platform version. Please use the NAS-hosted version.
+                      </Text>
                     ) : (
-                      <Button size="small" appearance="outline" onClick={async () => {
-                        try { await authorizeWithPopup(); setGdConnected(true) }
-                        catch (e) { setAttachError(e instanceof Error ? e.message : 'Google Drive sign-in failed.') }
-                      }}>🔗 Connect Google Drive</Button>
+                      <>
+                        <select value={attachForm.typeRefId} onChange={e => setAttachForm(f => ({ ...f, typeRefId: e.target.value }))}
+                          style={{ padding: '6px 8px', fontSize: '12px', borderRadius: 4, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
+                          <option value="">Type (optional)…</option>
+                          {attachRefTypes.map(r => <option key={r.id} value={r.id}>{r.value}</option>)}
+                        </select>
+                        <input ref={fileInputRef} type="file" style={{ display: 'none' }}
+                          onChange={e => { const f = e.target.files?.[0]; if (f) setAttachForm(af => ({ ...af, file: f })) }} />
+                        <Button size="small" appearance="outline" onClick={() => fileInputRef.current?.click()}>
+                          {attachForm.file ? `✓ ${attachForm.file.name}` : '📎 Choose file…'}
+                        </Button>
+                        {attachError && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{attachError}</Text>}
+                        <Button size="small" appearance="primary" disabled={attachSaving || !attachForm.file} onClick={() => addAttachment(selectedPropId!)}>
+                          {attachSaving ? 'Uploading…' : '+ Upload to NAS'}
+                        </Button>
+                      </>
                     )}
-                    {attachError && <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>{attachError}</Text>}
-                    <Button size="small" appearance="primary" disabled={attachSaving || attachForm.uploading || !attachForm.driveId} onClick={() => addAttachment(selectedPropId!)}>
-                      {attachSaving ? 'Adding…' : '+ Add'}
-                    </Button>
                   </div>
                   <div className={s.scrollSection}>
-                    {attachLoading ? <Spinner size="tiny" label="Loading…" /> : attachments.length === 0 ? (
+                    {attachments.length === 0 ? (
                       <Text size={200} style={{ padding: '12px', color: tokens.colorNeutralForeground4 }}>No attachments yet.</Text>
                     ) : attachments.map(a => (
-                      <div key={a.cr9b5_pt_attachmentid} style={{ padding: '8px 16px', display: 'flex', gap: '8px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
+                      <div key={a.id} style={{ padding: '8px 16px', display: 'flex', gap: '8px', borderBottom: `1px solid ${tokens.colorNeutralStroke2}` }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          {a.cr9b5_googledriveurl ? (
-                            <a href={a.cr9b5_googledriveurl} target="_blank" rel="noreferrer" style={{ color: tokens.colorBrandForegroundLink, fontSize: '12px', fontWeight: 600 }}>{a.cr9b5_filename}</a>
-                          ) : <Text size={200} weight="semibold">{a.cr9b5_filename}</Text>}
+                          {a.storagePath ? (
+                            <a href={documentDownloadUrl(a.id)} target="_blank" rel="noreferrer" style={{ color: tokens.colorBrandForegroundLink, fontSize: '12px', fontWeight: 600 }}>{a.fileName}</a>
+                          ) : <Text size={200} weight="semibold">{a.fileName}</Text>}
                         </div>
-                        <Button size="small" appearance="subtle" onClick={() => deleteAttachment(a, selectedPropId!)}>✕</Button>
+                        <Button size="small" appearance="subtle" onClick={() => deleteAttachment(a)}>✕</Button>
                       </div>
                     ))}
                   </div>
@@ -402,7 +416,7 @@ export default function Properties() {
 
               <div style={{ flex: '0 0 35%', display: 'flex', flexDirection: 'column', borderBottom: `1px solid ${tokens.colorNeutralStroke2}`, overflow: 'hidden' }}>
                 <div className={s.sectionHeader}><Text size={200} weight="semibold" style={{ textTransform: 'uppercase', color: tokens.colorNeutralForeground3 }}>Income & Expenses by Year</Text></div>
-                {propInvLoading ? <Spinner size="tiny" label="Loading…" /> : yearSummaries.length === 0 ? (
+                {yearSummaries.length === 0 ? (
                   <Text size={200} style={{ padding: '12px 16px', color: tokens.colorNeutralForeground4 }}>No data (2021 onwards).</Text>
                 ) : (
                   <div className={s.scrollSection}>
@@ -437,7 +451,7 @@ export default function Properties() {
                   <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>{yearInvoices.length} invoice{yearInvoices.length !== 1 ? 's' : ''}</Text>
                 </div>
                 <div className={s.scrollSection}>
-                  {propInvLoading ? <Spinner size="tiny" label="Loading…" /> : !selectedYear ? (
+                  {!selectedYear ? (
                     <Text size={200} style={{ padding: '12px 16px', color: tokens.colorNeutralForeground4 }}>Select a year above.</Text>
                   ) : yearInvoices.length === 0 ? (
                     <Text size={200} style={{ padding: '12px 16px', color: tokens.colorNeutralForeground4 }}>No invoices for {selectedYear}.</Text>
@@ -452,12 +466,12 @@ export default function Properties() {
                       </TableRow></TableHeader>
                       <TableBody>
                         {yearInvoices.map(inv => (
-                          <TableRow key={inv.cr9b5_pt_invoiceid} onClick={() => setViewInvoice(inv)} style={{ cursor: 'pointer' }}>
-                            <TableCell style={{ fontFamily: 'monospace', fontWeight: 600, color: tokens.colorBrandForegroundLink }}>{inv.cr9b5_internalid}</TableCell>
+                          <TableRow key={inv.id} onClick={() => setViewInvoice(inv)} style={{ cursor: 'pointer' }}>
+                            <TableCell style={{ fontFamily: 'monospace', fontWeight: 600, color: tokens.colorBrandForegroundLink }}>{inv.internalId}</TableCell>
                             <TableCell><Badge appearance="tint" color={invType(inv) === 'Income' ? 'success' : 'informative'}>{invType(inv)}</Badge></TableCell>
                             <TableCell>{contactName(inv)}</TableCell>
-                            <TableCell>{fmtDate(inv.cr9b5_date)}</TableCell>
-                            <TableCell style={{ fontWeight: 600 }}>{inv.cr9b5_totalgross != null ? formatMoney(inv.cr9b5_totalgross) : '—'}</TableCell>
+                            <TableCell>{fmtDate(inv.date)}</TableCell>
+                            <TableCell style={{ fontWeight: 600 }}>{inv.totalGross != null ? formatMoney(inv.totalGross) : '—'}</TableCell>
                           </TableRow>
                         ))}
                       </TableBody>
@@ -500,15 +514,12 @@ export default function Properties() {
       </Dialog>
 
       {diagramPropId && (() => {
-        const diagramProp = properties.find(p => p.cr9b5_pt_propertyid === diagramPropId)
+        const diagramProp = properties.find(p => p.id === diagramPropId)
         if (!diagramProp) return null
-        if (diagramLoading) {
-          return <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><Spinner label="Loading…" /></div>
-        }
         return (
           <PropertyConnectionDiagram
             property={diagramProp} allProperties={properties} invoices={diagramInvoices} contacts={contactsList}
-            onClose={() => { setDiagramPropId(null); setDiagramInvoices([]) }}
+            onClose={() => setDiagramPropId(null)}
           />
         )
       })()}

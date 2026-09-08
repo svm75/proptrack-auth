@@ -1,0 +1,108 @@
+# PropTrack V2 — production deployment (frontend + API + Caddy, no Postgres container).
+#
+# Deliberately does NOT define a postgres service — this stack connects to the EXISTING
+# Synology PostgreSQL instance (mfa-ds925.tailc096cf.ts.net:5433/myplatform, schema `proptrack`)
+# over the network via the `api` service's env vars, as the least-privilege `proptrack_app` role.
+# No new database container is created; this compose file has no power to drop/reset anything.
+#
+# Matches ~/Projects/TripOrganiser/deploy/docker-compose.yml's topology exactly (frontend + api +
+# caddy, same-origin via /api/* proxying) — the one architectural difference from Step 9's
+# earlier api-only package is that PropTrack's frontend is now built and served from this NAS
+# too, not from Power Platform, so the wealth-ledger/TripOrganiser same-origin pattern now
+# applies to PropTrack as well.
+#
+# Usage (from the NAS, via Container Manager or `docker compose`, requires SSH/sudo access this
+# environment does not have — see deploy/README.md):
+#   cd deploy
+#   cp .env.example .env   # fill in real values — nothing here is pre-filled
+#   docker compose up -d --build
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    container_name: proptrack-caddy
+    restart: unless-stopped
+    ports:
+      # Confirm this port is free on the NAS before deploying — distinct from wealth-ledger's
+      # 8081 and TripOrganiser's 8080 on the same host; 8083 is a placeholder, not confirmed free.
+      - "127.0.0.1:8083:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - edge
+    depends_on:
+      frontend:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: /api
+        VITE_API_AUTH_TOKEN: "${API_AUTH_TOKEN:?set the shared bearer token — must match the api service's own API_AUTH_TOKEN}"
+    container_name: proptrack-frontend
+    restart: unless-stopped
+    networks:
+      - edge
+    # No published ports — only Caddy reaches this container.
+    healthcheck:
+      test: ['CMD', 'wget', '--no-verbose', '--tries=1', '--spider', 'http://localhost/']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build:
+      context: ../api
+      dockerfile: Dockerfile
+    container_name: proptrack-api
+    restart: unless-stopped
+    networks:
+      - edge
+    # No published ports — only Caddy (same compose network) talks to this container. Reaches
+    # the NAS's existing Postgres instance over the network via PGHOST below, not this network.
+    environment:
+      API_PORT: "8787"
+      PGHOST: "${PGHOST:?set to the myplatform Postgres host}"
+      PGPORT: "${PGPORT:-5433}"
+      PGDATABASE: "${PGDATABASE:-myplatform}"
+      PGSCHEMA: "${PGSCHEMA:-proptrack}"
+      PGUSER: "${PGUSER:-proptrack_app}"
+      PGPASSWORD: "${PGPASSWORD:?set the proptrack_app role's password}"
+      PGPOOL_MAX: "${PGPOOL_MAX:-5}"
+      API_AUTH_TOKEN: "${API_AUTH_TOKEN:?set the shared bearer token — must match the frontend build's VITE_API_AUTH_TOKEN}"
+      # Same-origin behind Caddy in production (browser only ever calls /api/* on this same
+      # origin) — ALLOWED_ORIGIN stays required as a safety-net allowlist, not the primary
+      # defense, in case the API is ever reached directly or from a second origin (e.g. a
+      # maker-preview/staging host). Never a wildcard.
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:?set to this deployment's actual origin(s), comma-separated}"
+      # NAS-native document storage (final migration addendum) — the container-side mount point.
+      # Bind-mounted below to the NAS host path /App/PropTracker/Documents/ — see deploy/README.md
+      # for the exact host-side directory creation/permissions steps this requires before
+      # `docker compose up`. The API is the only container with access to this volume.
+      DOCUMENTS_ROOT: "/app/data/documents"
+    volumes:
+      # Single, narrow bind-mount — nothing broader than this one directory is exposed to the
+      # container. Host path must exist and be writable by the container's runtime user before
+      # `docker compose up` (see deploy/README.md "Document storage setup").
+      - "${DOCUMENTS_HOST_PATH:-/App/PropTracker/Documents}:/app/data/documents"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  edge:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:

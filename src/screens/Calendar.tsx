@@ -1,22 +1,17 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Calendar as BigCalendar, dateFnsLocalizer } from 'react-big-calendar'
 import { format, parse, startOfWeek, getDay, addDays } from 'date-fns'
 import { enUS } from 'date-fns/locale/en-US'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import { makeStyles, tokens, mergeClasses, Select, Text } from '@fluentui/react-components'
-import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
-import { Svm_pt_owneroccupanciesService } from '../generated/services/Svm_pt_owneroccupanciesService'
-import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
-import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
-import type { Svm_pt_owneroccupancies } from '../generated/models/Svm_pt_owneroccupanciesModel'
 import InvoiceForm from './InvoiceForm'
 import { OwnerOccupancyFormDialog } from '@/components/OwnerOccupancyFormDialog'
 import { categoricalPalette } from '@/app/dataPalette'
+import { useOwnerOccupancies, useInvoices, useProperties, useContacts } from '@/hooks/data'
+import type { OwnerOccupancy, Invoice, Property } from '@/domain/types'
+import { InvoiceType } from '@/domain/types'
 
-const TYPE_OUTGOING = 233100001
+const TYPE_OUTGOING = InvoiceType.Income
 const OWNER_COLOR = '#9CA3AF'
 
 const PROPERTY_COLORS = categoricalPalette
@@ -37,14 +32,14 @@ interface CalEvent {
   title: string
   start: Date
   end: Date
-  resource: Cr9b5_pt_invoices | null
-  ownerRecord: Svm_pt_owneroccupancies | null
+  resource: Invoice | null
+  ownerRecord: OwnerOccupancy | null
   color: string
   kind: 'invoice' | 'owner'
 }
 
-function isActive(inv: Cr9b5_pt_invoices): boolean {
-  return (inv.statecode as unknown as number) !== 1 && (inv.statecodename as unknown as string) !== 'Inactive'
+function isActive(inv: Invoice): boolean {
+  return !inv.cancelled
 }
 
 function blendHex(colors: string[]): string {
@@ -161,56 +156,40 @@ type ViewMode = 'monthly' | 'quarterly' | 'annual'
 
 export default function CalendarScreen() {
   const s = useStyles()
-  const [invoices,   setInvoices]   = useState<Cr9b5_pt_invoices[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
-  const [ownerOccupancy, setOwnerOccupancy] = useState<Svm_pt_owneroccupancies[]>([])
-  const [loading,    setLoading]    = useState(true)
+  const { data: invoices = [], isLoading: loadingInv } = useInvoices()
+  const { data: properties = [], isLoading: loadingProps } = useProperties()
+  const { data: contacts = [] } = useContacts()
+  const { data: ownerOccupancy = [], isLoading: loadingOcc, refetch: refetchOcc } = useOwnerOccupancies()
   const [filterPropId, setFilterPropId] = useState('')
-  const [viewInvoice,  setViewInvoice]  = useState<Cr9b5_pt_invoices | null>(null)
-  const [editOwnerRecord, setEditOwnerRecord] = useState<Svm_pt_owneroccupancies | null>(null)
+  const [viewInvoice,  setViewInvoice]  = useState<Invoice | null>(null)
+  const [editOwnerRecord, setEditOwnerRecord] = useState<OwnerOccupancy | null>(null)
   const [currentDate,  setCurrentDate]  = useState(new Date())
   const [viewMode,     setViewMode]     = useState<ViewMode>('monthly')
 
-  async function load() {
-    setLoading(true)
-    const [invRes, propRes, conRes, occRes] = await Promise.all([
-      Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_checkin asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
-    ])
-    setInvoices(invRes.data ?? [])
-    setProperties(propRes.data ?? [])
-    setContacts(conRes.data ?? [])
-    setOwnerOccupancy(occRes.data ?? [])
-    setLoading(false)
-  }
-  useEffect(() => { load() }, [])
+  const loading = loadingInv || loadingProps
 
   const colorMap = useMemo(() => {
     const map: Record<string, string> = {}
-    properties.forEach((p, i) => { map[p.cr9b5_pt_propertyid] = PROPERTY_COLORS[i % PROPERTY_COLORS.length] })
+    properties.forEach((p: Property, i: number) => { map[p.id] = PROPERTY_COLORS[i % PROPERTY_COLORS.length] })
     return map
   }, [properties])
 
   const events = useMemo<CalEvent[]>(() => {
     const guestEvents: CalEvent[] = invoices
-      .filter(inv => {
+      .filter((inv: Invoice) => {
         if (!isActive(inv)) return false
-        if ((inv.cr9b5_type as unknown as number) !== TYPE_OUTGOING) return false
-        if (!inv.cr9b5_checkin || !inv.cr9b5_checkout) return false
-        if (filterPropId && (inv as unknown as Record<string,unknown>)['_cr9b5_property_value'] !== filterPropId) return false
+        if (inv.type !== TYPE_OUTGOING) return false
+        if (!inv.checkIn || !inv.checkOut) return false
+        if (filterPropId && inv.propertyId !== filterPropId) return false
         return true
       })
-      .map(inv => {
-        const raw = inv as unknown as Record<string, unknown>
-        const propId = raw['_cr9b5_property_value'] as string | undefined
-        const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
+      .map((inv: Invoice) => {
+        const propId = inv.propertyId
+        const prop = properties.find((p: Property) => p.id === propId)
         return {
-          title: [prop?.cr9b5_name, inv.cr9b5_internalid].filter(Boolean).join(' · '),
-          start: new Date(inv.cr9b5_checkin!),
-          end:   addDays(new Date(inv.cr9b5_checkout!), 1),
+          title: [prop?.name, inv.internalId].filter(Boolean).join(' · '),
+          start: new Date(inv.checkIn!),
+          end:   addDays(new Date(inv.checkOut!), 1),
           resource: inv,
           ownerRecord: null,
           color: propId ? (colorMap[propId] ?? '#6b7280') : '#6b7280',
@@ -220,19 +199,16 @@ export default function CalendarScreen() {
 
     const ownerEvents: CalEvent[] = ownerOccupancy
       .filter(r => {
-        const raw = r as unknown as Record<string, unknown>
-        if (!r.svm_pt_fromdate || !r.svm_pt_todate) return false
-        if (filterPropId && (raw['_svm_pt_property_value'] as string) !== filterPropId) return false
+        if (!r.fromDate || !r.toDate) return false
+        if (filterPropId && r.propertyId !== filterPropId) return false
         return true
       })
       .map(r => {
-        const raw = r as unknown as Record<string, unknown>
-        const propId = raw['_svm_pt_property_value'] as string | undefined
-        const prop = properties.find(p => p.cr9b5_pt_propertyid === propId)
+        const prop = properties.find((p: Property) => p.id === r.propertyId)
         return {
-          title: ['Owner', prop?.cr9b5_name].filter(Boolean).join(' · '),
-          start: new Date(r.svm_pt_fromdate!),
-          end:   new Date(r.svm_pt_todate!),
+          title: ['Owner', prop?.name].filter(Boolean).join(' · '),
+          start: new Date(r.fromDate),
+          end:   new Date(r.toDate),
           resource: null,
           ownerRecord: r,
           color: OWNER_COLOR,
@@ -243,7 +219,7 @@ export default function CalendarScreen() {
     return [...guestEvents, ...ownerEvents]
   }, [invoices, properties, colorMap, filterPropId, ownerOccupancy])
 
-  const visibleProps = properties.filter(p => !filterPropId || p.cr9b5_pt_propertyid === filterPropId)
+  const visibleProps = properties.filter((p: Property) => !filterPropId || p.id === filterPropId)
   const quarter      = Math.floor(currentDate.getMonth() / 3)
   const quarterStart = quarter * 3
   const year         = currentDate.getFullYear()
@@ -274,15 +250,15 @@ export default function CalendarScreen() {
           {/* Property filter */}
           <Select value={filterPropId} onChange={e => setFilterPropId(e.target.value)}>
             <option value="">All properties</option>
-            {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
 
           {/* Legend */}
           <div className={s.legend}>
             {visibleProps.map(p => (
-              <span key={p.cr9b5_pt_propertyid} className={s.legendItem}>
-                <span className={s.legendDot} style={{ backgroundColor: colorMap[p.cr9b5_pt_propertyid] }} />
-                {p.cr9b5_name}
+              <span key={p.id} className={s.legendItem}>
+                <span className={s.legendDot} style={{ backgroundColor: colorMap[p.id] }} />
+                {p.name}
               </span>
             ))}
             <span className={s.legendItem}>
@@ -304,7 +280,7 @@ export default function CalendarScreen() {
         )}
       </div>
 
-      {loading ? (
+      {loading || loadingOcc ? (
         <Text className={s.loading}>Loading…</Text>
       ) : (
         <div className={s.body}>
@@ -368,10 +344,10 @@ export default function CalendarScreen() {
       {editOwnerRecord && (
         <OwnerOccupancyFormDialog
           record={editOwnerRecord}
-          properties={properties}
-          onSaved={async () => { setEditOwnerRecord(null); await load() }}
+          properties={properties.map(p => ({ id: p.id, name: p.name ?? '', shortId: '', address: '' }))}
+          onSaved={async () => { setEditOwnerRecord(null); await refetchOcc() }}
           onClose={() => setEditOwnerRecord(null)}
-          onDeleted={async () => { setEditOwnerRecord(null); await load() }}
+          onDeleted={async () => { setEditOwnerRecord(null); await refetchOcc() }}
         />
       )}
     </div>

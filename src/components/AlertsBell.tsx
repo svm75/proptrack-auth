@@ -5,13 +5,12 @@ import {
   Popover, PopoverTrigger, PopoverSurface,
 } from '@fluentui/react-components'
 import { AlertRegular } from '@fluentui/react-icons'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
-import type { Cr9b5_pt_invoices } from '@/generated/models/Cr9b5_pt_invoicesModel'
+import { useInvoices, useProperties, useOwnerOccupancies } from '@/hooks/data'
+import type { Invoice } from '@/domain/types'
+import { InvoiceType } from '@/domain/types'
 import { nightsOverlap } from '@/domain/dateRanges'
 
-const TYPE_OUTGOING = 233100001 // Income / guest booking
+const TYPE_OUTGOING = InvoiceType.Income // Income / guest booking
 
 interface AlertItem {
   id: string
@@ -34,35 +33,25 @@ const useStyles = makeStyles({
 export function AlertsBell() {
   const s = useStyles()
   const navigate = useNavigate()
-  const [alerts, setAlerts] = useState<AlertItem[]>([])
   const [open, setOpen] = useState(false)
 
-  useEffect(() => { computeAlerts() }, [])
+  const { data: invoices = [] } = useInvoices()
+  const { data: properties = [] } = useProperties()
+  const { data: ownerOccupancy = [] } = useOwnerOccupancies()
 
-  async function computeAlerts() {
-    const [invRes, propRes, occRes] = await Promise.all([
-      Cr9b5_pt_invoicesService.getAll({
-        select: ['cr9b5_pt_invoiceid', 'cr9b5_internalid', 'cr9b5_type', 'cr9b5_date', 'cr9b5_checkin', 'cr9b5_checkout'],
-        filter: 'statecode eq 0',
-        maxPageSize: 5000,
-      }),
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
-      Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
-    ])
-    const invoices = invRes.data ?? []
-    const properties = propRes.data ?? []
-    const ownerOccupancy = occRes.data ?? []
-    const propName = (id: string) => properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? 'Unknown property'
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
+
+  useEffect(() => {
+    const propName = (id: string) => properties.find(p => p.id === id)?.name ?? 'Unknown property'
 
     const items: AlertItem[] = []
 
     // ---- Overlap conflicts: guest vs guest, guest vs owner, per property ----
-    const byProperty = new Map<string, Cr9b5_pt_invoices[]>()
+    const byProperty = new Map<string, Invoice[]>()
     for (const inv of invoices) {
-      if ((inv.cr9b5_type as unknown as number) !== TYPE_OUTGOING) continue
-      if (!inv.cr9b5_checkin || !inv.cr9b5_checkout) continue
-      const raw = inv as unknown as Record<string, unknown>
-      const propId = raw['_cr9b5_property_value'] as string | undefined
+      if (inv.type !== TYPE_OUTGOING) continue
+      if (!inv.checkIn || !inv.checkOut) continue
+      const propId = inv.propertyId
       if (!propId) continue
       if (!byProperty.has(propId)) byProperty.set(propId, [])
       byProperty.get(propId)!.push(inv)
@@ -71,24 +60,24 @@ export function AlertsBell() {
     for (const [propId, invs] of byProperty) {
       for (let i = 0; i < invs.length && conflictCount < 15; i++) {
         for (let j = i + 1; j < invs.length && conflictCount < 15; j++) {
-          if (nightsOverlap(invs[i].cr9b5_checkin!, invs[i].cr9b5_checkout!, invs[j].cr9b5_checkin!, invs[j].cr9b5_checkout!)) {
+          if (nightsOverlap(invs[i].checkIn!, invs[i].checkOut!, invs[j].checkIn!, invs[j].checkOut!)) {
             items.push({
-              id: `conflict-inv-${invs[i].cr9b5_pt_invoiceid}-${invs[j].cr9b5_pt_invoiceid}`,
-              text: `${invs[i].cr9b5_internalid ?? '(no ID)'} overlaps ${invs[j].cr9b5_internalid ?? '(no ID)'} at ${propName(propId)}`,
+              id: `conflict-inv-${invs[i].id}-${invs[j].id}`,
+              text: `${invs[i].internalId ?? '(no ID)'} overlaps ${invs[j].internalId ?? '(no ID)'} at ${propName(propId)}`,
               severity: 'warning', navigateTo: '/invoices',
             })
             conflictCount++
           }
         }
       }
-      const owners = ownerOccupancy.filter(o => (o as unknown as Record<string, unknown>)['_svm_pt_property_value'] === propId && o.svm_pt_fromdate && o.svm_pt_todate)
+      const owners = ownerOccupancy.filter(o => o.propertyId === propId && o.fromDate && o.toDate)
       for (const inv of invs) {
         for (const occ of owners) {
           if (conflictCount >= 15) break
-          if (nightsOverlap(inv.cr9b5_checkin!, inv.cr9b5_checkout!, occ.svm_pt_fromdate!, occ.svm_pt_todate!)) {
+          if (nightsOverlap(inv.checkIn!, inv.checkOut!, occ.fromDate, occ.toDate)) {
             items.push({
-              id: `conflict-owner-${inv.cr9b5_pt_invoiceid}-${occ.svm_pt_owneroccupancyid}`,
-              text: `${inv.cr9b5_internalid ?? '(no ID)'} overlaps owner occupancy at ${propName(propId)}`,
+              id: `conflict-owner-${inv.id}-${occ.id}`,
+              text: `${inv.internalId ?? '(no ID)'} overlaps owner occupancy at ${propName(propId)}`,
               severity: 'warning', navigateTo: '/invoices/owner-occupancy',
             })
             conflictCount++
@@ -101,12 +90,12 @@ export function AlertsBell() {
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const in7Days = new Date(today.getTime() + 7 * 86400000)
     for (const occ of ownerOccupancy) {
-      if (!occ.svm_pt_fromdate) continue
-      const from = new Date(occ.svm_pt_fromdate)
+      if (!occ.fromDate) continue
+      const from = new Date(occ.fromDate)
       if (from >= today && from <= in7Days) {
-        const propId = (occ as unknown as Record<string, unknown>)['_svm_pt_property_value'] as string | undefined
+        const propId = occ.propertyId
         items.push({
-          id: `upcoming-${occ.svm_pt_owneroccupancyid}`,
+          id: `upcoming-${occ.id}`,
           text: `Owner occupancy starts ${from.toLocaleDateString('de-DE')} at ${propId ? propName(propId) : 'a property'}`,
           severity: 'info', navigateTo: '/invoices/owner-occupancy',
         })
@@ -118,19 +107,18 @@ export function AlertsBell() {
     let missingCatCount = 0
     for (const inv of invoices) {
       if (missingCatCount >= 10) break
-      const raw = inv as unknown as Record<string, unknown>
-      if (raw['_cr9b5_categoryid_value']) continue
-      if (!inv.cr9b5_date || new Date(inv.cr9b5_date) < ninetyDaysAgo) continue
+      if (inv.categoryId) continue
+      if (!inv.date || new Date(inv.date) < ninetyDaysAgo) continue
       items.push({
-        id: `nocat-${inv.cr9b5_pt_invoiceid}`,
-        text: `${inv.cr9b5_internalid ?? '(no ID)'} has no category`,
+        id: `nocat-${inv.id}`,
+        text: `${inv.internalId ?? '(no ID)'} has no category`,
         severity: 'info', navigateTo: '/invoices',
       })
       missingCatCount++
     }
 
     setAlerts(items)
-  }
+  }, [invoices, properties, ownerOccupancy])
 
   return (
     <Popover open={open} onOpenChange={(_, d) => setOpen(d.open)} positioning="below-end">

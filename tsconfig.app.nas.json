@@ -1,0 +1,46 @@
+{
+  // Type-check config for the standalone NAS/PostgreSQL production build (root Dockerfile,
+  // `npm run build:nas`). Extends tsconfig.app.json (the full project — used for local dev,
+  // `pac code run`, and the legacy Power Platform build via `npm run build`) and excludes only
+  // the Dataverse-only module boundary already documented in docs/ARCHITECTURE.md
+  // ("Dataverse-only (Power Platform/legacy)"): `src/generated/` (Dataverse-generated
+  // models/services) and `src/data/dataverse/*` (the Dataverse repository implementation).
+  //
+  // Why this is needed, not cosmetic: `src/generated/services/*.ts` imports
+  // `@microsoft/power-apps/data`, a package this project's own package.json never declares as a
+  // dependency (Power Platform's `pac`/`power-apps` tooling resolves it through its own
+  // environment when running/pushing the Code App — not through plain `npm install`). On a truly
+  // clean checkout (a fresh Docker build context, or the NAS itself) there is no
+  // `@microsoft/power-apps` anywhere in the module resolution path, so `tsc -b` on the full
+  // project fails with TS2307 in every `src/generated/services/*.ts` file. This is expected and
+  // correct for the *Dataverse* build path (it genuinely needs that package, supplied by Power
+  // Platform's own tooling at `pac code push` time) — but the NAS build never reads
+  // `src/generated/` or `src/data/dataverse/*` at runtime (VITE_DATA_BACKEND=postgres resolves
+  // `src/data/index.ts` to `postgresRepositories` only), so it must not type-check them either.
+  //
+  // This is NOT the same as the reverted `tsconfig.nas.json`/`src/data/nas.ts` troubleshooting
+  // artifacts from the earlier failed deployment attempt — those hacked the *shared*
+  // tsconfig.app.json (used by both builds) and left a redundant, unused bypass file. This is a
+  // dedicated, permanent, principled second compilation target for the one architectural
+  // boundary that already exists in the codebase and is documented in ARCHITECTURE.md — the
+  // standard TypeScript pattern for a single repo with two genuinely different build targets.
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    // Mirrors vite.config.ts's nasDataBackendPlugin: every `@/data` import resolves to the
+    // Dataverse-free variant for this project, so `tsc` never reaches `dataverseRepositories.ts`
+    // (and, transitively, `src/generated/services/*.ts`/`@microsoft/power-apps/data`) at all —
+    // not merely excluded from initial inclusion, but genuinely unreachable from this graph.
+    "paths": {
+      "@/*": ["./src/*"],
+      "@/data": ["./src/data/index.postgres.ts"]
+    }
+  },
+  // "src" (tsconfig.app.json's `include`) makes tsc treat every matching file as an independent
+  // compilation root, REGARDLESS of whether anything imports it — so `src/data/index.ts` needs
+  // its own explicit exclude here too, on top of the `paths` redirect above (which only affects
+  // resolving an *import specifier*, not root-file discovery via the `include` glob). Without
+  // this line, `tsc` still type-checks index.ts directly as a root file and pulls
+  // dataverseRepositories.ts back in even though nothing in this build's real module graph
+  // imports it any more (confirmed via `tsc --listFiles`).
+  "exclude": ["src/generated", "src/data/dataverse", "src/data/index.ts"]
+}

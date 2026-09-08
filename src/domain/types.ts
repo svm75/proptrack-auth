@@ -103,6 +103,17 @@ export interface Category {
   sortOrder?: number
 }
 
+// Added Step 8 (migration.md) — generic view over the same References/reference_data table as
+// Category above, but unfiltered by referenceType, for Admin's Reference Data tab and the various
+// screens (Properties, InvoiceForm, GlobalSearch) that need non-Category reference rows (property
+// types, attach types, invoice template types, etc.). Purely additive.
+export interface ReferenceData {
+  id: string
+  value: string
+  referenceType: number
+  sortOrder?: number
+}
+
 export interface Invoice {
   id: string
   internalId: string
@@ -161,7 +172,19 @@ export interface Attachment {
   contactId?: string
   attachTypeId?: string
   uploadedOn?: string
+  // NAS-native document storage (final migration addendum). Set only for documents uploaded
+  // via the new /documents API — undefined for legacy Google-Drive-only rows.
+  storagePath?: string
+  originalFilename?: string
+  mimeType?: string
+  fileSize?: number
 }
+
+export const ForecastAmountSource = {
+  Fixed: 925060000,
+  Calculated: 925060001,
+} as const
+export type ForecastAmountSource = (typeof ForecastAmountSource)[keyof typeof ForecastAmountSource]
 
 export interface ForecastFlow {
   id: string
@@ -181,12 +204,55 @@ export interface ForecastFlow {
   contactId?: string
   parentFlowId?: string
   notes?: string
+  amountSource: ForecastAmountSource
+  percentage?: number
 }
 
 export interface ForecastFlowProperty {
   id: string
   forecastFlowId: string
   propertyId: string
+}
+
+/**
+ * Added in Step 8 (migration.md) — these three entities (owner occupancies, forecast
+ * scenarios, forecast flow components) had API/Postgres support since Step 6 but no domain
+ * type or `Repositories` entry, so the screens that need them (OwnerOccupancy, ForecastFlows,
+ * ForecastView) had no abstraction to route through and called `src/generated/services`
+ * directly regardless of `VITE_DATA_BACKEND`. Purely additive — no existing type changed.
+ */
+export interface OwnerOccupancy {
+  id: string
+  name?: string
+  propertyId: string
+  fromDate: string
+  toDate: string
+  adults?: number
+  children?: number
+  babies?: number
+}
+
+export interface ForecastScenario {
+  id: string
+  name: string
+  propertyId?: string
+  incomeAdjustmentPct: number
+  expenseAdjustmentPct: number
+  notes?: string
+}
+
+export const ForecastFlowComponentDirection = {
+  Add: 925060000,
+  Subtract: 925060001,
+} as const
+export type ForecastFlowComponentDirection = (typeof ForecastFlowComponentDirection)[keyof typeof ForecastFlowComponentDirection]
+
+export interface ForecastFlowComponent {
+  id: string
+  name?: string
+  sourceFlowId: string
+  targetFlowId: string
+  direction: ForecastFlowComponentDirection
 }
 
 export interface ActivityLogEntry {

@@ -2,6 +2,7 @@ import type {
   Property, Contact, Category, Invoice, NewInvoice, SupplierContract,
   InvoiceTemplate, InvoiceComment, Attachment, ForecastFlow, ForecastFlowProperty,
   ActivityLogEntry, ActivityAction, ActivityTable,
+  OwnerOccupancy, ForecastScenario, ForecastFlowComponent, ReferenceData,
 } from '@/domain/types'
 
 /** Generic create/update/delete + list for a simple id-keyed collection. */
@@ -14,14 +15,29 @@ export interface CrudOps<T extends { id: string }> {
 
 /** The contract the UI codes against — implemented by `mock/` or `dataverse/`. */
 export interface Repositories {
-  properties: CrudOps<Property>
+  properties: CrudOps<Property> & {
+    /** Pre-check before allowing delete in the UI — invoices/contracts referencing the property. */
+    deletable(id: string): Promise<{ deletable: boolean; reason?: string; invoiceCount: number; supplierContractCount: number }>
+  }
   contacts: CrudOps<Contact>
   supplierContracts: CrudOps<SupplierContract>
   categories: CrudOps<Category>
+  // Added Step 8 (migration.md) — generic References/reference_data CRUD (unfiltered by type),
+  // for Admin's Reference Data tab and other screens needing non-Category reference rows.
+  referenceData: CrudOps<ReferenceData> & {
+    usageCount(id: string): Promise<{ total: number; byTable: Record<string, number> }>
+  }
   invoiceTemplates: CrudOps<InvoiceTemplate>
   attachments: CrudOps<Attachment>
   forecastFlows: CrudOps<ForecastFlow>
   forecastFlowProperties: CrudOps<ForecastFlowProperty>
+  // Added Step 8 (migration.md) — see src/domain/types.ts comment above these three interfaces.
+  ownerOccupancies: CrudOps<OwnerOccupancy>
+  forecastScenarios: CrudOps<ForecastScenario>
+  forecastFlowComponents: CrudOps<ForecastFlowComponent> & {
+    /** Components where `flowId` is the source — used to resolve a Calculated flow's amount. */
+    listBySourceFlow(flowId: string): Promise<ForecastFlowComponent[]>
+  }
 
   invoices: {
     list(): Promise<Invoice[]>

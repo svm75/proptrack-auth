@@ -1,30 +1,26 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
   Tooltip, Legend, ResponsiveContainer,
 } from 'recharts'
 import { makeStyles, tokens, mergeClasses, Select, Text } from '@fluentui/react-components'
-import { Cr9b5_pt_forecastflowsService }   from '../generated/services/Cr9b5_pt_forecastflowsService'
-import { Cr9b5_forecastpropertiesService }  from '../generated/services/Cr9b5_forecastpropertiesService'
-import type { Cr9b5_pt_forecastflows }      from '../generated/models/Cr9b5_pt_forecastflowsModel'
-import type { Cr9b5_forecastproperties }    from '../generated/models/Cr9b5_forecastpropertiesModel'
-import type { Cr9b5_pt_invoices }           from '../generated/models/Cr9b5_pt_invoicesModel'
-import type { Cr9b5_pt_properties }         from '../generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_references }         from '../generated/models/Cr9b5_pt_referencesModel'
+import { useForecastFlows, useForecastFlowProperties } from '@/hooks/data'
+import { InvoiceType, ForecastFlowType, ForecastFrequency } from '@/domain/types'
+import type { Invoice, Property, ReferenceData, ForecastFlow, ForecastFlowProperty } from '@/domain/types'
 import { formatMoney } from '@/domain/money'
 import { dataColors } from '@/app/dataPalette'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const INV_INCOME       = 233100001   // invoice type: outgoing = income
-const FLOW_INCOME      = 233100000   // forecast flow type: income
+const INV_INCOME       = InvoiceType.Income
+const FLOW_INCOME      = ForecastFlowType.Income
 const REF_INC_CAT      = 233100005
-const FREQ_ONE_OFF     = 233100000
-const FREQ_DAILY       = 233100001
-const FREQ_WEEKLY      = 233100002
-const FREQ_MONTHLY     = 233100003
-const FREQ_QUARTERLY   = 233100004
-const FREQ_SEMI_ANN    = 233100005
-const FREQ_ANNUALLY    = 233100006
+const FREQ_ONE_OFF     = ForecastFrequency.OneOff
+const FREQ_DAILY       = ForecastFrequency.Daily
+const FREQ_WEEKLY      = ForecastFrequency.Weekly
+const FREQ_MONTHLY     = ForecastFrequency.Monthly
+const FREQ_QUARTERLY   = ForecastFrequency.Quarterly
+const FREQ_SEMI_ANN    = ForecastFrequency.SemiAnnually
+const FREQ_ANNUALLY    = ForecastFrequency.Annually
 const MONTHS           = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 
 // ── Forecast engine (copied from ForecastView) ────────────────────────────────
@@ -48,32 +44,31 @@ function parseDate(s: string | undefined): { year: number; month: number } | nul
   return { year: y, month: mo - 1 }
 }
 
-function monthInRange(year: number, month: number, flow: Cr9b5_pt_forecastflows): boolean {
-  const start = parseDate(flow.cr9b5_startdate)
-  const end   = parseDate(flow.cr9b5_enddate)
+function monthInRange(year: number, month: number, flow: ForecastFlow): boolean {
+  const start = parseDate(flow.startDate)
+  const end   = parseDate(flow.endDate)
   if (!start) return false
   const after  = year > start.year || (year === start.year && month >= start.month)
   const before = !end || year < end.year || (year === end.year && month <= end.month)
   return after && before
 }
 
-function computeNetForMonth(flow: Cr9b5_pt_forecastflows, year: number, month: number): number {
+function computeNetForMonth(flow: ForecastFlow, year: number, month: number): number {
   if (!monthInRange(year, month, flow)) return 0
-  const r     = flow as unknown as Record<string, unknown>
-  const gross = (r['cr9b5_grossamount'] as number) ?? 0
-  const vat   = flow.cr9b5_vatamount ?? 0
-  const freq  = Number(flow.cr9b5_frequency)
+  const gross = flow.grossAmount ?? 0
+  const vat   = flow.vatAmount ?? 0
+  const freq  = Number(flow.frequency)
   const grossBase = gross
 
   let g = 0
   switch (freq) {
     case FREQ_ONE_OFF: {
-      const s = parseDate(flow.cr9b5_startdate)
+      const s = parseDate(flow.startDate)
       g = (s && s.year === year && s.month === month) ? gross : 0
       break
     }
     case FREQ_DAILY: {
-      const dowStr = (r['cr9b5_daysofweek'] as string) ?? ''
+      const dowStr = flow.daysOfWeek ?? ''
       if (!dowStr) { g = 0; break }
       const dows  = dowStr.split(',').map(Number).filter(n => n >= 1 && n <= 7)
       const count = dows.reduce((s, d) => s + countDowInMonth(year, month, d), 0)
@@ -90,7 +85,7 @@ function computeNetForMonth(flow: Cr9b5_pt_forecastflows, year: number, month: n
     case FREQ_SEMI_ANN:
     case FREQ_ANNUALLY: {
       const interval = freq === FREQ_QUARTERLY ? 3 : freq === FREQ_SEMI_ANN ? 6 : 12
-      const s = parseDate(flow.cr9b5_startdate)
+      const s = parseDate(flow.startDate)
       if (!s) { g = 0; break }
       const totalMonths = (year - s.year) * 12 + (month - s.month)
       g = (totalMonths >= 0 && totalMonths % interval === 0) ? gross : 0
@@ -105,15 +100,15 @@ function computeNetForMonth(flow: Cr9b5_pt_forecastflows, year: number, month: n
 // ── Interfaces ────────────────────────────────────────────────────────────────
 
 interface Props {
-  invoices:   Cr9b5_pt_invoices[]
-  properties: Cr9b5_pt_properties[]
-  references: Cr9b5_pt_references[]
+  invoices:      Invoice[]
+  properties:    Property[]
+  referenceData: ReferenceData[]
 }
 
 interface LogicalFlow {
   logicalId:          string
   categoryId:         string
-  versions:           Cr9b5_pt_forecastflows[]
+  versions:           ForecastFlow[]
   linkedPropertyIds:  string[]
   allProperties:      boolean
 }
@@ -146,51 +141,41 @@ const useStyles = makeStyles({
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-export default function IncomevsForecast({ invoices, properties, references }: Props) {
+export default function IncomevsForecast({ invoices, properties, referenceData }: Props) {
   const s = useStyles()
   const curYear = new Date().getFullYear()
 
   const years = useMemo(() => {
     const s = new Set<number>()
-    invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
+    invoices.forEach(inv => { if (inv.year) s.add(inv.year) })
     const arr = Array.from(s).sort((a, b) => b - a)
     return arr.length ? arr : [curYear]
   }, [invoices, curYear])
 
   const [year,       setYear]       = useState(curYear)
   const [propId,     setPropId]     = useState('')
-  const [flows,      setFlows]      = useState<Cr9b5_pt_forecastflows[]>([])
-  const [flowProps,  setFlowProps]  = useState<Cr9b5_forecastproperties[]>([])
-  const [fcLoading,  setFcLoading]  = useState(true)
 
-  useEffect(() => {
-    setFcLoading(true)
-    Promise.all([
-      Cr9b5_pt_forecastflowsService.getAll({}),
-      Cr9b5_forecastpropertiesService.getAll({}),
-    ]).then(([fRes, fpRes]) => {
-      setFlows(fRes.data ?? [])
-      setFlowProps(fpRes.data ?? [])
-    }).finally(() => setFcLoading(false))
-  }, [])
+  const { data: flows = [],     isLoading: loadingFlows }     = useForecastFlows()
+  const { data: flowProps = [], isLoading: loadingFlowProps } = useForecastFlowProperties()
+  const fcLoading = loadingFlows || loadingFlowProps
 
   const incomeCats = useMemo(
-    () => references.filter(r => Number(r.cr9b5_referencetype) === REF_INC_CAT),
-    [references],
+    () => referenceData.filter(r => Number(r.referenceType) === REF_INC_CAT),
+    [referenceData],
   )
 
   // Build logical flows for income
   const logicalFlows = useMemo((): LogicalFlow[] => {
     const map = new Map<string, LogicalFlow>()
     for (const flow of flows) {
-      if (Number(flow.cr9b5_type) !== FLOW_INCOME) continue
-      const parentId  = (flow as unknown as Record<string, unknown>)['_cr9b5_parentflowid_value'] as string | undefined
-      const logicalId = parentId ?? flow.cr9b5_pt_forecastflowid
+      if (Number(flow.type) !== FLOW_INCOME) continue
+      const parentId  = flow.parentFlowId
+      const logicalId = parentId ?? flow.id
       if (!map.has(logicalId)) {
-        const root = flows.find(f => f.cr9b5_pt_forecastflowid === logicalId)
+        const root = flows.find(f => f.id === logicalId)
         map.set(logicalId, {
           logicalId,
-          categoryId:        (root ?? flow)._cr9b5_categoryid_value ?? '',
+          categoryId:        (root ?? flow).categoryId ?? '',
           versions:          [],
           linkedPropertyIds: [],
           allProperties:     false,
@@ -198,15 +183,15 @@ export default function IncomevsForecast({ invoices, properties, references }: P
       }
       const lf = map.get(logicalId)!
       lf.versions.push(flow)
-      if (flow.cr9b5_allproperties) lf.allProperties = true
+      if (flow.allProperties) lf.allProperties = true
     }
-    for (const fp of flowProps) {
-      const flowId = fp._cr9b5_forecastflowid_value ?? ''
-      const pid    = fp._cr9b5_propertyid_value ?? ''
-      const flow   = flows.find(f => f.cr9b5_pt_forecastflowid === flowId)
+    for (const fp of flowProps as ForecastFlowProperty[]) {
+      const flowId = fp.forecastFlowId ?? ''
+      const pid    = fp.propertyId ?? ''
+      const flow   = flows.find(f => f.id === flowId)
       if (!flow) continue
-      const parentId  = (flow as unknown as Record<string, unknown>)['_cr9b5_parentflowid_value'] as string | undefined
-      const logicalId = parentId ?? flow.cr9b5_pt_forecastflowid
+      const parentId  = flow.parentFlowId
+      const logicalId = parentId ?? flow.id
       const lf = map.get(logicalId)
       if (lf && pid && !lf.linkedPropertyIds.includes(pid)) lf.linkedPropertyIds.push(pid)
     }
@@ -265,14 +250,14 @@ export default function IncomevsForecast({ invoices, properties, references }: P
     const map = new Map<number, number>()
     invoices
       .filter(inv =>
-        (inv.statecode as unknown as number) !== 1 &&
-        (inv.cr9b5_type as unknown as number) === INV_INCOME &&
-        inv.cr9b5_year === year &&
-        (!propId || (inv as unknown as Record<string, unknown>)['cr9b5_allproperties'] || (inv as unknown as Record<string, unknown>)['_cr9b5_property_value'] === propId)
+        !inv.cancelled &&
+        inv.type === INV_INCOME &&
+        inv.year === year &&
+        (!propId || inv.allProperties || inv.propertyId === propId)
       )
       .forEach(inv => {
-        const m = inv.cr9b5_date ? new Date(inv.cr9b5_date).getMonth() : -1
-        if (m >= 0) map.set(m, (map.get(m) ?? 0) + (inv.cr9b5_baseamount ?? 0))
+        const m = inv.date ? new Date(inv.date).getMonth() : -1
+        if (m >= 0) map.set(m, (map.get(m) ?? 0) + (inv.baseAmount ?? 0))
       })
     return map
   }, [invoices, year, propId])
@@ -282,14 +267,14 @@ export default function IncomevsForecast({ invoices, properties, references }: P
     const map = new Map<string, number>()
     invoices
       .filter(inv =>
-        (inv.statecode as unknown as number) !== 1 &&
-        (inv.cr9b5_type as unknown as number) === INV_INCOME &&
-        inv.cr9b5_year === year &&
-        (!propId || (inv as unknown as Record<string, unknown>)['cr9b5_allproperties'] || (inv as unknown as Record<string, unknown>)['_cr9b5_property_value'] === propId)
+        !inv.cancelled &&
+        inv.type === INV_INCOME &&
+        inv.year === year &&
+        (!propId || inv.allProperties || inv.propertyId === propId)
       )
       .forEach(inv => {
-        const catId = ((inv as unknown as Record<string, unknown>)['_cr9b5_categoryid_value'] as string) ?? ''
-        map.set(catId, (map.get(catId) ?? 0) + (inv.cr9b5_baseamount ?? 0))
+        const catId = inv.categoryId ?? ''
+        map.set(catId, (map.get(catId) ?? 0) + (inv.baseAmount ?? 0))
       })
     return map
   }, [invoices, year, propId])
@@ -298,10 +283,10 @@ export default function IncomevsForecast({ invoices, properties, references }: P
   const tableRows = useMemo(() => {
     const rows: { id: string; label: string; forecast: number; actual: number }[] = incomeCats
       .map(c => ({
-        id:       c.cr9b5_pt_referenceid,
-        label:    c.cr9b5_value ?? '',
-        forecast: forecastByCat.get(c.cr9b5_pt_referenceid) ?? 0,
-        actual:   actualByCat.get(c.cr9b5_pt_referenceid) ?? 0,
+        id:       c.id,
+        label:    c.value ?? '',
+        forecast: forecastByCat.get(c.id) ?? 0,
+        actual:   actualByCat.get(c.id) ?? 0,
       }))
       .filter(r => r.forecast > 0 || r.actual > 0)
 
@@ -350,7 +335,7 @@ export default function IncomevsForecast({ invoices, properties, references }: P
         </Select>
         <Select value={propId} onChange={e => setPropId(e.target.value)}>
           <option value="">All properties</option>
-          {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+          {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </Select>
         {fcLoading && <span className={s.loadingHint}>Loading forecast…</span>}
       </div>

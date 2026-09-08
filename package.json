@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:nas": "tsc --project tsconfig.app.nas.json && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },

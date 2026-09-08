@@ -4,11 +4,9 @@ import {
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { makeStyles, tokens, mergeClasses, Text, Button, Select } from '@fluentui/react-components'
-import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '../generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
-import { Svm_pt_owneroccupanciesService } from '../generated/services/Svm_pt_owneroccupanciesService'
+import { useInvoices, useProperties, useContacts, useReferenceData, useOwnerOccupancies } from '@/hooks/data'
+import { InvoiceType } from '@/domain/types'
+import type { Invoice, Property, Contact, ReferenceData, OwnerOccupancy } from '@/domain/types'
 import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
 import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
 import type { Cr9b5_pt_contacts } from '../generated/models/Cr9b5_pt_contactsModel'
@@ -23,8 +21,8 @@ import IncomevsForecast from './IncomevsForecast'
 import { formatMoney, formatMoneyShort } from '@/domain/money'
 import { dataColors, categoricalPalette } from '@/app/dataPalette'
 
-const TYPE_OUTGOING = 233100001
-const TYPE_INCOMING = 233100000
+const TYPE_OUTGOING = InvoiceType.Income
+const TYPE_INCOMING = InvoiceType.Expense
 
 const MONTH_LABELS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const MONTH_FULL   = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -37,8 +35,8 @@ const PROPERTY_COLORS = categoricalPalette
 
 // ---------- helpers ----------
 
-function isActive(inv: Cr9b5_pt_invoices): boolean {
-  return (inv.statecode as unknown as number) !== 1 && (inv.statecodename as unknown as string) !== 'Inactive'
+function isActive(inv: Invoice): boolean {
+  return !inv.cancelled
 }
 
 function daysInYear(year: number): number {
@@ -61,18 +59,16 @@ function fmtPct(n: number): string { return `${n.toFixed(1)} %` }
 // Nights blocked for owner use within [1 Jan, elapsed-end) of `year`, clipped
 // to the same window daysElapsedInYear() uses so incl./excl. occupancy share
 // one consistent denominator. propertyId === '' sums across all properties.
-function ownerNightsForPeriod(records: Svm_pt_owneroccupancies[], propertyId: string, year: number): number {
+function ownerNightsForPeriod(records: OwnerOccupancy[], propertyId: string, year: number): number {
   const now = new Date()
   const yearStart = new Date(year, 0, 1)
   const yearEndExclusive = year === now.getFullYear() ? new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1) : new Date(year + 1, 0, 1)
   let total = 0
   for (const r of records) {
-    const raw = r as unknown as Record<string, unknown>
-    const pid = (raw['_svm_pt_property_value'] as string) ?? ''
-    if (propertyId && pid !== propertyId) continue
-    if (!r.svm_pt_fromdate || !r.svm_pt_todate) continue
-    const from = new Date(r.svm_pt_fromdate) < yearStart ? yearStart : new Date(r.svm_pt_fromdate)
-    const to = new Date(r.svm_pt_todate) > yearEndExclusive ? yearEndExclusive : new Date(r.svm_pt_todate)
+    if (propertyId && r.propertyId !== propertyId) continue
+    if (!r.fromDate || !r.toDate) continue
+    const from = new Date(r.fromDate) < yearStart ? yearStart : new Date(r.fromDate)
+    const to = new Date(r.toDate) > yearEndExclusive ? yearEndExclusive : new Date(r.toDate)
     const nights = Math.round((to.getTime() - from.getTime()) / 86400000)
     if (nights > 0) total += nights
   }
@@ -87,16 +83,16 @@ function inclOccupancyPct(totalGuestNights: number, ownerNights: number, availab
   return availableNights > 0 ? ((totalGuestNights + ownerNights) / availableNights) * 100 : null
 }
 
-function getQuarter(inv: Cr9b5_pt_invoices): number {
-  if (!inv.cr9b5_date) return 0
-  return Math.floor(new Date(inv.cr9b5_date).getMonth() / 3) + 1
+function getQuarter(inv: Invoice): number {
+  if (!inv.date) return 0
+  return Math.floor(new Date(inv.date).getMonth() / 3) + 1
 }
 
 // ---------- shared types ----------
 
 interface SharedProps {
-  invoices: Cr9b5_pt_invoices[]
-  properties: Cr9b5_pt_properties[]
+  invoices: Invoice[]
+  properties: Property[]
 }
 
 // ---------- print ----------
@@ -298,11 +294,11 @@ function YearSelect({ value, years, onChange, allowAll = true }: { value: number
   )
 }
 
-function PropSelect({ value, properties, onChange }: { value: string; properties: Cr9b5_pt_properties[]; onChange:(v:string)=>void }) {
+function PropSelect({ value, properties, onChange }: { value: string; properties: Property[]; onChange:(v:string)=>void }) {
   return (
     <Select value={value} onChange={e => onChange(e.target.value)}>
       <option value="">All properties</option>
-      {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+      {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
     </Select>
   )
 }
@@ -311,7 +307,7 @@ function PropSelect({ value, properties, onChange }: { value: string; properties
 // OVERVIEW TAB
 // ============================================================
 
-function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: Svm_pt_owneroccupancies[] }) {
+function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: OwnerOccupancy[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear,   setFilterYear]   = useState<number|'all'>(currentYear)
@@ -319,34 +315,33 @@ function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps
 
   const years = useMemo(() => {
     const s = new Set<number>()
-    invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
+    invoices.forEach(inv => { if (inv.year) s.add(inv.year) })
     return Array.from(s).sort((a,b) => b-a)
   }, [invoices])
 
   const propFiltered = useMemo(() => invoices.filter(inv => {
     if (!isActive(inv)) return false
     if (filterPropId) {
-      const raw = inv as unknown as Record<string,unknown>
-      if (!raw['cr9b5_allproperties'] && raw['_cr9b5_property_value'] !== filterPropId) return false
+      if (!inv.allProperties && inv.propertyId !== filterPropId) return false
     }
     return true
   }), [invoices, filterPropId])
 
   const filtered = useMemo(() =>
-    filterYear === 'all' ? propFiltered : propFiltered.filter(i => i.cr9b5_year === filterYear)
+    filterYear === 'all' ? propFiltered : propFiltered.filter(i => i.year === filterYear)
   , [propFiltered, filterYear])
 
-  const income   = useMemo(() => filtered.filter(i => (i.cr9b5_type as unknown as number) === TYPE_OUTGOING), [filtered])
-  const expenses = useMemo(() => filtered.filter(i => (i.cr9b5_type as unknown as number) === TYPE_INCOMING), [filtered])
+  const income   = useMemo(() => filtered.filter(i => i.type === TYPE_OUTGOING), [filtered])
+  const expenses = useMemo(() => filtered.filter(i => i.type === TYPE_INCOMING), [filtered])
 
-  const incomeGross    = income.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
-  const expensesGross  = expenses.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
+  const incomeGross    = income.reduce((s,i) => s+(i.totalGross??0), 0)
+  const expensesGross  = expenses.reduce((s,i) => s+(i.totalGross??0), 0)
   const netProfitGross = incomeGross - expensesGross
-  const incomeNet      = income.reduce((s,i) => s+(i.cr9b5_baseamount??0), 0)
-  const expensesNet    = expenses.reduce((s,i) => s+(i.cr9b5_baseamount??0), 0)
+  const incomeNet      = income.reduce((s,i) => s+(i.baseAmount??0), 0)
+  const expensesNet    = expenses.reduce((s,i) => s+(i.baseAmount??0), 0)
   const netProfitNet   = incomeNet - expensesNet
-  const vatComponent   = income.reduce((s,i) => s+(i.cr9b5_taxamount??0),0) + expenses.reduce((s,i) => s+(i.cr9b5_taxamount??0),0)
-  const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
+  const vatComponent   = income.reduce((s,i) => s+(i.taxAmount??0),0) + expenses.reduce((s,i) => s+(i.taxAmount??0),0)
+  const totalNights    = income.reduce((s,i) => s+(i.nights??0), 0)
   const propCount      = filterPropId ? 1 : properties.length
   const availableNights = filterYear !== 'all' && propCount > 0 ? daysElapsedInYear(filterYear as number) * propCount : null
   const occupancyExclPct = availableNights ? (totalNights / availableNights) * 100 : null
@@ -354,21 +349,21 @@ function DashboardOverview({ invoices, properties, ownerOccupancy }: SharedProps
   const occupancyInclPct = availableNights !== null ? inclOccupancyPct(totalNights, ownerNights, availableNights) : null
 
   const monthlyData = useMemo(() => MONTH_LABELS.map((month, idx) => {
-    const inv = filtered.filter(i => i.cr9b5_date && new Date(i.cr9b5_date).getMonth() === idx)
+    const inv = filtered.filter(i => i.date && new Date(i.date).getMonth() === idx)
     return {
       month,
-      income:   inv.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_OUTGOING).reduce((s,i)=>s+(i.cr9b5_totalgross??0),0),
-      expenses: inv.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING).reduce((s,i)=>s+(i.cr9b5_totalgross??0),0),
+      income:   inv.filter(i=>i.type===TYPE_OUTGOING).reduce((s,i)=>s+(i.totalGross??0),0),
+      expenses: inv.filter(i=>i.type===TYPE_INCOMING).reduce((s,i)=>s+(i.totalGross??0),0),
     }
   }), [filtered])
 
   const yearlyData = useMemo(() => {
     const byYear: Record<number,{income:number;expenses:number}> = {}
     propFiltered.forEach(inv => {
-      const y = inv.cr9b5_year; if (!y) return
+      const y = inv.year; if (!y) return
       if (!byYear[y]) byYear[y] = {income:0,expenses:0}
-      if ((inv.cr9b5_type as unknown as number) === TYPE_OUTGOING) byYear[y].income += inv.cr9b5_totalgross??0
-      else byYear[y].expenses += inv.cr9b5_totalgross??0
+      if (inv.type === TYPE_OUTGOING) byYear[y].income += inv.totalGross??0
+      else byYear[y].expenses += inv.totalGross??0
     })
     return Object.entries(byYear).sort(([a],[b])=>Number(a)-Number(b))
       .map(([year,{income,expenses}]) => ({year, income, expenses, profit:income-expenses}))
@@ -453,31 +448,31 @@ function StatRow({ label, value, sub, accent }: { label:string; value:string; su
   )
 }
 
-function DashboardComparison({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: Svm_pt_owneroccupancies[] }) {
+function DashboardComparison({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: OwnerOccupancy[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear, setFilterYear] = useState<number|'all'>(currentYear)
   const years = useMemo(() => {
-    const s = new Set<number>(); invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
+    const s = new Set<number>(); invoices.forEach(inv => { if (inv.year) s.add(inv.year) })
     return Array.from(s).sort((a,b) => b-a)
   }, [invoices])
 
   const propStats = useMemo(() => properties.map((prop, idx) => {
     const propInv = invoices.filter(inv => {
       if (!isActive(inv)) return false
-      if (filterYear !== 'all' && inv.cr9b5_year !== filterYear) return false
-      return (inv as unknown as Record<string,unknown>)['_cr9b5_property_value'] === prop.cr9b5_pt_propertyid
+      if (filterYear !== 'all' && inv.year !== filterYear) return false
+      return inv.propertyId === prop.id
     })
-    const out = propInv.filter(i => (i.cr9b5_type as unknown as number) === TYPE_OUTGOING)
-    const inc = propInv.filter(i => (i.cr9b5_type as unknown as number) === TYPE_INCOMING)
-    const income   = out.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
-    const expenses = inc.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
-    const nights   = out.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
+    const out = propInv.filter(i => i.type === TYPE_OUTGOING)
+    const inc = propInv.filter(i => i.type === TYPE_INCOMING)
+    const income   = out.reduce((s,i) => s+(i.totalGross??0), 0)
+    const expenses = inc.reduce((s,i) => s+(i.totalGross??0), 0)
+    const nights   = out.reduce((s,i) => s+(i.nights??0), 0)
     const avail    = filterYear!=='all' ? daysElapsedInYear(filterYear as number) : 365
     const nightsByMonth = Array(12).fill(0)
-    out.forEach(inv => { if (inv.cr9b5_checkin) nightsByMonth[new Date(inv.cr9b5_checkin).getMonth()] += (inv.cr9b5_nights??0) })
+    out.forEach(inv => { if (inv.checkIn) nightsByMonth[new Date(inv.checkIn).getMonth()] += (inv.nights??0) })
     const maxN = Math.max(...nightsByMonth)
-    const ownerNights = filterYear !== 'all' ? ownerNightsForPeriod(ownerOccupancy, prop.cr9b5_pt_propertyid, filterYear as number) : 0
+    const ownerNights = filterYear !== 'all' ? ownerNightsForPeriod(ownerOccupancy, prop.id, filterYear as number) : 0
     return {
       prop, color: PROPERTY_COLORS[idx % PROPERTY_COLORS.length],
       income, expenses, profit: income-expenses,
@@ -496,13 +491,13 @@ function DashboardComparison({ invoices, properties, ownerOccupancy }: SharedPro
       {properties.length===0 && <p className={s.muted}>No properties found.</p>}
       <div className={properties.length>1 ? s.compGrid2 : s.compGrid1}>
         {propStats.map(p => (
-          <div key={p.prop.cr9b5_pt_propertyid} className={s.compCard}>
+          <div key={p.prop.id} className={s.compCard}>
             <div className={s.compCardBar} style={{backgroundColor:p.color}} />
             <div className={s.compCardBody}>
               <div className={s.compHeader}>
                 <span className={s.compDot} style={{backgroundColor:p.color}} />
-                <h3 className={s.compTitle}>{p.prop.cr9b5_name}</h3>
-                {p.prop.cr9b5_shortid && <span className={s.compSub}>({p.prop.cr9b5_shortid})</span>}
+                <h3 className={s.compTitle}>{p.prop.name}</h3>
+                {p.prop.shortId && <span className={s.compSub}>({p.prop.shortId})</span>}
               </div>
               <div className={s.statGrid}>
                 <StatRow label="Income (gross)"   value={formatMoney(p.income)}   accent="green" />
@@ -533,16 +528,15 @@ function DashboardCashFlow({ invoices, properties }: SharedProps) {
   const [filterPropId, setFilterPropId] = useState('')
 
   const years = useMemo(() => {
-    const s = new Set<number>(); invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
+    const s = new Set<number>(); invoices.forEach(inv => { if (inv.year) s.add(inv.year) })
     return Array.from(s).sort((a,b) => b-a)
   }, [invoices])
 
   const filtered = useMemo(() => invoices.filter(inv => {
     if (!isActive(inv)) return false
-    if (filterYear!=='all' && inv.cr9b5_year !== filterYear) return false
+    if (filterYear!=='all' && inv.year !== filterYear) return false
     if (filterPropId) {
-      const raw = inv as unknown as Record<string,unknown>
-      if (!raw['cr9b5_allproperties'] && raw['_cr9b5_property_value'] !== filterPropId) return false
+      if (!inv.allProperties && inv.propertyId !== filterPropId) return false
     }
     return true
   }), [invoices, filterYear, filterPropId])
@@ -551,16 +545,16 @@ function DashboardCashFlow({ invoices, properties }: SharedProps) {
     if (filterYear==='all') return []
     let cum = 0
     return MONTH_LABELS.map((month, idx) => {
-      const inv = filtered.filter(i => i.cr9b5_date && new Date(i.cr9b5_date).getMonth()===idx)
-      const income   = inv.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_OUTGOING).reduce((s,i)=>s+(i.cr9b5_totalgross??0),0)
-      const expenses = inv.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING).reduce((s,i)=>s+(i.cr9b5_totalgross??0),0)
+      const inv = filtered.filter(i => i.date && new Date(i.date).getMonth()===idx)
+      const income   = inv.filter(i=>i.type===TYPE_OUTGOING).reduce((s,i)=>s+(i.totalGross??0),0)
+      const expenses = inv.filter(i=>i.type===TYPE_INCOMING).reduce((s,i)=>s+(i.totalGross??0),0)
       cum += income - expenses
       return { month, income, expenses, cumulative: cum }
     })
   }, [filtered, filterYear])
 
-  const totalIncome   = filtered.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_OUTGOING).reduce((s,i)=>s+(i.cr9b5_totalgross??0),0)
-  const totalExpenses = filtered.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING).reduce((s,i)=>s+(i.cr9b5_totalgross??0),0)
+  const totalIncome   = filtered.filter(i=>i.type===TYPE_OUTGOING).reduce((s,i)=>s+(i.totalGross??0),0)
+  const totalExpenses = filtered.filter(i=>i.type===TYPE_INCOMING).reduce((s,i)=>s+(i.totalGross??0),0)
   const closing = totalIncome - totalExpenses
   const highIncome  = monthlyData.length ? Math.max(...monthlyData.map(m=>m.income))   : 0
   const highExpense = monthlyData.length ? Math.max(...monthlyData.map(m=>m.expenses)) : 0
@@ -666,35 +660,35 @@ function TaxTable({ title, rows, totalRow }: {
   )
 }
 
-function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; contacts: Cr9b5_pt_contacts[] }) {
+function DashboardTax({ invoices, contacts }: { invoices: Invoice[]; contacts: Contact[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
   const [filterYear, setFilterYear] = useState(currentYear)
 
   const contactById = useMemo(() => {
     const map: Record<string, string> = {}
-    contacts.forEach(c => { map[c.cr9b5_pt_contactid] = c.cr9b5_name })
+    contacts.forEach(c => { map[c.id] = c.name })
     return map
   }, [contacts])
 
   const years = useMemo(() => {
-    const s = new Set<number>(); invoices.forEach(inv => { if (inv.cr9b5_year) s.add(inv.cr9b5_year) })
+    const s = new Set<number>(); invoices.forEach(inv => { if (inv.year) s.add(inv.year) })
     const arr = Array.from(s).sort((a,b) => b-a)
     return arr.length ? arr : [currentYear]
   }, [invoices, currentYear])
 
   const yearInvoices = useMemo(() =>
-    invoices.filter(inv => isActive(inv) && inv.cr9b5_year === filterYear)
+    invoices.filter(inv => isActive(inv) && inv.year === filterYear)
   , [invoices, filterYear])
 
   function buildContactTable(type: number, threshold: number) {
     const grouped: Record<string, {q1:number;q2:number;q3:number;q4:number}> = {}
-    yearInvoices.filter(i => (i.cr9b5_type as unknown as number)===type).forEach(inv => {
-      const contactId = (inv as unknown as Record<string,unknown>)['_cr9b5_contact_value'] as string | undefined
+    yearInvoices.filter(i => i.type===type).forEach(inv => {
+      const contactId = inv.contactId
       const name = (contactId && contactById[contactId]) || 'Unknown'
       if (!grouped[name]) grouped[name] = {q1:0,q2:0,q3:0,q4:0}
       const q = getQuarter(inv)
-      if (q>=1 && q<=4) grouped[name][`q${q}` as 'q1'|'q2'|'q3'|'q4'] += (inv.cr9b5_baseamount??0)
+      if (q>=1 && q<=4) grouped[name][`q${q}` as 'q1'|'q2'|'q3'|'q4'] += (inv.baseAmount??0)
     })
     return Object.entries(grouped)
       .map(([label,v]) => ({ label, q1:v.q1, q2:v.q2, q3:v.q3, q4:v.q4, total:v.q1+v.q2+v.q3+v.q4 }))
@@ -726,8 +720,8 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
             </thead>
             <tbody>
               {[1,2,3,4].map(q => {
-                const collected = yearInvoices.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_OUTGOING&&getQuarter(i)===q).reduce((s,i)=>s+(i.cr9b5_taxamount??0),0)
-                const paid      = yearInvoices.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING&&getQuarter(i)===q).reduce((s,i)=>s+(i.cr9b5_taxamount??0),0)
+                const collected = yearInvoices.filter(i=>i.type===TYPE_OUTGOING&&getQuarter(i)===q).reduce((s,i)=>s+(i.taxAmount??0),0)
+                const paid      = yearInvoices.filter(i=>i.type===TYPE_INCOMING&&getQuarter(i)===q).reduce((s,i)=>s+(i.taxAmount??0),0)
                 const net = collected - paid
                 return (
                   <tr key={q}>
@@ -739,8 +733,8 @@ function DashboardTax({ invoices, contacts }: { invoices: Cr9b5_pt_invoices[]; c
                 )
               })}
               {(() => {
-                const tc = yearInvoices.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_OUTGOING).reduce((s,i)=>s+(i.cr9b5_taxamount??0),0)
-                const tp = yearInvoices.filter(i=>(i.cr9b5_type as unknown as number)===TYPE_INCOMING).reduce((s,i)=>s+(i.cr9b5_taxamount??0),0)
+                const tc = yearInvoices.filter(i=>i.type===TYPE_OUTGOING).reduce((s,i)=>s+(i.taxAmount??0),0)
+                const tp = yearInvoices.filter(i=>i.type===TYPE_INCOMING).reduce((s,i)=>s+(i.taxAmount??0),0)
                 const tn = tc-tp
                 return (
                   <tr className={s.trTotal}>
@@ -790,17 +784,17 @@ const TABS: { id: DashTab; label: string; printName: string }[] = [
 
 // ---------- Left-hand key KPI sidebar (always visible, current year to date) ----------
 
-function KeyKpiSidebar({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: Svm_pt_owneroccupancies[] }) {
+function KeyKpiSidebar({ invoices, properties, ownerOccupancy }: SharedProps & { ownerOccupancy: OwnerOccupancy[] }) {
   const s = useStyles()
   const currentYear = new Date().getFullYear()
 
-  const yearInvoices = invoices.filter(inv => isActive(inv) && inv.cr9b5_year === currentYear)
-  const income   = yearInvoices.filter(i => (i.cr9b5_type as unknown as number) === TYPE_OUTGOING)
-  const expenses = yearInvoices.filter(i => (i.cr9b5_type as unknown as number) === TYPE_INCOMING)
-  const incomeGross   = income.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
-  const expensesGross = expenses.reduce((s,i) => s+(i.cr9b5_totalgross??0), 0)
+  const yearInvoices = invoices.filter(inv => isActive(inv) && inv.year === currentYear)
+  const income   = yearInvoices.filter(i => i.type === TYPE_OUTGOING)
+  const expenses = yearInvoices.filter(i => i.type === TYPE_INCOMING)
+  const incomeGross   = income.reduce((s,i) => s+(i.totalGross??0), 0)
+  const expensesGross = expenses.reduce((s,i) => s+(i.totalGross??0), 0)
   const netProfit      = incomeGross - expensesGross
-  const totalNights    = income.reduce((s,i) => s+(i.cr9b5_nights??0), 0)
+  const totalNights    = income.reduce((s,i) => s+(i.nights??0), 0)
   const availableNights = properties.length > 0 ? daysElapsedInYear(currentYear) * properties.length : 0
   const occupancyExclPct = availableNights > 0 ? (totalNights / availableNights) * 100 : null
   const ownerNights    = ownerNightsForPeriod(ownerOccupancy, '', currentYear)
@@ -832,15 +826,77 @@ function KeyKpiSidebar({ invoices, properties, ownerOccupancy }: SharedProps & {
   )
 }
 
+// ---------- adapters to the generated-model shapes still expected by screens
+// (CategoryPnL, CategoryTrend, OccupancyTrend, ExpenseBreakdown) that have not
+// yet been migrated off `@/generated/models` — this keeps their behavior byte
+// for byte identical while Dashboard itself now fetches through the domain
+// repositories/hooks. Only the handful of fields those screens actually read
+// are populated; the rest of the (unused) generated interface is satisfied
+// via a cast.
+
+function invoiceToGenerated(inv: Invoice): Cr9b5_pt_invoices {
+  return {
+    cr9b5_pt_invoiceid: inv.id,
+    statecode: (inv.cancelled ? 1 : 0) as unknown as Cr9b5_pt_invoices['statecode'],
+    cr9b5_type: inv.type as unknown as Cr9b5_pt_invoices['cr9b5_type'],
+    cr9b5_date: inv.date,
+    cr9b5_year: inv.year,
+    cr9b5_internalid: inv.internalId,
+    cr9b5_baseamount: inv.baseAmount,
+    cr9b5_totalgross: inv.totalGross,
+    cr9b5_taxamount: inv.taxAmount,
+    cr9b5_nights: inv.nights,
+    cr9b5_checkin: inv.checkIn,
+    cr9b5_checkout: inv.checkOut,
+    cr9b5_allproperties: inv.allProperties,
+    _cr9b5_property_value: inv.propertyId,
+    _cr9b5_contact_value: inv.contactId,
+    _cr9b5_categoryid_value: inv.categoryId,
+  } as unknown as Cr9b5_pt_invoices
+}
+
+function propertyToGenerated(p: Property): Cr9b5_pt_properties {
+  return {
+    cr9b5_pt_propertyid: p.id,
+    cr9b5_name: p.name,
+    cr9b5_shortid: p.shortId,
+    cr9b5_address: p.address,
+  } as unknown as Cr9b5_pt_properties
+}
+
+function contactToGenerated(c: Contact): Cr9b5_pt_contacts {
+  return {
+    cr9b5_pt_contactid: c.id,
+    cr9b5_name: c.name,
+  } as unknown as Cr9b5_pt_contacts
+}
+
+function referenceToGenerated(r: ReferenceData): Cr9b5_pt_references {
+  return {
+    cr9b5_pt_referenceid: r.id,
+    cr9b5_value: r.value,
+    cr9b5_referencetype: r.referenceType as unknown as Cr9b5_pt_references['cr9b5_referencetype'],
+  } as unknown as Cr9b5_pt_references
+}
+
+function ownerOccupancyToGenerated(o: OwnerOccupancy): Svm_pt_owneroccupancies {
+  return {
+    svm_pt_owneroccupancyid: o.id,
+    svm_pt_fromdate: o.fromDate,
+    svm_pt_todate: o.toDate,
+    _svm_pt_property_value: o.propertyId,
+  } as unknown as Svm_pt_owneroccupancies
+}
+
 export default function Dashboard() {
   const s = useStyles()
-  const [invoices,   setInvoices]   = useState<Cr9b5_pt_invoices[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contacts,   setContacts]   = useState<Cr9b5_pt_contacts[]>([])
-  const [references, setReferences] = useState<Cr9b5_pt_references[]>([])
-  const [ownerOccupancy, setOwnerOccupancy] = useState<Svm_pt_owneroccupancies[]>([])
-  const [loading,    setLoading]    = useState(true)
-  const [tab,        setTab]        = useState<DashTab>('overview')
+  const { data: invoices = [],   isLoading: loadingInvoices }   = useInvoices()
+  const { data: properties = [], isLoading: loadingProperties } = useProperties()
+  const { data: contacts = [],   isLoading: loadingContacts }   = useContacts()
+  const { data: references = [], isLoading: loadingReferences } = useReferenceData()
+  const { data: ownerOccupancy = [], isLoading: loadingOwnerOccupancy } = useOwnerOccupancies()
+  const loading = loadingInvoices || loadingProperties || loadingContacts || loadingReferences || loadingOwnerOccupancy
+  const [tab, setTab] = useState<DashTab>('overview')
 
   // Inject print CSS once
   useEffect(() => {
@@ -851,25 +907,11 @@ export default function Dashboard() {
     return () => el.remove()
   }, [])
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
-      const [invRes, propRes, conRes, refRes, occRes] = await Promise.all([
-        Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date desc'], maxPageSize: 5000 }),
-        Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_contactsService.getAll({ select: ['cr9b5_pt_contactid', 'cr9b5_name'], maxPageSize: 5000 }),
-        Cr9b5_pt_referencesService.getAll({ select: ['cr9b5_pt_referenceid', 'cr9b5_value', 'cr9b5_referencetype'], maxPageSize: 5000 }),
-        Svm_pt_owneroccupanciesService.getAll({ maxPageSize: 5000 }),
-      ])
-      setInvoices(invRes.data ?? [])
-      setProperties(propRes.data ?? [])
-      setContacts(conRes.data ?? [])
-      setReferences(refRes.data ?? [])
-      setOwnerOccupancy(occRes.data ?? [])
-      setLoading(false)
-    }
-    load()
-  }, [])
+  const genInvoices   = useMemo(() => invoices.map(invoiceToGenerated), [invoices])
+  const genProperties = useMemo(() => properties.map(propertyToGenerated), [properties])
+  const genContacts   = useMemo(() => contacts.map(contactToGenerated), [contacts])
+  const genReferences = useMemo(() => references.map(referenceToGenerated), [references])
+  const genOwnerOccupancy = useMemo(() => ownerOccupancy.map(ownerOccupancyToGenerated), [ownerOccupancy])
 
   const activeTab = TABS.find(t => t.id === tab)!
   const isCalendar = tab === 'calendar'
@@ -901,11 +943,11 @@ export default function Dashboard() {
             {tab==='cashflow'            && <DashboardCashFlow    invoices={invoices} properties={properties} />}
             {tab==='tax'                 && <DashboardTax         invoices={invoices} contacts={contacts} />}
             {tab==='calendar'            && <div style={{ flex: 1, minHeight: 0 }}><CalendarScreen /></div>}
-            {tab==='cat-pnl'             && <CategoryPnL          invoices={invoices} properties={properties} references={references} contacts={contacts} />}
-            {tab==='cat-trend'           && <CategoryTrend        invoices={invoices} properties={properties} references={references} />}
-            {tab==='occupancy-trend'     && <OccupancyTrend       invoices={invoices} properties={properties} ownerOccupancy={ownerOccupancy} />}
-            {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={invoices} properties={properties} references={references} />}
-            {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} references={references} />}
+            {tab==='cat-pnl'             && <CategoryPnL          invoices={genInvoices} properties={genProperties} references={genReferences} contacts={genContacts} />}
+            {tab==='cat-trend'           && <CategoryTrend        invoices={genInvoices} properties={genProperties} references={genReferences} />}
+            {tab==='occupancy-trend'     && <OccupancyTrend       invoices={genInvoices} properties={genProperties} ownerOccupancy={genOwnerOccupancy} />}
+            {tab==='expense-breakdown'   && <ExpenseBreakdown     invoices={genInvoices} properties={genProperties} references={genReferences} />}
+            {tab==='income-vs-forecast'  && <IncomevsForecast     invoices={invoices} properties={properties} referenceData={references} />}
           </div>
         )}
       </div>

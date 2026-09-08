@@ -1,0 +1,30 @@
+{
+  "name": "proptrack-api",
+  "private": true,
+  "version": "0.0.1",
+  "description": "PropTrack V2 — PostgreSQL-backed REST API (Step 6, parallel to the Dataverse path, not yet wired into production).",
+  "type": "module",
+  "main": "dist/src/server.js",
+  "scripts": {
+    "build": "tsc -b",
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "test": "tsx test/run.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "multer": "^2.3.0",
+    "pg": "^8.13.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^22.10.2",
+    "@types/pg": "^8.11.10",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}

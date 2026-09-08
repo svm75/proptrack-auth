@@ -3,14 +3,11 @@ import {
   tokens, Button, Input, Field, Select, Text,
   Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
 } from '@fluentui/react-components'
-import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import type { Svm_pt_owneroccupancies } from '@/generated/models/Svm_pt_owneroccupanciesModel'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
+import { repositories as repo } from '@/data'
+import { InvoiceType } from '@/domain/types'
+import type { Property, OwnerOccupancy } from '@/domain/types'
 import { nightsOverlap } from '@/domain/dateRanges'
 import { logActivity } from '@/services/activitylog'
-
-const TYPE_OUTGOING = 233100001 // Income (guest booking)
 
 interface OccForm {
   id: string | null; propertyId: string; fromDate: string; toDate: string
@@ -20,22 +17,21 @@ interface OccForm {
 function emptyForm(defaultPropertyId?: string): OccForm {
   return { id: null, propertyId: defaultPropertyId ?? '', fromDate: '', toDate: '', adults: '', children: '', babies: '' }
 }
-function toForm(r: Svm_pt_owneroccupancies): OccForm {
-  const raw = r as unknown as Record<string, unknown>
+function toForm(r: OwnerOccupancy): OccForm {
   return {
-    id: r.svm_pt_owneroccupancyid,
-    propertyId: (raw['_svm_pt_property_value'] as string) ?? '',
-    fromDate: r.svm_pt_fromdate?.slice(0, 10) ?? '',
-    toDate: r.svm_pt_todate?.slice(0, 10) ?? '',
-    adults: r.svm_pt_adults?.toString() ?? '',
-    children: r.svm_pt_children?.toString() ?? '',
-    babies: r.svm_pt_babies?.toString() ?? '',
+    id: r.id,
+    propertyId: r.propertyId,
+    fromDate: r.fromDate?.slice(0, 10) ?? '',
+    toDate: r.toDate?.slice(0, 10) ?? '',
+    adults: r.adults?.toString() ?? '',
+    children: r.children?.toString() ?? '',
+    babies: r.babies?.toString() ?? '',
   }
 }
 
 export interface OwnerOccupancyFormDialogProps {
-  record: Svm_pt_owneroccupancies | null
-  properties: Cr9b5_pt_properties[]
+  record: OwnerOccupancy | null
+  properties: Property[]
   defaultPropertyId?: string
   onSaved: () => void
   onClose: () => void
@@ -55,26 +51,27 @@ export function OwnerOccupancyFormDialog({ record, properties, defaultPropertyId
     let cancelled = false
     async function check() {
       if (!form.propertyId || !form.fromDate || !form.toDate) { setWarnings([]); return }
-      const [invRes, occRes] = await Promise.all([
-        Cr9b5_pt_invoicesService.getAll({
-          filter: `_cr9b5_property_value eq '${form.propertyId}' and cr9b5_type eq ${TYPE_OUTGOING} and statecode eq 0`,
-          select: ['cr9b5_internalid', 'cr9b5_checkin', 'cr9b5_checkout'],
-        }),
-        Svm_pt_owneroccupanciesService.getAll({ filter: `_svm_pt_property_value eq '${form.propertyId}'` }),
+      const [allInvoices, allOccupancies] = await Promise.all([
+        repo.invoices.list(),
+        repo.ownerOccupancies.list(),
       ])
       if (cancelled) return
       const found: string[] = []
-      for (const inv of invRes.data ?? []) {
-        if (!inv.cr9b5_checkin || !inv.cr9b5_checkout) continue
-        if (nightsOverlap(form.fromDate, form.toDate, inv.cr9b5_checkin, inv.cr9b5_checkout)) {
-          found.push(`Overlaps guest booking ${inv.cr9b5_internalid ?? '(no internal ID)'}`)
+      for (const inv of allInvoices) {
+        if (inv.cancelled) continue
+        if (inv.type !== InvoiceType.Income) continue
+        if (inv.propertyId !== form.propertyId) continue
+        if (!inv.checkIn || !inv.checkOut) continue
+        if (nightsOverlap(form.fromDate, form.toDate, inv.checkIn, inv.checkOut)) {
+          found.push(`Overlaps guest booking ${inv.internalId || '(no internal ID)'}`)
         }
       }
-      for (const occ of occRes.data ?? []) {
-        if (occ.svm_pt_owneroccupancyid === form.id) continue
-        if (!occ.svm_pt_fromdate || !occ.svm_pt_todate) continue
-        if (nightsOverlap(form.fromDate, form.toDate, occ.svm_pt_fromdate, occ.svm_pt_todate)) {
-          found.push(`Overlaps another owner occupancy block (${occ.svm_pt_fromdate.slice(0, 10)} – ${occ.svm_pt_todate.slice(0, 10)})`)
+      for (const occ of allOccupancies) {
+        if (occ.propertyId !== form.propertyId) continue
+        if (occ.id === form.id) continue
+        if (!occ.fromDate || !occ.toDate) continue
+        if (nightsOverlap(form.fromDate, form.toDate, occ.fromDate, occ.toDate)) {
+          found.push(`Overlaps another owner occupancy block (${occ.fromDate.slice(0, 10)} – ${occ.toDate.slice(0, 10)})`)
         }
       }
       if (!cancelled) setWarnings(found)
@@ -93,25 +90,20 @@ export function OwnerOccupancyFormDialog({ record, properties, defaultPropertyId
     if (form.toDate < form.fromDate) { setFormError('To date must be on or after the from date.'); return }
     setSaving(true)
     try {
-      const propertyName = properties.find(p => p.cr9b5_pt_propertyid === form.propertyId)?.cr9b5_name ?? ''
-      const payload = {
-        svm_pt_name: `${propertyName} ${form.fromDate} – ${form.toDate}`,
-        'svm_pt_Property@odata.bind': `/cr9b5_pt_properties(${form.propertyId})`,
-        svm_pt_fromdate: form.fromDate,
-        svm_pt_todate: form.toDate,
-        svm_pt_adults: form.adults !== '' ? parseInt(form.adults, 10) : undefined,
-        svm_pt_children: form.children !== '' ? parseInt(form.children, 10) : undefined,
-        svm_pt_babies: form.babies !== '' ? parseInt(form.babies, 10) : undefined,
-      }
-      if (form.id) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Svm_pt_owneroccupanciesService.update(form.id, payload as any)
-        await logActivity('Updated', 'Property', payload.svm_pt_name)
-      } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Svm_pt_owneroccupanciesService.create(payload as any)
-        await logActivity('Created', 'Property', payload.svm_pt_name)
-      }
+      const propertyName = properties.find(p => p.id === form.propertyId)?.name ?? ''
+      const name = `${propertyName} ${form.fromDate} – ${form.toDate}`
+      const payload: OwnerOccupancy | Omit<OwnerOccupancy, 'id'> = {
+        ...(form.id ? { id: form.id } : {}),
+        name,
+        propertyId: form.propertyId,
+        fromDate: form.fromDate,
+        toDate: form.toDate,
+        adults: form.adults !== '' ? parseInt(form.adults, 10) : undefined,
+        children: form.children !== '' ? parseInt(form.children, 10) : undefined,
+        babies: form.babies !== '' ? parseInt(form.babies, 10) : undefined,
+      } as OwnerOccupancy | Omit<OwnerOccupancy, 'id'>
+      await repo.ownerOccupancies.save(payload)
+      await logActivity(form.id ? 'Updated' : 'Created', 'Property', name)
       onSaved()
     } catch (e: unknown) {
       setFormError(e instanceof Error ? e.message : 'Save failed.')
@@ -124,8 +116,8 @@ export function OwnerOccupancyFormDialog({ record, properties, defaultPropertyId
     if (!form.id || !confirm('Delete this owner occupancy block?')) return
     setDeleting(true)
     try {
-      await Svm_pt_owneroccupanciesService.delete(form.id)
-      await logActivity('Deleted', 'Property', record?.svm_pt_name ?? '')
+      await repo.ownerOccupancies.remove(form.id)
+      await logActivity('Deleted', 'Property', record?.name ?? '')
       onDeleted?.()
     } finally {
       setDeleting(false)
@@ -148,7 +140,7 @@ export function OwnerOccupancyFormDialog({ record, properties, defaultPropertyId
             <Field label="Property" required>
               <Select value={form.propertyId} onChange={e => setForm(f => ({ ...f, propertyId: e.target.value }))}>
                 <option value="">— Select —</option>
-                {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+                {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
               </Select>
             </Field>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>

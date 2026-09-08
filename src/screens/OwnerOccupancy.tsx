@@ -1,12 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   makeStyles, tokens, Button, Text, Spinner,
   Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
 } from '@fluentui/react-components'
-import { Svm_pt_owneroccupanciesService } from '@/generated/services/Svm_pt_owneroccupanciesService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import type { Svm_pt_owneroccupancies } from '@/generated/models/Svm_pt_owneroccupanciesModel'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
+import { useOwnerOccupancies, useProperties } from '@/hooks/data'
+import type { OwnerOccupancy } from '@/domain/types'
 import { OwnerOccupancyFormDialog } from '@/components/OwnerOccupancyFormDialog'
 
 function fmtDate(iso: string | undefined): string {
@@ -28,38 +26,22 @@ const useStyles = makeStyles({
 
 export default function OwnerOccupancy() {
   const s = useStyles()
-  const [records, setRecords] = useState<Svm_pt_owneroccupancies[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [loading, setLoading] = useState(true)
+  const { data: records = [], isLoading: loadingOcc, refetch } = useOwnerOccupancies()
+  const { data: properties = [], isLoading: loadingProps } = useProperties()
+  const loading = loadingOcc || loadingProps
 
   const [formOpen, setFormOpen] = useState(false)
-  const [editRecord, setEditRecord] = useState<Svm_pt_owneroccupancies | null>(null)
-
-  useEffect(() => { loadAll() }, [])
-
-  async function loadAll() {
-    setLoading(true)
-    try {
-      const [occRes, propRes] = await Promise.all([
-        Svm_pt_owneroccupanciesService.getAll({ orderBy: ['svm_pt_fromdate desc'] }),
-        Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
-      ])
-      setRecords(occRes.data ?? [])
-      setProperties(propRes.data ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }
+  const [editRecord, setEditRecord] = useState<OwnerOccupancy | null>(null)
 
   function propertyName(id: string): string {
-    return properties.find(p => p.cr9b5_pt_propertyid === id)?.cr9b5_name ?? '—'
+    return properties.find(p => p.id === id)?.name ?? '—'
   }
 
   function openNew() { setEditRecord(null); setFormOpen(true) }
-  function openEdit(r: Svm_pt_owneroccupancies) { setEditRecord(r); setFormOpen(true) }
+  function openEdit(r: OwnerOccupancy) { setEditRecord(r); setFormOpen(true) }
   function closeForm() { setFormOpen(false); setEditRecord(null) }
-  async function handleSaved() { closeForm(); await loadAll() }
-  async function handleDeleted() { closeForm(); await loadAll() }
+  async function handleSaved() { closeForm(); await refetch() }
+  async function handleDeleted() { closeForm(); await refetch() }
 
   return (
     <div className={s.root}>
@@ -92,26 +74,22 @@ export default function OwnerOccupancy() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {records.map(r => {
-                const raw = r as unknown as Record<string, unknown>
-                const propId = (raw['_svm_pt_property_value'] as string) ?? ''
-                return (
-                  <TableRow key={r.svm_pt_owneroccupancyid}>
-                    <TableCell>{propertyName(propId)}</TableCell>
-                    <TableCell>{fmtDate(r.svm_pt_fromdate)}</TableCell>
-                    <TableCell>{fmtDate(r.svm_pt_todate)}</TableCell>
-                    <TableCell>{nightsBetween(r.svm_pt_fromdate, r.svm_pt_todate)}</TableCell>
-                    <TableCell>{r.svm_pt_adults ?? '—'}</TableCell>
-                    <TableCell>{r.svm_pt_children ?? '—'}</TableCell>
-                    <TableCell>{r.svm_pt_babies ?? '—'}</TableCell>
-                    <TableCell>
-                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
-                        <Button size="small" appearance="subtle" onClick={() => openEdit(r)}>Edit</Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
+              {records.map(r => (
+                <TableRow key={r.id}>
+                  <TableCell>{propertyName(r.propertyId)}</TableCell>
+                  <TableCell>{fmtDate(r.fromDate)}</TableCell>
+                  <TableCell>{fmtDate(r.toDate)}</TableCell>
+                  <TableCell>{nightsBetween(r.fromDate, r.toDate)}</TableCell>
+                  <TableCell>{r.adults ?? '—'}</TableCell>
+                  <TableCell>{r.children ?? '—'}</TableCell>
+                  <TableCell>{r.babies ?? '—'}</TableCell>
+                  <TableCell>
+                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                      <Button size="small" appearance="subtle" onClick={() => openEdit(r)}>Edit</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>

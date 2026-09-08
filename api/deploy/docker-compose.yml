@@ -1,0 +1,47 @@
+# Deploy on the Synology via Container Manager -> Project, or `docker compose up -d --build`
+# over an interactive SSH/sudo session (this NAS's own SSH setup requires a human present for
+# the sudo password step — confirmed by TripOrganiser's own deployment log, not something this
+# migration can automate). Mirrors wealth-ledger's/TripOrganiser's Caddy pattern on the same
+# NAS: Caddy reverse-proxies to the API, with `tailscale serve`/`funnel` terminating HTTPS in
+# front of it. Unlike those two apps, PropTrack's frontend is hosted by Power Platform (not
+# served from this NAS) — Caddy here only proxies the API, it serves no static frontend.
+#
+# This file defines no postgres service of its own — it connects to the NAS's existing shared
+# `myplatform` PostgreSQL instance over the network, as the least-privilege `proptrack_app` role,
+# exactly like TripOrganiser/wealth-ledger's api services do.
+services:
+  api:
+    build: ..
+    container_name: proptrack-api
+    restart: unless-stopped
+    # No host port published — only Caddy (on the same compose network) talks to this container.
+    expose:
+      - "8787"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    environment:
+      API_PORT: "8787"
+      PGHOST: "${PGHOST:?set to the myplatform Postgres host}"
+      PGPORT: "${PGPORT:-5432}"
+      PGDATABASE: "${PGDATABASE:-myplatform}"
+      PGUSER: "${PGUSER:-proptrack_app}"
+      PGPASSWORD: "${PGPASSWORD:?set the proptrack_app role's password}"
+      API_AUTH_TOKEN: "${API_AUTH_TOKEN:?set the shared bearer token — must match the frontend build's VITE_API_AUTH_TOKEN}"
+      ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:?set to PropTrack V2's Power Apps origin(s), comma-separated}"
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: proptrack-caddy
+    restart: unless-stopped
+    ports:
+      # Confirm this port is actually free on the NAS before deploying — distinct from
+      # wealth-ledger's 8081 and TripOrganiser's 8080 on the same host.
+      - "127.0.0.1:8082:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - api

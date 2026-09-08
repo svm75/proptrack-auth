@@ -1,20 +1,17 @@
 import { useRef, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { makeStyles, tokens, Button, Text, Badge, ProgressBar } from '@fluentui/react-components'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
-import type { Cr9b5_pt_references } from '@/generated/models/Cr9b5_pt_referencesModel'
+import { repositories as repo } from '@/data'
+import {
+  useProperties, useContacts, useCategories, useInvoices, useCreateInvoice, useUpdateInvoice, useNextInvoiceSequence,
+} from '@/hooks/data'
+import type { Property, Contact, Category, Invoice, NewInvoice } from '@/domain/types'
+import { CategoryType, ContactRole } from '@/domain/types'
 import { formatMoney } from '@/domain/money'
 
 const TYPE_INCOMING   = 233100000
 const TYPE_OUTGOING   = 233100001
 const ROLE_CLIENT     = 233100001
-const REF_CAT_INCOME  = 233100005
-const REF_CAT_EXPENSE = 233100006
 
 type RowStatus = 'ready' | 'warning' | 'error' | 'duplicate-no-change' | 'duplicate-update' | 'skipped-new'
 
@@ -35,11 +32,6 @@ interface ImportRow {
   categoryId: string; categoryName: string
 }
 
-async function getNextSequence(year: number): Promise<number> {
-  const res = await Cr9b5_pt_invoicesService.getAll({ filter: `cr9b5_year eq ${year}`, select: ['cr9b5_globalsequence'], orderBy: ['cr9b5_globalsequence desc'], top: 1 })
-  const records = res.data ?? []
-  return records.length === 0 ? 1 : (records[0].cr9b5_globalsequence ?? 0) + 1
-}
 function buildInternalId(shortId: string, seq: number, year: number): string { return `${shortId}${String(seq).padStart(3, '0')}/${year}` }
 
 function toIsoDate(y: number, mo: number, d: number): string {
@@ -171,6 +163,14 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   const fileRef = useRef<HTMLInputElement>(null)
   const [step, setStep] = useState<1 | 2 | 3>(1)
 
+  const { data: allProperties = [] } = useProperties()
+  const { data: allContacts = [] } = useContacts()
+  const { data: allCategories = [] } = useCategories()
+  const { data: allInvoices = [] } = useInvoices()
+  const createInvoiceMutation = useCreateInvoice()
+  const updateInvoiceMutation = useUpdateInvoice()
+  const nextSequenceMutation = useNextInvoiceSequence()
+
   const [fileName, setFileName] = useState('')
   const [totalRows, setTotalRows] = useState(0)
   const [dateRange, setDateRange] = useState<{ from: string; to: string } | null>(null)
@@ -181,8 +181,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
   const [editCell, setEditCell] = useState<{ rowIdx: number; field: string } | null>(null)
   const [editValue, setEditValue] = useState('')
 
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
+  const [properties, setProperties] = useState<Property[]>([])
+  const [contacts, setContacts] = useState<Contact[]>([])
   const [colMap, setColMap] = useState<ColMap>({})
   const [isPartial, setIsPartial] = useState(false)
 
@@ -205,31 +205,20 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
       const dates = dataRows.map(r => col.date !== undefined ? parseDDMMYYYY(r[col.date]) : '').filter(Boolean)
       if (dates.length) { dates.sort(); setDateRange({ from: dates[0], to: dates[dates.length - 1] }) }
 
-      const [propRes, conRes, invRes, catIncRes, catExpRes] = await Promise.all([
-        Cr9b5_pt_propertiesService.getAll({ select: ['cr9b5_pt_propertyid', 'cr9b5_name', 'cr9b5_shortid'], orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_contactsService.getAll({ select: ['cr9b5_pt_contactid', 'cr9b5_name', 'cr9b5_taxid', 'cr9b5_role'], orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_invoicesService.getAll({
-          select: ['cr9b5_pt_invoiceid', 'cr9b5_internalid', 'cr9b5_type', 'cr9b5_date', 'cr9b5_baseamount', 'cr9b5_taxamount', 'cr9b5_totalgross', 'cr9b5_taxrate', 'cr9b5_taxismanual', 'cr9b5_globalsequence', 'cr9b5_year', 'cr9b5_checkin', 'cr9b5_checkout', 'cr9b5_nights', 'cr9b5_days', 'cr9b5_adults', 'cr9b5_children', 'cr9b5_babies', 'cr9b5_bookingreference'],
-          maxPageSize: 5000,
-        }),
-        Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_INCOME}`, select: ['cr9b5_pt_referenceid', 'cr9b5_value'], maxPageSize: 500 }),
-        Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_EXPENSE}`, select: ['cr9b5_pt_referenceid', 'cr9b5_value'], maxPageSize: 500 }),
-      ])
-      const props = propRes.data ?? []
-      const cons = conRes.data ?? []
-      const cats = [...(catIncRes.data ?? []), ...(catExpRes.data ?? [])]
+      const props = allProperties
+      const cons = allContacts
+      const cats = allCategories.filter(c => c.type === CategoryType.Income || c.type === CategoryType.Expense)
 
       const existingMap = new Map<string, ExistingRecord>()
-      for (const inv of invRes.data ?? []) {
-        if (!inv.cr9b5_internalid) continue
-        const raw2 = inv as unknown as Record<string, unknown>
-        existingMap.set(inv.cr9b5_internalid.toLowerCase(), {
-          id: inv.cr9b5_pt_invoiceid, type: (inv.cr9b5_type as unknown as number) ?? 0, date: inv.cr9b5_date ?? '',
-          baseAmount: inv.cr9b5_baseamount ?? 0, taxAmount: inv.cr9b5_taxamount ?? 0, totalGross: inv.cr9b5_totalgross ?? 0,
-          taxRate: inv.cr9b5_taxrate ?? '', taxIsManual: inv.cr9b5_taxismanual ?? false, globalSequence: inv.cr9b5_globalsequence ?? 0,
-          year: inv.cr9b5_year ?? 0, checkIn: inv.cr9b5_checkin ?? '', checkOut: inv.cr9b5_checkout ?? '', nights: inv.cr9b5_nights ?? 0,
-          days: inv.cr9b5_days ?? 0, adults: inv.cr9b5_adults ?? 0, children: inv.cr9b5_children ?? 0, babies: inv.cr9b5_babies ?? 0,
-          bookingRef: inv.cr9b5_bookingreference ?? '', propertyId: (raw2['_cr9b5_property_value'] as string) ?? '', contactId: (raw2['_cr9b5_contact_value'] as string) ?? '',
+      for (const inv of allInvoices) {
+        if (!inv.internalId) continue
+        existingMap.set(inv.internalId.toLowerCase(), {
+          id: inv.id, type: inv.type ?? 0, date: inv.date ?? '',
+          baseAmount: inv.baseAmount ?? 0, taxAmount: inv.taxAmount ?? 0, totalGross: inv.totalGross ?? 0,
+          taxRate: inv.taxRate ?? '', taxIsManual: inv.taxIsManual ?? false, globalSequence: inv.globalSequence ?? 0,
+          year: inv.year ?? 0, checkIn: inv.checkIn ?? '', checkOut: inv.checkOut ?? '', nights: inv.nights ?? 0,
+          days: inv.days ?? 0, adults: inv.adults ?? 0, children: inv.children ?? 0, babies: inv.babies ?? 0,
+          bookingRef: inv.bookingReference ?? '', propertyId: inv.propertyId ?? '', contactId: inv.contactId ?? '',
         })
       }
       setProperties(props); setContacts(cons)
@@ -242,7 +231,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     }
   }
 
-  function mapRow(r: unknown[], idx: number, col: ColMap, props: Cr9b5_pt_properties[], cons: Cr9b5_pt_contacts[], cats: Cr9b5_pt_references[], existingMap: Map<string, ExistingRecord>, partial = false): ImportRow {
+  function mapRow(r: unknown[], idx: number, col: ColMap, props: Property[], cons: Contact[], cats: Category[], existingMap: Map<string, ExistingRecord>, partial = false): ImportRow {
     const errors: string[] = []; const warnings: string[] = []
     const rawInternalId = String(r[col.internalId] ?? '').trim()
     const rawAutoIdStr = String(r[col.autoId] ?? '').trim().toLowerCase()
@@ -261,11 +250,11 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const date = parseDDMMYYYY(rawDate)
     if (!date) errors.push(rawDate ? `Invalid date format: ${rawDate}` : 'Missing date')
     const allProperties = rawAllProps === 'yes' || rawAllProps === 'true' || rawAllProps === '1'
-    const property = props.find(p => p.cr9b5_name.toLowerCase() === rawProperty.toLowerCase())
+    const property = props.find(p => p.name.toLowerCase() === rawProperty.toLowerCase())
     if (!property && !allProperties) errors.push(`Property not found: ${rawProperty}`)
-    const category = cats.find(c => c.cr9b5_value?.toLowerCase() === rawCategory.toLowerCase())
+    const category = cats.find(c => c.value?.toLowerCase() === rawCategory.toLowerCase())
     if (rawCategory && !category) warnings.push(`New category will be created: ${rawCategory}`)
-    const contact = cons.find(c => c.cr9b5_name.toLowerCase() === rawName.toLowerCase())
+    const contact = cons.find(c => c.name.toLowerCase() === rawName.toLowerCase())
     let isNewContact = false
     if (!contact && rawName) { isNewContact = true; warnings.push(`New contact will be created: ${rawName}`) }
     else if (!rawName) errors.push('Missing contact name')
@@ -283,11 +272,11 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const baseStatus: RowStatus = errors.length > 0 ? 'error' : warnings.length > 0 ? 'warning' : 'ready'
     const partialRow: ImportRow = {
       index: idx, status: baseStatus, statusNote: [...errors, ...warnings].join('; '), checked: baseStatus !== 'error', existingId: null,
-      date, internalId: rawInternalId, autoId, propertyId: property?.cr9b5_pt_propertyid ?? null, propertyName: property?.cr9b5_name ?? rawProperty,
-      contactId: contact?.cr9b5_pt_contactid ?? null, contactName: rawName, contactTaxId: '', contactRole: ROLE_CLIENT, isNewContact,
+      date, internalId: rawInternalId, autoId, propertyId: property?.id ?? null, propertyName: property?.name ?? rawProperty,
+      contactId: contact?.id ?? null, contactName: rawName, contactTaxId: '', contactRole: ROLE_CLIENT, isNewContact,
       type: typeVal, baseAmount, taxAmount, totalGross, taxRate, taxIsManual, globalSequence: 0, year: 0, checkIn, checkOut,
       nights: parseInt2(rawNights), days: parseInt2(rawDays), adults: parseInt2(rawAdults), children: parseInt2(rawChildren), babies: parseInt2(rawBabies),
-      bookingRef: rawBooking, allProperties, categoryId: category?.cr9b5_pt_referenceid ?? '', categoryName: category?.cr9b5_value ?? rawCategory,
+      bookingRef: rawBooking, allProperties, categoryId: category?.id ?? '', categoryName: category?.value ?? rawCategory,
     }
     if (rawInternalId && !autoId && baseStatus !== 'error') {
       const existing = existingMap.get(rawInternalId.toLowerCase())
@@ -310,8 +299,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     switch (field) {
       case 'date': return { ...row, date: val || row.date }
       case 'internalId': return { ...row, internalId: val }
-      case 'propertyId': { const prop = properties.find(p => p.cr9b5_pt_propertyid === val); return { ...row, propertyId: val || null, propertyName: prop?.cr9b5_name ?? row.propertyName } }
-      case 'contactName': { const con = contacts.find(c => c.cr9b5_name.toLowerCase() === val.toLowerCase()); return { ...row, contactName: val, contactId: con?.cr9b5_pt_contactid ?? null, isNewContact: !con && !!val } }
+      case 'propertyId': { const prop = properties.find(p => p.id === val); return { ...row, propertyId: val || null, propertyName: prop?.name ?? row.propertyName } }
+      case 'contactName': { const con = contacts.find(c => c.name.toLowerCase() === val.toLowerCase()); return { ...row, contactName: val, contactId: con?.id ?? null, isNewContact: !con && !!val } }
       case 'type': return { ...row, type: val === 'outgoing' ? TYPE_OUTGOING : TYPE_INCOMING }
       case 'baseAmount': return { ...row, baseAmount: stripCurrency(val) }
       case 'taxAmount': return { ...row, taxAmount: stripCurrency(val) }
@@ -357,22 +346,20 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const createdCategoryIds = new Map<string, string>()
     const namesByRefType = new Map<number, string[]>()
     for (const { name, type } of newCatNames.values()) {
-      const refType = type === TYPE_OUTGOING ? REF_CAT_INCOME : REF_CAT_EXPENSE
+      const refType = type === TYPE_OUTGOING ? CategoryType.Income : CategoryType.Expense
       const list = namesByRefType.get(refType) ?? []; list.push(name); namesByRefType.set(refType, list)
     }
     for (const [refType, names] of namesByRefType) {
-      const orFilter = names.map(n => `cr9b5_value eq '${n.replace(/'/g, "''")}'`).join(' or ')
-      let existingByName = new Map<string, string>()
-      try {
-        const existing = await Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${refType} and (${orFilter})`, select: ['cr9b5_pt_referenceid', 'cr9b5_value'], maxPageSize: 500 })
-        existingByName = new Map((existing.data ?? []).map(r => [r.cr9b5_value.toLowerCase(), r.cr9b5_pt_referenceid]))
-      } catch { /* fall through */ }
+      const existingByName = new Map<string, string>(
+        allCategories.filter(c => c.type === refType && names.some(n => n.toLowerCase() === c.value.toLowerCase()))
+          .map(c => [c.value.toLowerCase(), c.id]),
+      )
       for (const name of names) { const key = name.toLowerCase(); const existingId = existingByName.get(key); if (existingId) createdCategoryIds.set(key, existingId) }
       const missing = names.filter(n => !createdCategoryIds.has(n.toLowerCase()))
       await Promise.all(missing.map(async name => {
         try {
-          const res = await Cr9b5_pt_referencesService.create({ cr9b5_value: name, cr9b5_referencetype: refType as never } as never)
-          if (res.data?.cr9b5_pt_referenceid) createdCategoryIds.set(name.toLowerCase(), res.data.cr9b5_pt_referenceid)
+          const created = await repo.categories.save({ value: name, type: refType as never })
+          createdCategoryIds.set(name.toLowerCase(), created.id)
         } catch { /* imported without category */ }
       }))
     }
@@ -382,8 +369,8 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     const createdContactIds = new Map<string, string>()
     await Promise.all([...newContactNames].map(async ([key, row]) => {
       try {
-        const res = await Cr9b5_pt_contactsService.create({ cr9b5_name: row.contactName, cr9b5_taxid: row.contactTaxId || undefined, cr9b5_role: row.contactRole as never } as never)
-        if (res.data?.cr9b5_pt_contactid) createdContactIds.set(key, res.data.cr9b5_pt_contactid)
+        const created = await repo.contacts.save({ name: row.contactName, taxId: row.contactTaxId || undefined, role: row.contactRole as ContactRole })
+        createdContactIds.set(key, created.id)
       } catch { /* invoices for this contact will fail too */ }
     }))
 
@@ -394,12 +381,12 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
     if (autoIdRows.length > 0) {
       const years = [...new Set(autoIdRows.map(r => new Date(r.date).getFullYear()))]
       const seqCounters: Record<number, number> = {}
-      await Promise.all(years.map(async y => { seqCounters[y] = await getNextSequence(y) }))
+      await Promise.all(years.map(async y => { seqCounters[y] = await nextSequenceMutation.mutateAsync(y) }))
       for (const row of autoIdRows) {
         const year = new Date(row.date).getFullYear()
         const seq = seqCounters[year]++
-        const property = properties.find(p => p.cr9b5_pt_propertyid === row.propertyId)
-        const shortId = row.allProperties ? 'All' : (property?.cr9b5_shortid ?? '')
+        const property = properties.find(p => p.id === row.propertyId)
+        const shortId = row.allProperties ? 'All' : (property?.shortId ?? '')
         resolvedAutoIds.set(row.index, { internalId: buildInternalId(shortId, seq, year), seq })
       }
     }
@@ -410,28 +397,28 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         const contactId = row.contactId ?? createdContactIds.get(row.contactName.toLowerCase())
         const toIso = (d: string) => d ? new Date(`${d}T12:00:00`).toISOString() : undefined
         const resolved = resolvedAutoIds.get(row.index)
-        const payload: Record<string, unknown> = { cr9b5_internalid: resolved?.internalId ?? row.internalId }
-        if (resolved) payload.cr9b5_globalsequence = resolved.seq
-        if (has('type')) payload.cr9b5_type = row.type
-        if (has('date')) { payload.cr9b5_date = toIso(row.date); if (row.date) payload.cr9b5_year = new Date(row.date).getFullYear() }
-        if (has('baseNet')) payload.cr9b5_baseamount = row.baseAmount
-        if (has('taxRate')) payload.cr9b5_taxrate = row.taxIsManual ? 'n/a' : row.taxRate
-        if (has('baseIgic')) { payload.cr9b5_taxamount = row.taxAmount; payload.cr9b5_taxismanual = row.taxIsManual }
-        if (has('baseGross')) payload.cr9b5_totalgross = row.totalGross
-        if (has('nights')) payload.cr9b5_nights = row.nights
-        if (has('days')) payload.cr9b5_days = row.days
-        if (has('adults')) payload.cr9b5_adults = row.adults
-        if (has('children')) payload.cr9b5_children = row.children
-        if (has('babies')) payload.cr9b5_babies = row.babies
-        if (has('allProperties')) payload.cr9b5_allproperties = row.allProperties
-        if (has('category')) { const categoryId = row.categoryId || createdCategoryIds.get(row.categoryName.toLowerCase()); if (categoryId) payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${categoryId})` }
-        if (has('property') && row.propertyId && !row.allProperties) payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${row.propertyId})`
-        if (has('contact') && contactId) payload['cr9b5_Contact@odata.bind'] = `/cr9b5_pt_contacts(${contactId})`
-        if (has('rentStart') && row.checkIn) payload.cr9b5_checkin = toIso(row.checkIn)
-        if (has('rentEnd') && row.checkOut) payload.cr9b5_checkout = toIso(row.checkOut)
-        if (has('bookingNumber') && row.bookingRef) payload.cr9b5_bookingreference = row.bookingRef
-        if (row.existingId) { await Cr9b5_pt_invoicesService.update(row.existingId, payload as never); updated++ }
-        else { await Cr9b5_pt_invoicesService.create(payload as never); created++ }
+        const payload: Partial<NewInvoice> = { internalId: resolved?.internalId ?? row.internalId }
+        if (resolved) payload.globalSequence = resolved.seq
+        if (has('type')) payload.type = row.type as Invoice['type']
+        if (has('date')) { payload.date = toIso(row.date); if (row.date) payload.year = new Date(row.date).getFullYear() }
+        if (has('baseNet')) payload.baseAmount = row.baseAmount
+        if (has('taxRate')) payload.taxRate = row.taxIsManual ? 'n/a' : row.taxRate
+        if (has('baseIgic')) { payload.taxAmount = row.taxAmount; payload.taxIsManual = row.taxIsManual }
+        if (has('baseGross')) payload.totalGross = row.totalGross
+        if (has('nights')) payload.nights = row.nights
+        if (has('days')) payload.days = row.days
+        if (has('adults')) payload.adults = row.adults
+        if (has('children')) payload.children = row.children
+        if (has('babies')) payload.babies = row.babies
+        if (has('allProperties')) payload.allProperties = row.allProperties
+        if (has('category')) { const categoryId = row.categoryId || createdCategoryIds.get(row.categoryName.toLowerCase()); if (categoryId) payload.categoryId = categoryId }
+        if (has('property') && row.propertyId && !row.allProperties) payload.propertyId = row.propertyId
+        if (has('contact') && contactId) payload.contactId = contactId
+        if (has('rentStart') && row.checkIn) payload.checkIn = toIso(row.checkIn)
+        if (has('rentEnd') && row.checkOut) payload.checkOut = toIso(row.checkOut)
+        if (has('bookingNumber') && row.bookingRef) payload.bookingReference = row.bookingRef
+        if (row.existingId) { await updateInvoiceMutation.mutateAsync({ id: row.existingId, patch: payload }); updated++ }
+        else { await createInvoiceMutation.mutateAsync(payload as NewInvoice); created++ }
       } catch {
         failed++
       }
@@ -486,7 +473,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
         return (
           <select autoFocus value={editValue} onChange={e => setEditValue(e.target.value)} onBlur={commitEdit} className={s.editInput}>
             <option value="">— select —</option>
-            {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
         )
       }

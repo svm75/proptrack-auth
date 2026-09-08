@@ -1,18 +1,18 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   makeStyles, tokens, Button, Input, Field, Select, Text, Spinner, Badge,
   TabList, Tab, type SelectTabData, type SelectTabEvent,
   Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
   Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
 } from '@fluentui/react-components'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import { Cr9b5_pt_attachmentsService } from '@/generated/services/Cr9b5_pt_attachmentsService'
-import type { Cr9b5_pt_references, Cr9b5_pt_referencescr9b5_referencetype } from '@/generated/models/Cr9b5_pt_referencesModel'
-import { useInvoiceTemplates, useSaveInvoiceTemplate, useDeleteInvoiceTemplate, useActivityLog } from '@/hooks/data'
-import { CategoryType, type InvoiceTemplate } from '@/domain/types'
+import {
+  useInvoiceTemplates, useSaveInvoiceTemplate, useDeleteInvoiceTemplate, useActivityLog,
+  useReferenceData, useSaveReferenceData, useDeleteReferenceData, useAttachments,
+} from '@/hooks/data'
+import { CategoryType, type InvoiceTemplate, type ReferenceData } from '@/domain/types'
 
 type AdminTab = 'refdata' | 'templates' | 'activitylog'
-type RefType = Cr9b5_pt_referencescr9b5_referencetype
+type RefType = number
 
 const useStyles = makeStyles({
   header: { marginBottom: '20px' },
@@ -47,49 +47,41 @@ export default function Admin() {
   const [tab, setTab] = useState<AdminTab>('refdata')
 
   // ── Reference Data ──
-  const [refs, setRefs] = useState<Cr9b5_pt_references[]>([])
-  const [usedCounts, setUsedCounts] = useState<Record<string, number>>({})
-  const [loading, setLoading] = useState(true)
+  const refsQ = useReferenceData()
+  const attachmentsQ = useAttachments()
+  const saveRefM = useSaveReferenceData()
+  const deleteRefM = useDeleteReferenceData()
+  const refs = refsQ.data ?? []
+  const loading = refsQ.isLoading || attachmentsQ.isLoading
   const [form, setForm] = useState<FormState>(EMPTY_FORM)
   const [formOpen, setFormOpen] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  async function load() {
-    setLoading(true)
-    const [refsResult, attachResult] = await Promise.all([
-      Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_attachmentsService.getAll({ maxPageSize: 5000 }),
-    ])
-    const counts: Record<string, number> = {}
-    for (const a of attachResult.data ?? []) {
-      if (a._cr9b5_attachtype_value) counts[a._cr9b5_attachtype_value] = (counts[a._cr9b5_attachtype_value] ?? 0) + 1
-    }
-    setRefs(refsResult.data ?? [])
-    setUsedCounts(counts)
-    setLoading(false)
+  const usedCounts: Record<string, number> = {}
+  for (const a of attachmentsQ.data ?? []) {
+    if (a.attachTypeId) usedCounts[a.attachTypeId] = (usedCounts[a.attachTypeId] ?? 0) + 1
   }
-  useEffect(() => { load() }, [])
 
   function openNew() { setForm(EMPTY_FORM); setError(null); setFormOpen(true) }
-  function openEdit(r: Cr9b5_pt_references) {
-    setForm({ id: r.cr9b5_pt_referenceid, value: r.cr9b5_value, reftype: r.cr9b5_referencetype ?? '', sortorder: r.cr9b5_sortorder?.toString() ?? '' })
+  function openEdit(r: ReferenceData) {
+    setForm({ id: r.id, value: r.value, reftype: r.referenceType, sortorder: r.sortOrder?.toString() ?? '' })
     setError(null); setFormOpen(true)
   }
   function closeForm() { setFormOpen(false); setForm(EMPTY_FORM); setError(null) }
 
   async function save() {
     if (!form.value.trim() || form.reftype === '') { setError('Value and type are required.'); return }
-    const duplicate = refs.find(r => r.cr9b5_referencetype === form.reftype && r.cr9b5_value.trim().toLowerCase() === form.value.trim().toLowerCase() && r.cr9b5_pt_referenceid !== form.id)
+    const duplicate = refs.find(r => r.referenceType === form.reftype && r.value.trim().toLowerCase() === form.value.trim().toLowerCase() && r.id !== form.id)
     if (duplicate) { setError('A reference with this type and value already exists.'); return }
     setSaving(true); setError(null)
-    const payload = { cr9b5_value: form.value.trim(), cr9b5_referencetype: form.reftype as RefType, cr9b5_sortorder: form.sortorder !== '' ? Number(form.sortorder) : undefined }
     try {
-      if (form.id) await Cr9b5_pt_referencesService.update(form.id, payload)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      else await Cr9b5_pt_referencesService.create(payload as any)
+      await saveRefM.mutateAsync({
+        ...(form.id ? { id: form.id } : {}),
+        value: form.value.trim(), referenceType: form.reftype as number,
+        sortOrder: form.sortorder !== '' ? Number(form.sortorder) : undefined,
+      } as ReferenceData | Omit<ReferenceData, 'id'>)
       closeForm()
-      await load()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Save failed.')
     } finally {
@@ -97,21 +89,20 @@ export default function Admin() {
     }
   }
 
-  async function del(r: Cr9b5_pt_references) {
-    if ((usedCounts[r.cr9b5_pt_referenceid] ?? 0) > 0) return
-    if (!confirm(`Delete "${r.cr9b5_value}"?`)) return
-    await Cr9b5_pt_referencesService.delete(r.cr9b5_pt_referenceid)
-    await load()
+  async function del(r: ReferenceData) {
+    if ((usedCounts[r.id] ?? 0) > 0) return
+    if (!confirm(`Delete "${r.value}"?`)) return
+    await deleteRefM.mutateAsync(r.id)
   }
 
-  const grouped = REF_TYPE_OPTIONS.map(opt => ({ ...opt, items: refs.filter(r => r.cr9b5_referencetype === opt.value) })).filter(g => g.items.length > 0)
+  const grouped = REF_TYPE_OPTIONS.map(opt => ({ ...opt, items: refs.filter(r => r.referenceType === opt.value) })).filter(g => g.items.length > 0)
 
   // ── Invoice Templates ──
   const templatesQ = useInvoiceTemplates()
   const saveTemplateM = useSaveInvoiceTemplate()
   const deleteTemplateM = useDeleteInvoiceTemplate()
   const templates = templatesQ.data ?? []
-  const templateCategories = refs.filter(r => (r.cr9b5_referencetype as unknown as number) === CategoryType.Income || (r.cr9b5_referencetype as unknown as number) === CategoryType.Expense)
+  const templateCategories = refs.filter(r => r.referenceType === CategoryType.Income || r.referenceType === CategoryType.Expense)
 
   const [templateForm, setTemplateForm] = useState<TemplateForm>(EMPTY_TEMPLATE_FORM)
   const [templateFormOpen, setTemplateFormOpen] = useState(false)
@@ -147,7 +138,7 @@ export default function Admin() {
     if (!confirm(`Delete template "${t.name}"?`)) return
     await deleteTemplateM.mutateAsync(t.id)
   }
-  const templateCategoryOptions = templateCategories.filter(c => (c.cr9b5_referencetype as unknown as number) === templateForm.type)
+  const templateCategoryOptions = templateCategories.filter(c => c.referenceType === templateForm.type)
 
   // ── Activity Log ──
   const logsQ = useActivityLog()
@@ -195,11 +186,11 @@ export default function Admin() {
                 </TableRow></TableHeader>
                 <TableBody>
                   {group.items.map(r => {
-                    const count = usedCounts[r.cr9b5_pt_referenceid] ?? 0
+                    const count = usedCounts[r.id] ?? 0
                     return (
-                      <TableRow key={r.cr9b5_pt_referenceid}>
-                        <TableCell>{r.cr9b5_value}</TableCell>
-                        <TableCell>{r.cr9b5_sortorder ?? '—'}</TableCell>
+                      <TableRow key={r.id}>
+                        <TableCell>{r.value}</TableCell>
+                        <TableCell>{r.sortOrder ?? '—'}</TableCell>
                         <TableCell>{count > 0 ? <Badge appearance="tint" color="informative">Used {count}×</Badge> : <Text size={200} style={{ color: tokens.colorNeutralForeground4 }}>unused</Text>}</TableCell>
                         <TableCell>
                           <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
@@ -267,7 +258,7 @@ export default function Admin() {
                   <TableRow key={t.id}>
                     <TableCell style={{ fontWeight: 600 }}>{t.name}</TableCell>
                     <TableCell>{t.type === CategoryType.Income ? 'Income' : 'Expense'}</TableCell>
-                    <TableCell>{templateCategories.find(c => c.cr9b5_pt_referenceid === t.categoryId)?.cr9b5_value ?? '—'}</TableCell>
+                    <TableCell>{templateCategories.find(c => c.id === t.categoryId)?.value ?? '—'}</TableCell>
                     <TableCell>{t.description ?? '—'}</TableCell>
                     <TableCell>{t.defaultAmount != null ? t.defaultAmount.toFixed(2) : '—'}</TableCell>
                     <TableCell>
@@ -299,7 +290,7 @@ export default function Admin() {
                   <Field label="Category">
                     <Select value={templateForm.categoryId} onChange={e => setTemplateForm(f => ({ ...f, categoryId: e.target.value }))}>
                       <option value="">No category</option>
-                      {templateCategoryOptions.map(c => <option key={c.cr9b5_pt_referenceid} value={c.cr9b5_pt_referenceid}>{c.cr9b5_value}</option>)}
+                      {templateCategoryOptions.map(c => <option key={c.id} value={c.id}>{c.value}</option>)}
                     </Select>
                   </Field>
                   <Field label="Description">

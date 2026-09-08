@@ -17,9 +17,11 @@ Properties ──┬──< Invoices >──┬── Contacts (Suppliers/Client
              │                 │
              ├──< ForecastFlowProperties >── ForecastFlows ──── References (Category)
              │                                    │                  Contacts (counterparty)
-             │                                    └── ForecastFlows (self, "Version Parent")
+             │                                    ├── ForecastFlows (self, "Version Parent")
+             │                                    └──< ForecastFlowComponents >── ForecastFlows (source/target, ×2)
              │
              ├──< OwnerOccupancy
+             ├──< ForecastScenarios (optional property scope)
              │
 Invoices ──< Attachments
 Invoices ──< InvoiceComments
@@ -216,6 +218,13 @@ Planned/expected recurring or one-off cash flows, kept separate from actual `Inv
 | `cr9b5_parentflowid` | Lookup → ForecastFlows (self) | Points to the flow this one supersedes, enabling a version history of a forecast without losing prior versions |
 | `cr9b5_notes` | Memo (2000) | |
 
+### ForecastFlows additional columns (not in the original table above)
+
+| Column | Type | Notes |
+|---|---|---|
+| `svm_amountsource` | Choice | `Fixed` = 925060000 / `Calculated` = 925060001 — when `Calculated`, the flow's amount is derived via `ForecastFlowComponents` rather than the fixed `cr9b5_netamount`/`cr9b5_vatamount`/`cr9b5_grossamount` fields |
+| `svm_percentage` | Decimal | Percentage applied to the source flow's amount when `svm_amountsource = Calculated` |
+
 ## ForecastFlowProperties — `cr9b5_forecastproperty` (entity set `cr9b5_forecastproperties`)
 
 Pure many-to-many junction: which specific properties a `ForecastFlow` applies to, when it isn't flagged `cr9b5_allproperties`.
@@ -242,6 +251,35 @@ Logs periods when a property is blocked for the owner's own use instead of being
 | `svm_pt_adults` / `svm_pt_children` / `svm_pt_babies` | Whole number | Optional guest-count context for the owner's stay |
 
 Managed from its own screen (Invoices → Owner Occupancy) and directly from the Calendar (click a gray block to edit/delete). Saving checks — as a non-blocking warning only — for night-overlaps against other guest invoices and other owner-occupancy blocks on the same property (see `src/domain/dateRanges.ts`'s `nightsOverlap()`).
+
+---
+
+## ForecastScenarios — `svm_forecastscenario` (entity set `svm_forecastscenarios`)
+
+Named what-if adjustments applied on top of ForecastFlows (e.g. "+10% income", "-5% expense") — property-scoped or portfolio-wide.
+
+| Column | Type | Notes |
+|---|---|---|
+| `svm_forecastscenarioid` | Guid | Primary key |
+| `svm_forecastscenario1` | Text | Primary name |
+| `svm_property` | Lookup → Properties | Optional — blank means the scenario applies portfolio-wide |
+| `svm_incomeadjustmentpct` | Decimal, required | Percentage adjustment applied to forecast income |
+| `svm_expenseadjustmentpct` | Decimal, required | Percentage adjustment applied to forecast expense |
+| `svm_notes` | Memo | |
+
+---
+
+## ForecastFlowComponents — `svm_forecastflowcomponent` (entity set `svm_forecastflowcomponents`)
+
+Defines the dependency graph used when a `ForecastFlow`'s amount is `Calculated` (see `svm_amountsource` above): each component links a source flow to a target flow with a direction, so the target's computed amount can add or subtract a percentage of the source flow.
+
+| Column | Type | Notes |
+|---|---|---|
+| `svm_forecastflowcomponentid` | Guid | Primary key |
+| `svm_name` | Text | Primary name |
+| `svm_sourceflow` | Lookup → ForecastFlows | |
+| `svm_targetflcow` | Lookup → ForecastFlows | **Note the typo in the attribute's logical name** ("Flcow" instead of "Flow") — permanent, matching the `cr9b5_tablemame` typo on ActivityLogs; Dataverse logical/schema names can't be renamed post-creation |
+| `svm_direction` | Choice | `Add` = 925060000 / `Subtract` = 925060001 |
 
 ---
 
@@ -272,4 +310,5 @@ Append-only audit trail. No relationships — every action is recorded as free-s
 6. **No dedicated Category or Tax-Rate-History tables exist** — categories are References rows filtered by type; tax rate is a flat 7% constant in the client code, not a Dataverse column (see the enhancement docs for proposals to change both).
 7. **Alternate keys currently in place**: `Properties.cr9b5_shortid` (key name `svm_shortid`) is the only one — internal ID uniqueness on Invoices is still enforced client-side only (proposed as an enhancement, not yet implemented).
 8. **`Invoices.cr9b5_internalid` can legitimately be blank** — the "No/Auto Internal ID" option on the invoice form, Regular Invoices, and Excel Import all support skipping the generated sequence number. Don't assume it's always populated when querying or displaying invoices.
-9. **Booking/occupancy overlap is never enforced server-side** — `nightsOverlap()` (`src/domain/dateRanges.ts`) only drives a client-side, non-blocking warning shown on the New/Edit Invoice form and the Owner Occupancy dialog; nothing prevents two overlapping `Invoices` rows or an `Invoices`/`OwnerOccupancy` overlap from actually being saved (deliberate — a property can have multiple simultaneous guests on separate invoices).
+9. **ForecastFlows has two columns not obvious from a first pass** (`svm_amountsource`, `svm_percentage`, see above) that, together with ForecastScenarios and ForecastFlowComponents, implement a computed-amount dependency graph — these three additions were live but undocumented here until this update.
+10. **Booking/occupancy overlap is never enforced server-side** — `nightsOverlap()` (`src/domain/dateRanges.ts`) only drives a client-side, non-blocking warning shown on the New/Edit Invoice form and the Owner Occupancy dialog; nothing prevents two overlapping `Invoices` rows or an `Invoices`/`OwnerOccupancy` overlap from actually being saved (deliberate — a property can have multiple simultaneous guests on separate invoices).

@@ -1,0 +1,15 @@
+# Root Dockerfile build context (frontend image, `COPY . .`). Keeps the image build fast and
+# never lets local secrets, VCS history, or prior build output ride along into the image.
+node_modules
+dist
+.git
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+api/node_modules
+api/dist
+api/.env
+api/.env.*
+!api/.env.example

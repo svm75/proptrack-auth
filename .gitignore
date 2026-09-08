@@ -1,3 +1,11 @@
+.claude/settings.local.json
+
+# Migration data (real Dataverse export/transform output) — never commit
+migration/export/data/
+migration/transform/data/
+migration/load/generated/
+migration/reports/
+
 # Logs
 logs
 *.log
@@ -9,6 +17,10 @@ pnpm-debug.log*
 lerna-debug.log*
 
 node_modules
+
+# NAS-native document storage — local dev/test scratch root (DOCUMENTS_ROOT), stands in for the
+# NAS bind-mount in production. Never commit uploaded documents.
+api/data/
 dist
 dist-ssr
 *.local

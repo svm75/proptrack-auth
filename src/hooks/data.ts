@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { repositories as repo } from '@/data'
 import type {
   Property, Contact, SupplierContract, InvoiceTemplate, Attachment, ForecastFlow, ForecastFlowProperty,
-  NewInvoice, ActivityAction, ActivityTable,
+  NewInvoice, ActivityAction, ActivityTable, OwnerOccupancy, ForecastScenario, ForecastFlowComponent, ReferenceData,
 } from '@/domain/types'
 
 // ---------- simple CrudOps-backed entities ----------
@@ -29,6 +29,30 @@ export function useDeleteProperty() {
     mutationFn: (id: string) => repo.properties.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['properties'] }),
   })
+}
+export function usePropertyDeletable() {
+  return useMutation({ mutationFn: (id: string) => repo.properties.deletable(id) })
+}
+
+// Added Step 8 (migration.md) — generic Reference Data (Admin's Reference Data tab, and any
+// screen needing non-Category reference rows).
+export const useReferenceData = () => useQuery({ queryKey: ['referenceData'], queryFn: () => repo.referenceData.list() })
+export function useSaveReferenceData() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (r: ReferenceData | Omit<ReferenceData, 'id'>) => repo.referenceData.save(r),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['referenceData'] }),
+  })
+}
+export function useDeleteReferenceData() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => repo.referenceData.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['referenceData'] }),
+  })
+}
+export function useReferenceDataUsageCount() {
+  return useMutation({ mutationFn: (id: string) => repo.referenceData.usageCount(id) })
 }
 
 export function useSaveContact() {
@@ -118,6 +142,54 @@ export function useDeleteForecastFlowProperty() {
   return useMutation({
     mutationFn: (id: string) => repo.forecastFlowProperties.remove(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['forecastFlowProperties'] }),
+  })
+}
+
+export const useOwnerOccupancies = () => useQuery({ queryKey: ['ownerOccupancies'], queryFn: () => repo.ownerOccupancies.list() })
+export function useSaveOwnerOccupancy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (o: OwnerOccupancy | Omit<OwnerOccupancy, 'id'>) => repo.ownerOccupancies.save(o),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ownerOccupancies'] }),
+  })
+}
+export function useDeleteOwnerOccupancy() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => repo.ownerOccupancies.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ownerOccupancies'] }),
+  })
+}
+
+export const useForecastScenarios = () => useQuery({ queryKey: ['forecastScenarios'], queryFn: () => repo.forecastScenarios.list() })
+export function useSaveForecastScenario() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (s: ForecastScenario | Omit<ForecastScenario, 'id'>) => repo.forecastScenarios.save(s),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['forecastScenarios'] }),
+  })
+}
+export function useDeleteForecastScenario() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => repo.forecastScenarios.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['forecastScenarios'] }),
+  })
+}
+
+export const useForecastFlowComponents = () => useQuery({ queryKey: ['forecastFlowComponents'], queryFn: () => repo.forecastFlowComponents.list() })
+export function useSaveForecastFlowComponent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (c: ForecastFlowComponent | Omit<ForecastFlowComponent, 'id'>) => repo.forecastFlowComponents.save(c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['forecastFlowComponents'] }),
+  })
+}
+export function useDeleteForecastFlowComponent() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => repo.forecastFlowComponents.remove(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['forecastFlowComponents'] }),
   })
 }
 

@@ -1,29 +1,21 @@
-import { useEffect, useMemo, useState, Fragment } from 'react'
+import { useMemo, useState, Fragment } from 'react'
 import {
   makeStyles, tokens, mergeClasses, Text, Button, Select, Input, Field,
   Dialog, DialogSurface, DialogBody, DialogTitle, DialogContent, DialogActions,
   Table, TableHeader, TableRow, TableHeaderCell, TableBody, TableCell,
 } from '@fluentui/react-components'
-import { Cr9b5_pt_forecastflowsService } from '../generated/services/Cr9b5_pt_forecastflowsService'
-import { Cr9b5_forecastpropertiesService } from '../generated/services/Cr9b5_forecastpropertiesService'
-import { Cr9b5_pt_referencesService } from '../generated/services/Cr9b5_pt_referencesService'
-import { Cr9b5_pt_propertiesService } from '../generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_invoicesService } from '../generated/services/Cr9b5_pt_invoicesService'
-import { Svm_forecastflowcomponentsService } from '../generated/services/Svm_forecastflowcomponentsService'
-import { Svm_forecastscenariosService } from '../generated/services/Svm_forecastscenariosService'
-import type { Cr9b5_pt_forecastflows } from '../generated/models/Cr9b5_pt_forecastflowsModel'
-import type { Cr9b5_forecastproperties } from '../generated/models/Cr9b5_forecastpropertiesModel'
-import type { Cr9b5_pt_references } from '../generated/models/Cr9b5_pt_referencesModel'
-import type { Cr9b5_pt_properties } from '../generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_invoices } from '../generated/models/Cr9b5_pt_invoicesModel'
-import type { Svm_forecastflowcomponents } from '../generated/models/Svm_forecastflowcomponentsModel'
-import type { Svm_forecastscenarios } from '../generated/models/Svm_forecastscenariosModel'
+import {
+  useForecastFlows, useForecastFlowProperties, useForecastFlowComponents, useReferenceData,
+  useProperties, useInvoices, useForecastScenarios, useSaveForecastScenario, useDeleteForecastScenario,
+} from '@/hooks/data'
+import { CategoryType, ForecastFlowType, InvoiceType } from '@/domain/types'
+import type { ForecastFlow, ForecastFlowComponent, ForecastScenario, ReferenceData } from '@/domain/types'
 import { formatMoney } from '@/domain/money'
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
-const TYPE_INCOME  = 233100000
-const TYPE_EXPENSE = 233100001
+const TYPE_INCOME  = ForecastFlowType.Income
+const TYPE_EXPENSE = ForecastFlowType.Expense
 
 const FREQ_ONE_OFF        = 233100000
 const FREQ_DAILY          = 233100001
@@ -33,16 +25,16 @@ const FREQ_QUARTERLY      = 233100004
 const FREQ_SEMI_ANNUALLY  = 233100005
 const FREQ_ANNUALLY       = 233100006
 
-const REF_INCOME_CATEGORY  = 233100005
-const REF_EXPENSE_CATEGORY = 233100006
+const REF_INCOME_CATEGORY  = CategoryType.Income
+const REF_EXPENSE_CATEGORY = CategoryType.Expense
 
 const AMOUNT_SOURCE_CALCULATED = 925060001
 const DIRECTION_SUBTRACT = 925060001
 
-// Invoices.cr9b5_type uses the OPPOSITE numbering from ForecastFlows.cr9b5_type
-// — 233100001 is Income on Invoices but Expense on ForecastFlows. See docs/schema.md.
-const INV_TYPE_INCOME  = 233100001
-const INV_TYPE_EXPENSE = 233100000
+// Invoices.type uses the OPPOSITE numbering from ForecastFlows.type
+// — Income on Invoices is Expense on ForecastFlows. See docs/schema.md.
+const INV_TYPE_INCOME  = InvoiceType.Income
+const INV_TYPE_EXPENSE = InvoiceType.Expense
 
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
@@ -62,7 +54,7 @@ interface LogicalFlow {
   type: number
   categoryId: string
   contactId: string
-  versions: Cr9b5_pt_forecastflows[]
+  versions: ForecastFlow[]
   linkedPropertyIds: string[]
   allProperties: boolean
 }
@@ -73,12 +65,11 @@ interface ScenarioForm { id: string | null; name: string; incomePct: string; exp
 function emptyScenarioForm(): ScenarioForm {
   return { id: null, name: '', incomePct: '', expensePct: '', propertyId: '', notes: '' }
 }
-function scenarioToForm(sc: Svm_forecastscenarios): ScenarioForm {
-  const raw = sc as unknown as Record<string, unknown>
+function scenarioToForm(sc: ForecastScenario): ScenarioForm {
   return {
-    id: sc.svm_forecastscenarioid, name: sc.svm_forecastscenario1 ?? '',
-    incomePct: String(sc.svm_incomeadjustmentpct ?? ''), expensePct: String(sc.svm_expenseadjustmentpct ?? ''),
-    propertyId: (raw['_svm_property_value'] as string) ?? '', notes: sc.svm_notes ?? '',
+    id: sc.id, name: sc.name ?? '',
+    incomePct: String(sc.incomeAdjustmentPct ?? ''), expensePct: String(sc.expenseAdjustmentPct ?? ''),
+    propertyId: sc.propertyId ?? '', notes: sc.notes ?? '',
   }
 }
 
@@ -103,9 +94,9 @@ function parseDate(s: string | undefined): { year: number; month: number } | nul
   return { year: y, month: mo - 1 }
 }
 
-function monthInRange(mk: MonthKey, flow: Cr9b5_pt_forecastflows): boolean {
-  const start = parseDate(flow.cr9b5_startdate)
-  const end   = parseDate(flow.cr9b5_enddate)
+function monthInRange(mk: MonthKey, flow: ForecastFlow): boolean {
+  const start = parseDate(flow.startDate)
+  const end   = parseDate(flow.endDate)
   if (!start) return false
   const after  = mk.year > start.year || (mk.year === start.year && mk.month >= start.month)
   const before = !end || mk.year < end.year || (mk.year === end.year && mk.month <= end.month)
@@ -119,8 +110,8 @@ function isMonthClosed(mk: MonthKey): boolean {
 
 function round2(n: number): number { return Math.round(n * 100) / 100 }
 
-function logicalIdOf(flow: Cr9b5_pt_forecastflows): string {
-  return (flow._cr9b5_parentflowid_value as string | undefined) ?? flow.cr9b5_pt_forecastflowid
+function logicalIdOf(flow: ForecastFlow): string {
+  return flow.parentFlowId ?? flow.id
 }
 
 // ── Amount calculation engine ────────────────────────────────────────────────
@@ -128,21 +119,20 @@ function logicalIdOf(flow: Cr9b5_pt_forecastflows): string {
 // their amount, per month, as Percentage% of the signed sum of their linked
 // component flows' own (recursively resolved) amounts for that same month.
 
-function computeGrossForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): number {
-  const raw   = flow as unknown as Record<string, unknown>
-  const gross = (raw['cr9b5_grossamount'] as number) ?? 0
-  const freq  = Number(flow.cr9b5_frequency)
+function computeGrossForMonth(flow: ForecastFlow, mk: MonthKey): number {
+  const gross = flow.grossAmount ?? 0
+  const freq  = Number(flow.frequency)
 
   if (!monthInRange(mk, flow)) return 0
 
   switch (freq) {
     case FREQ_ONE_OFF: {
-      const start = parseDate(flow.cr9b5_startdate)
+      const start = parseDate(flow.startDate)
       if (!start) return 0
       return start.year === mk.year && start.month === mk.month ? gross : 0
     }
     case FREQ_DAILY: {
-      const dowStr = (raw['cr9b5_daysofweek'] as string) ?? ''
+      const dowStr = flow.daysOfWeek ?? ''
       if (!dowStr) return 0
       const dows  = dowStr.split(',').map(Number).filter(n => n >= 1 && n <= 7)
       const count = dows.reduce((s, d) => s + countDowInMonth(mk.year, mk.month, d), 0)
@@ -156,7 +146,7 @@ function computeGrossForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): numbe
     case FREQ_SEMI_ANNUALLY:
     case FREQ_ANNUALLY: {
       const interval = freq === FREQ_QUARTERLY ? 3 : freq === FREQ_SEMI_ANNUALLY ? 6 : 12
-      const start = parseDate(flow.cr9b5_startdate)
+      const start = parseDate(flow.startDate)
       if (!start) return 0
       const totalMonths = (mk.year - start.year) * 12 + (mk.month - start.month)
       return totalMonths >= 0 && totalMonths % interval === 0 ? gross : 0
@@ -166,27 +156,26 @@ function computeGrossForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey): numbe
   }
 }
 
-function sumLogicalNet(allFlows: Cr9b5_pt_forecastflows[], logicalId: string, mk: MonthKey, components: Svm_forecastflowcomponents[], depth: number): number {
+function sumLogicalNet(allFlows: ForecastFlow[], logicalId: string, mk: MonthKey, components: ForecastFlowComponent[], depth: number): number {
   return allFlows
     .filter(f => logicalIdOf(f) === logicalId)
     .reduce((s, f) => s + computeAmountsForMonth(f, mk, allFlows, components, depth).net, 0)
 }
 
-function computeAmountsForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey, allFlows: Cr9b5_pt_forecastflows[], components: Svm_forecastflowcomponents[], depth = 0): MonthAmounts {
-  const raw = flow as unknown as Record<string, unknown>
-  const amountSource = (raw['svm_amountsource'] as number) ?? undefined
+function computeAmountsForMonth(flow: ForecastFlow, mk: MonthKey, allFlows: ForecastFlow[], components: ForecastFlowComponent[], depth = 0): MonthAmounts {
+  const amountSource = flow.amountSource ?? undefined
 
   if (amountSource === AMOUNT_SOURCE_CALCULATED) {
     if (!monthInRange(mk, flow) || depth >= 5) return { gross: 0, vat: 0, net: 0 }
-    const pct = (raw['svm_percentage'] as number) ?? 0
-    const flowComponents = components.filter(c => (c as unknown as Record<string, unknown>)['_svm_targetflcow_value'] === flow.cr9b5_pt_forecastflowid)
+    const pct = flow.percentage ?? 0
+    const flowComponents = components.filter(c => c.targetFlowId === flow.id)
     let sumNet = 0
     for (const comp of flowComponents) {
-      const sourceId = (comp as unknown as Record<string, unknown>)['_svm_sourceflow_value'] as string | undefined
+      const sourceId = comp.sourceFlowId
       if (!sourceId) continue
-      const sourceFlow = allFlows.find(f => f.cr9b5_pt_forecastflowid === sourceId)
+      const sourceFlow = allFlows.find(f => f.id === sourceId)
       if (!sourceFlow) continue
-      const sign = Number(comp.svm_direction) === DIRECTION_SUBTRACT ? -1 : 1
+      const sign = Number(comp.direction) === DIRECTION_SUBTRACT ? -1 : 1
       sumNet += sign * sumLogicalNet(allFlows, logicalIdOf(sourceFlow), mk, components, depth + 1)
     }
     const net = round2(sumNet * (pct / 100))
@@ -195,8 +184,8 @@ function computeAmountsForMonth(flow: Cr9b5_pt_forecastflows, mk: MonthKey, allF
 
   const gross = computeGrossForMonth(flow, mk)
   if (gross === 0) return { gross: 0, vat: 0, net: 0 }
-  const vatBase   = flow.cr9b5_vatamount ?? 0
-  const grossBase = (raw['cr9b5_grossamount'] as number) ?? 0
+  const vatBase   = flow.vatAmount ?? 0
+  const grossBase = flow.grossAmount ?? 0
   const vat = grossBase > 0 ? round2((vatBase / grossBase) * gross) : 0
   const net = round2(gross - vat)
   return { gross, vat, net }
@@ -262,14 +251,16 @@ const useStyles = makeStyles({
 
 export default function ForecastView() {
   const s = useStyles()
-  const [flows, setFlows]           = useState<Cr9b5_pt_forecastflows[]>([])
-  const [flowProps, setFlowProps]   = useState<Cr9b5_forecastproperties[]>([])
-  const [components, setComponents] = useState<Svm_forecastflowcomponents[]>([])
-  const [references, setReferences] = useState<Cr9b5_pt_references[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [invoices, setInvoices]     = useState<Cr9b5_pt_invoices[]>([])
-  const [scenarios, setScenarios]   = useState<Svm_forecastscenarios[]>([])
-  const [loading, setLoading]       = useState(true)
+  const { data: flows = [], isLoading: loadingFlows }           = useForecastFlows()
+  const { data: flowProps = [], isLoading: loadingFlowProps }   = useForecastFlowProperties()
+  const { data: components = [], isLoading: loadingComponents } = useForecastFlowComponents()
+  const { data: references = [], isLoading: loadingRefs }       = useReferenceData()
+  const { data: properties = [], isLoading: loadingProperties } = useProperties()
+  const { data: invoices = [], isLoading: loadingInvoices }     = useInvoices()
+  const { data: scenarios = [], isLoading: loadingScenarios }   = useForecastScenarios()
+  const saveForecastScenario = useSaveForecastScenario()
+  const deleteForecastScenario = useDeleteForecastScenario()
+  const loading = loadingFlows || loadingFlowProps || loadingComponents || loadingRefs || loadingProperties || loadingInvoices || loadingScenarios
 
   const curYear = new Date().getFullYear()
   const minYear = curYear
@@ -288,36 +279,10 @@ export default function ForecastView() {
   const [scenarioSaving, setScenarioSaving] = useState(false)
   const [scenarioError, setScenarioError] = useState('')
 
-  useEffect(() => { loadAll() }, [])
-
-  async function loadAll() {
-    setLoading(true)
-    try {
-      const [fRes, fpRes, compRes, rRes, pRes, invRes, scenRes] = await Promise.all([
-        Cr9b5_pt_forecastflowsService.getAll({ orderBy: ['cr9b5_startdate desc'] }),
-        Cr9b5_forecastpropertiesService.getAll({}),
-        Svm_forecastflowcomponentsService.getAll({}),
-        Cr9b5_pt_referencesService.getAll({ orderBy: ['cr9b5_sortorder asc', 'cr9b5_value asc'] }),
-        Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'] }),
-        Cr9b5_pt_invoicesService.getAll({ filter: 'statecode eq 0', maxPageSize: 5000 }),
-        Svm_forecastscenariosService.getAll({}),
-      ])
-      setFlows(fRes.data ?? [])
-      setFlowProps(fpRes.data ?? [])
-      setComponents(compRes.data ?? [])
-      setReferences(rRes.data ?? [])
-      setProperties(pRes.data ?? [])
-      setInvoices(invRes.data ?? [])
-      setScenarios(scenRes.data ?? [])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const selectedScenario = scenarios.find(sc => sc.svm_forecastscenarioid === scenarioId) ?? null
+  const selectedScenario = scenarios.find(sc => sc.id === scenarioId) ?? null
 
   function openNewScenario() { setScenarioForm(emptyScenarioForm()); setScenarioError(''); setScenarioManagerOpen(true) }
-  function openEditScenario(sc: Svm_forecastscenarios) { setScenarioForm(scenarioToForm(sc)); setScenarioError(''); setScenarioManagerOpen(true) }
+  function openEditScenario(sc: ForecastScenario) { setScenarioForm(scenarioToForm(sc)); setScenarioError(''); setScenarioManagerOpen(true) }
   async function saveScenario() {
     setScenarioError('')
     if (!scenarioForm.name.trim()) { setScenarioError('Name is required.'); return }
@@ -326,21 +291,17 @@ export default function ForecastView() {
     setScenarioSaving(true)
     try {
       const payload = {
-        svm_forecastscenario1: scenarioForm.name.trim(),
-        svm_incomeadjustmentpct: incomePct,
-        svm_expenseadjustmentpct: expensePct,
-        svm_notes: scenarioForm.notes.trim() || null,
-        ...(scenarioForm.propertyId ? { 'svm_Property@odata.bind': `/cr9b5_pt_properties(${scenarioForm.propertyId})` } : {}),
+        name: scenarioForm.name.trim(),
+        incomeAdjustmentPct: incomePct,
+        expenseAdjustmentPct: expensePct,
+        notes: scenarioForm.notes.trim() || undefined,
+        propertyId: scenarioForm.propertyId || undefined,
       }
       if (scenarioForm.id) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Svm_forecastscenariosService.update(scenarioForm.id, payload as any)
+        await saveForecastScenario.mutateAsync({ id: scenarioForm.id, ...payload })
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Svm_forecastscenariosService.create(payload as any)
+        await saveForecastScenario.mutateAsync(payload)
       }
-      const res = await Svm_forecastscenariosService.getAll({})
-      setScenarios(res.data ?? [])
       setScenarioForm(emptyScenarioForm())
     } catch (e: unknown) {
       setScenarioError(e instanceof Error ? e.message : 'Save failed.')
@@ -348,12 +309,10 @@ export default function ForecastView() {
       setScenarioSaving(false)
     }
   }
-  async function deleteScenario(sc: Svm_forecastscenarios) {
-    if (!confirm(`Delete scenario "${sc.svm_forecastscenario1}"?`)) return
-    await Svm_forecastscenariosService.delete(sc.svm_forecastscenarioid)
-    if (scenarioId === sc.svm_forecastscenarioid) setScenarioId('')
-    const res = await Svm_forecastscenariosService.getAll({})
-    setScenarios(res.data ?? [])
+  async function deleteScenario(sc: ForecastScenario) {
+    if (!confirm(`Delete scenario "${sc.name}"?`)) return
+    await deleteForecastScenario.mutateAsync(sc.id)
+    if (scenarioId === sc.id) setScenarioId('')
   }
 
   // 12 months of the selected year
@@ -368,18 +327,18 @@ export default function ForecastView() {
     const map = new Map<string, LogicalFlow>()
 
     for (const flow of flows) {
-      const parentId = flow._cr9b5_parentflowid_value as string | undefined
-      const logicalId = parentId ?? flow.cr9b5_pt_forecastflowid
-      const typeNum = Number(flow.cr9b5_type)
+      const parentId = flow.parentFlowId
+      const logicalId = parentId ?? flow.id
+      const typeNum = Number(flow.type)
 
       if (!map.has(logicalId)) {
-        const rootFlow = flows.find(f => f.cr9b5_pt_forecastflowid === logicalId)
+        const rootFlow = flows.find(f => f.id === logicalId)
         map.set(logicalId, {
           logicalId,
-          name: rootFlow?.cr9b5_name ?? flow.cr9b5_name ?? '',
+          name: rootFlow?.name ?? flow.name ?? '',
           type: typeNum,
-          categoryId: (rootFlow ?? flow)._cr9b5_categoryid_value ?? '',
-          contactId:  (rootFlow ?? flow)._cr9b5_contactid_value ?? '',
+          categoryId: (rootFlow ?? flow).categoryId ?? '',
+          contactId:  (rootFlow ?? flow).contactId ?? '',
           versions: [],
           linkedPropertyIds: [],
           allProperties: false,
@@ -387,16 +346,16 @@ export default function ForecastView() {
       }
       const lf = map.get(logicalId)!
       lf.versions.push(flow)
-      if (flow.cr9b5_allproperties) lf.allProperties = true
+      if (flow.allProperties) lf.allProperties = true
     }
 
     for (const fp of flowProps) {
-      const flowId = fp._cr9b5_forecastflowid_value ?? ''
-      const propId = fp._cr9b5_propertyid_value ?? ''
-      const flow = flows.find(f => f.cr9b5_pt_forecastflowid === flowId)
+      const flowId = fp.forecastFlowId ?? ''
+      const propId = fp.propertyId ?? ''
+      const flow = flows.find(f => f.id === flowId)
       if (!flow) continue
-      const parentId  = flow._cr9b5_parentflowid_value as string | undefined
-      const logicalId = parentId ?? flow.cr9b5_pt_forecastflowid
+      const parentId  = flow.parentFlowId
+      const logicalId = parentId ?? flow.id
       const lf = map.get(logicalId)
       if (lf && propId && !lf.linkedPropertyIds.includes(propId)) {
         lf.linkedPropertyIds.push(propId)
@@ -414,7 +373,7 @@ export default function ForecastView() {
     if (lf.allProperties) {
       const total = properties.length
       if (total === 0) return 0
-      const matching = propFilter.filter(pid => properties.some(p => p.cr9b5_pt_propertyid === pid)).length
+      const matching = propFilter.filter(pid => properties.some(p => p.id === pid)).length
       return matching / total
     } else {
       const total = lf.linkedPropertyIds.length
@@ -453,7 +412,7 @@ export default function ForecastView() {
 
   function scenarioFactor(type: number): number {
     if (!selectedScenario) return 1
-    const pct = type === TYPE_INCOME ? selectedScenario.svm_incomeadjustmentpct : selectedScenario.svm_expenseadjustmentpct
+    const pct = type === TYPE_INCOME ? selectedScenario.incomeAdjustmentPct : selectedScenario.expenseAdjustmentPct
     return 1 + (pct ?? 0) / 100
   }
 
@@ -492,18 +451,15 @@ export default function ForecastView() {
 
   // ── Actuals (never scenario-adjusted) ─────────────────────────────────────
 
-  function isActiveInvoice(inv: Cr9b5_pt_invoices): boolean {
-    return (inv.statecode as unknown as number) !== 1
-  }
   function actualRatio(): number {
     if (propFilter.length === 0) return 1
     return properties.length > 0 ? propFilter.length / properties.length : 0
   }
   type ActualField = 'net' | 'gross' | 'vat'
-  function invoiceFieldValue(inv: Cr9b5_pt_invoices, field: ActualField): number {
-    if (field === 'gross') return inv.cr9b5_totalgross ?? 0
-    if (field === 'vat') return inv.cr9b5_taxamount ?? 0
-    return inv.cr9b5_baseamount ?? 0
+  function invoiceFieldValue(inv: (typeof invoices)[number], field: ActualField): number {
+    if (field === 'gross') return inv.totalGross ?? 0
+    if (field === 'vat') return inv.taxAmount ?? 0
+    return inv.baseAmount ?? 0
   }
   function actualForCategoryMonth(categoryId: string, flowType: number, mk: MonthKey, field: ActualField = 'net'): number {
     if (!isMonthClosed(mk)) return 0
@@ -512,16 +468,15 @@ export default function ForecastView() {
     if (ratio === 0 && propFilter.length > 0) return 0
     let total = 0
     for (const inv of invoices) {
-      if (!isActiveInvoice(inv)) continue
-      if (Number(inv.cr9b5_type) !== invType) continue
-      const raw = inv as unknown as Record<string, unknown>
-      if ((raw['_cr9b5_categoryid_value'] as string ?? '') !== categoryId) continue
-      if (!inv.cr9b5_date) continue
-      const d = new Date(inv.cr9b5_date)
+      if (inv.cancelled) continue
+      if (Number(inv.type) !== invType) continue
+      if ((inv.categoryId ?? '') !== categoryId) continue
+      if (!inv.date) continue
+      const d = new Date(inv.date)
       if (d.getFullYear() !== mk.year || d.getMonth() !== mk.month) continue
       const val = invoiceFieldValue(inv, field)
-      if (raw['cr9b5_allproperties']) total += val * ratio
-      else if (propFilter.length === 0 || propFilter.includes(raw['_cr9b5_property_value'] as string)) total += val
+      if (inv.allProperties) total += val * ratio
+      else if (propFilter.length === 0 || propFilter.includes(inv.propertyId ?? '')) total += val
     }
     return total
   }
@@ -534,15 +489,14 @@ export default function ForecastView() {
     if (ratio === 0 && propFilter.length > 0) return 0
     let total = 0
     for (const inv of invoices) {
-      if (!isActiveInvoice(inv)) continue
-      if (Number(inv.cr9b5_type) !== invType) continue
-      if (!inv.cr9b5_date) continue
-      const d = new Date(inv.cr9b5_date)
+      if (inv.cancelled) continue
+      if (Number(inv.type) !== invType) continue
+      if (!inv.date) continue
+      const d = new Date(inv.date)
       if (d.getFullYear() !== mk.year || d.getMonth() !== mk.month) continue
-      const raw = inv as unknown as Record<string, unknown>
       const val = invoiceFieldValue(inv, field)
-      if (raw['cr9b5_allproperties']) total += val * ratio
-      else if (propFilter.length === 0 || propFilter.includes(raw['_cr9b5_property_value'] as string)) total += val
+      if (inv.allProperties) total += val * ratio
+      else if (propFilter.length === 0 || propFilter.includes(inv.propertyId ?? '')) total += val
     }
     return total
   }
@@ -573,7 +527,7 @@ export default function ForecastView() {
       const allKeys = new Set<string>()
       for (const type of [TYPE_INCOME, TYPE_EXPENSE]) {
         const cats = type === TYPE_INCOME ? incomeCategories : expenseCategories
-        cats.forEach(c => allKeys.add(`cat-${type}-${c.cr9b5_pt_referenceid}`))
+        cats.forEach(c => allKeys.add(`cat-${type}-${c.id}`))
       }
       setExpanded(allKeys)
       setAllExpanded(true)
@@ -583,11 +537,11 @@ export default function ForecastView() {
   // ── Derived lists ─────────────────────────────────────────────────────────
 
   const incomeCategories = useMemo(
-    () => references.filter(r => Number(r.cr9b5_referencetype) === REF_INCOME_CATEGORY),
+    () => references.filter(r => Number(r.referenceType) === REF_INCOME_CATEGORY),
     [references],
   )
   const expenseCategories = useMemo(
-    () => references.filter(r => Number(r.cr9b5_referencetype) === REF_EXPENSE_CATEGORY),
+    () => references.filter(r => Number(r.referenceType) === REF_EXPENSE_CATEGORY),
     [references],
   )
 
@@ -653,12 +607,12 @@ export default function ForecastView() {
     )
   }
 
-  function renderCategorySection(type: number, cats: Cr9b5_pt_references[], field: keyof MonthAmounts) {
+  function renderCategorySection(type: number, cats: ReferenceData[], field: keyof MonthAmounts) {
     return cats.map(cat => {
-      const catKey  = `cat-${type}-${cat.cr9b5_pt_referenceid}`
+      const catKey  = `cat-${type}-${cat.id}`
       const isOpen  = expanded.has(catKey)
       const catFlows = logicalFlows.filter(
-        lf => lf.type === type && lf.categoryId === cat.cr9b5_pt_referenceid && flowAmounts.has(lf.logicalId)
+        lf => lf.type === type && lf.categoryId === cat.id && flowAmounts.has(lf.logicalId)
       )
       if (catFlows.length === 0) return null
 
@@ -667,17 +621,17 @@ export default function ForecastView() {
           <tr className={s.catRow} onClick={() => toggleExpand(catKey)}>
             <td className={s.catLabel}>
               <span className={s.catCaret}>{isOpen ? '▾' : '▸'}</span>
-              {cat.cr9b5_value}
+              {cat.value}
             </td>
             {months.map(mk => {
-              const v = round2(sumCategory(cat.cr9b5_pt_referenceid, type, mk, field))
-              const actualVal = displayMode !== 'forecast' ? round2(actualNetForCategoryMonth(cat.cr9b5_pt_referenceid, type, mk)) : null
+              const v = round2(sumCategory(cat.id, type, mk, field))
+              const actualVal = displayMode !== 'forecast' ? round2(actualNetForCategoryMonth(cat.id, type, mk)) : null
               return renderModeCell(v, actualVal, mk, s.cellNum)
             })}
             <td className={mergeClasses(s.cellTotal, s.amtCellReg)}>
-              {fmtCell(round2(yearCategoryTotal(cat.cr9b5_pt_referenceid, type, field)))}
+              {fmtCell(round2(yearCategoryTotal(cat.id, type, field)))}
               {displayMode !== 'forecast' && (
-                <div className={s.actualLine}>A: {fmtCell(round2(yearActualCategoryTotal(cat.cr9b5_pt_referenceid, type)))}</div>
+                <div className={s.actualLine}>A: {fmtCell(round2(yearActualCategoryTotal(cat.id, type)))}</div>
               )}
             </td>
           </tr>
@@ -738,15 +692,15 @@ export default function ForecastView() {
           <Text weight="medium" size={300}>Properties:</Text>
           <button onClick={() => setPropFilter([])} className={s.chip} style={propFilter.length === 0 ? { border: `1px solid ${tokens.colorBrandForeground1}`, backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}>All</button>
           {properties.map(p => {
-            const sel = propFilter.includes(p.cr9b5_pt_propertyid)
+            const sel = propFilter.includes(p.id)
             return (
               <button
-                key={p.cr9b5_pt_propertyid}
-                onClick={() => setPropFilter(prev => sel ? prev.filter(id => id !== p.cr9b5_pt_propertyid) : [...prev, p.cr9b5_pt_propertyid])}
+                key={p.id}
+                onClick={() => setPropFilter(prev => sel ? prev.filter(id => id !== p.id) : [...prev, p.id])}
                 className={s.chip}
                 style={sel ? { border: `1px solid ${tokens.colorBrandForeground1}`, backgroundColor: tokens.colorBrandBackground2, color: tokens.colorBrandForeground1 } : undefined}
               >
-                {p.cr9b5_name}
+                {p.name}
               </button>
             )
           })}
@@ -768,7 +722,7 @@ export default function ForecastView() {
           <div style={{ display: 'flex', gap: '6px' }}>
             <Select value={scenarioId} onChange={e => setScenarioId(e.target.value)}>
               <option value="">None (base forecast)</option>
-              {scenarios.map(sc => <option key={sc.svm_forecastscenarioid} value={sc.svm_forecastscenarioid}>{sc.svm_forecastscenario1}</option>)}
+              {scenarios.map(sc => <option key={sc.id} value={sc.id}>{sc.name}</option>)}
             </Select>
             <Button appearance="outline" size="small" onClick={openNewScenario}>Manage…</Button>
           </div>
@@ -777,7 +731,7 @@ export default function ForecastView() {
 
       {selectedScenario && (
         <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
-          Scenario applied to forecast only: income {selectedScenario.svm_incomeadjustmentpct >= 0 ? '+' : ''}{selectedScenario.svm_incomeadjustmentpct}%, expense {selectedScenario.svm_expenseadjustmentpct >= 0 ? '+' : ''}{selectedScenario.svm_expenseadjustmentpct}%. Actuals are never adjusted.
+          Scenario applied to forecast only: income {selectedScenario.incomeAdjustmentPct >= 0 ? '+' : ''}{selectedScenario.incomeAdjustmentPct}%, expense {selectedScenario.expenseAdjustmentPct >= 0 ? '+' : ''}{selectedScenario.expenseAdjustmentPct}%. Actuals are never adjusted.
         </Text>
       )}
 
@@ -877,13 +831,13 @@ export default function ForecastView() {
                   </TableHeader>
                   <TableBody>
                     {scenarios.map(sc => {
-                      const raw = sc as unknown as Record<string, unknown>
+                      const propName = sc.propertyId ? (properties.find(p => p.id === sc.propertyId)?.name ?? '') : ''
                       return (
-                        <TableRow key={sc.svm_forecastscenarioid}>
-                          <TableCell>{sc.svm_forecastscenario1}</TableCell>
-                          <TableCell>{sc.svm_incomeadjustmentpct >= 0 ? '+' : ''}{sc.svm_incomeadjustmentpct}%</TableCell>
-                          <TableCell>{sc.svm_expenseadjustmentpct >= 0 ? '+' : ''}{sc.svm_expenseadjustmentpct}%</TableCell>
-                          <TableCell>{(raw['svm_propertyname'] as string) || 'All properties'}</TableCell>
+                        <TableRow key={sc.id}>
+                          <TableCell>{sc.name}</TableCell>
+                          <TableCell>{sc.incomeAdjustmentPct >= 0 ? '+' : ''}{sc.incomeAdjustmentPct}%</TableCell>
+                          <TableCell>{sc.expenseAdjustmentPct >= 0 ? '+' : ''}{sc.expenseAdjustmentPct}%</TableCell>
+                          <TableCell>{propName || 'All properties'}</TableCell>
                           <TableCell>
                             <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                               <Button size="small" appearance="subtle" onClick={() => openEditScenario(sc)}>Edit</Button>
@@ -913,7 +867,7 @@ export default function ForecastView() {
               <Field label="Property" hint="Optional — leave blank to apply regardless of property filter">
                 <Select value={scenarioForm.propertyId} onChange={e => setScenarioForm(f => ({ ...f, propertyId: e.target.value }))}>
                   <option value="">All properties</option>
-                  {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+                  {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </Select>
               </Field>
               <Field label="Notes">

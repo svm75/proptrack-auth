@@ -4,21 +4,15 @@ import * as XLSX from 'xlsx'
 import {
   makeStyles, tokens, Button, Input, Select, Text, Spinner, Badge, Checkbox,
 } from '@fluentui/react-components'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import type { Cr9b5_pt_invoices } from '@/generated/models/Cr9b5_pt_invoicesModel'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
+import { useProperties, useContacts, useCategories, useInvoices, useUpdateInvoice, useCancelInvoice } from '@/hooks/data'
+import type { Property, Contact, Invoice } from '@/domain/types'
+import { CategoryType } from '@/domain/types'
 import InvoiceForm from './InvoiceForm'
 import InvoiceImport from './InvoiceImport'
 import ExportConfigModal from './ExportConfigModal'
 import { logActivity } from '@/services/activitylog'
 import { formatMoney } from '@/domain/money'
 
-const REF_CAT_INCOME  = 233100005
-const REF_CAT_EXPENSE = 233100006
 const TYPE_INCOMING = 233100000
 const TYPE_OUTGOING = 233100001
 
@@ -50,12 +44,25 @@ type SortField = 'date' | 'id' | 'type' | 'category' | 'property' | 'contact' | 
 export default function Invoices() {
   const s = useStyles()
   const [searchParams, setSearchParams] = useSearchParams()
-  const [invoices, setInvoices] = useState<Cr9b5_pt_invoices[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
-  const [categoryMap, setCategoryMap] = useState<Record<string, string>>({})
-  const [categoryList, setCategoryList] = useState<{ id: string; name: string }[]>([])
-  const [loading, setLoading] = useState(true)
+
+  const { data: properties = [] } = useProperties()
+  const { data: contacts = [] } = useContacts()
+  const { data: allCategories = [] } = useCategories()
+  const { data: invoices = [], isLoading: loading, refetch: refetchInvoices } = useInvoices()
+  const updateInvoiceMutation = useUpdateInvoice()
+  const cancelInvoiceMutation = useCancelInvoice()
+
+  const categoryMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const c of allCategories) if (c.type === CategoryType.Income || c.type === CategoryType.Expense) map[c.id] = c.value
+    return map
+  }, [allCategories])
+  const categoryList = useMemo(() =>
+    allCategories
+      .filter(c => c.type === CategoryType.Income || c.type === CategoryType.Expense)
+      .map(c => ({ id: c.id, name: c.value }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
+    [allCategories])
 
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkCategoryId, setBulkCategoryId] = useState('')
@@ -76,48 +83,14 @@ export default function Invoices() {
   }
 
   const [formOpen, setFormOpen] = useState(false)
-  const [editInvoice, setEditInvoice] = useState<Cr9b5_pt_invoices | null>(null)
-  const [viewInvoice, setViewInvoice] = useState<Cr9b5_pt_invoices | null>(null)
+  const [editInvoice, setEditInvoice] = useState<Invoice | null>(null)
+  const [viewInvoice, setViewInvoice] = useState<Invoice | null>(null)
   const [importOpen, setImportOpen]   = useState(false)
   const [exportOpen, setExportOpen]   = useState(false)
 
-  async function loadRefData() {
-    const [propRes, conRes, catRes] = await Promise.all([
-      Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_contactsService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-      Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_INCOME} or cr9b5_referencetype eq ${REF_CAT_EXPENSE}`, maxPageSize: 5000 }),
-    ])
-    setProperties(propRes.data ?? [])
-    setContacts(conRes.data ?? [])
-    const map: Record<string, string> = {}
-    const list: { id: string; name: string }[] = []
-    for (const ref of catRes.data ?? []) {
-      if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) { map[ref.cr9b5_pt_referenceid] = ref.cr9b5_value; list.push({ id: ref.cr9b5_pt_referenceid, name: ref.cr9b5_value }) }
-    }
-    setCategoryMap(map)
-    setCategoryList(list.sort((a, b) => a.name.localeCompare(b.name)))
-  }
-
-  function buildInvoiceFilter(): string | undefined {
-    const parts: string[] = []
-    if (filterType === 'income') parts.push(`cr9b5_type eq ${TYPE_OUTGOING}`)
-    if (filterType === 'expense') parts.push(`cr9b5_type eq ${TYPE_INCOMING}`)
-    if (filterPropId) parts.push(`_cr9b5_property_value eq '${filterPropId}'`)
-    if (filterFrom) parts.push(`cr9b5_date ge ${new Date(filterFrom).toISOString()}`)
-    if (filterTo) parts.push(`cr9b5_date le ${new Date(filterTo + 'T23:59:59').toISOString()}`)
-    return parts.length ? parts.join(' and ') : undefined
-  }
-
-  async function loadInvoices() {
-    setLoading(true)
-    const res = await Cr9b5_pt_invoicesService.getAll({ filter: buildInvoiceFilter(), orderBy: ['cr9b5_date desc'], maxPageSize: 5000 })
-    setInvoices(res.data ?? [])
-    setSelectedIds(new Set())
-    setLoading(false)
-  }
-
-  useEffect(() => { loadRefData() }, [])
-  useEffect(() => { loadInvoices() }, [filterType, filterPropId, filterFrom, filterTo])
+  // Reset selection whenever the underlying invoice list changes (mirrors the old
+  // per-filter reload behavior, without needing server-side filtering).
+  useEffect(() => { setSelectedIds(new Set()) }, [invoices])
 
   // Deep-link support from the global Quick Add menu / search (?new=1, ?search=...)
   useEffect(() => {
@@ -128,22 +101,19 @@ export default function Invoices() {
     }
   }, [searchParams, setSearchParams])
 
-  const propertyById = useMemo(() => new Map(properties.map(p => [p.cr9b5_pt_propertyid, p])), [properties])
-  const contactById = useMemo(() => new Map(contacts.map(c => [c.cr9b5_pt_contactid, c])), [contacts])
+  const propertyById = useMemo(() => new Map(properties.map(p => [p.id, p])), [properties])
+  const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c])), [contacts])
 
-  function propName(inv: Cr9b5_pt_invoices): string {
-    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_property_value'] as string | undefined
-    return (id && propertyById.get(id)?.cr9b5_name) ?? '—'
+  function propName(inv: Invoice): string {
+    return (inv.propertyId && propertyById.get(inv.propertyId)?.name) ?? '—'
   }
-  function contactName(inv: Cr9b5_pt_invoices): string {
-    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined
-    return (id && contactById.get(id)?.cr9b5_name) ?? '—'
+  function contactName(inv: Invoice): string {
+    return (inv.contactId && contactById.get(inv.contactId)?.name) ?? '—'
   }
-  function contactWithTax(inv: Cr9b5_pt_invoices): string {
-    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined
-    const con = id ? contactById.get(id) : undefined
+  function contactWithTax(inv: Invoice): string {
+    const con = inv.contactId ? contactById.get(inv.contactId) : undefined
     if (!con) return '—'
-    return con.cr9b5_taxid ? `${con.cr9b5_name} (${con.cr9b5_taxid})` : (con.cr9b5_name ?? '—')
+    return con.taxId ? `${con.name} (${con.taxId})` : (con.name ?? '—')
   }
   function internalIdSortKey(id: string | undefined): number {
     if (!id) return 0
@@ -151,26 +121,30 @@ export default function Invoices() {
     return m ? parseInt(m[0], 10) : 0
   }
 
-  function sortValue(inv: Cr9b5_pt_invoices, field: SortField): string | number {
-    const raw = inv as unknown as Record<string, unknown>
+  function sortValue(inv: Invoice, field: SortField): string | number {
     switch (field) {
-      case 'date': return inv.cr9b5_date ?? ''
-      case 'id': return internalIdSortKey(inv.cr9b5_internalid)
-      case 'type': return (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense'
-      case 'category': return categoryMap[raw['_cr9b5_categoryid_value'] as string] ?? ''
-      case 'property': return raw['cr9b5_allproperties'] ? 'All' : propName(inv)
+      case 'date': return inv.date ?? ''
+      case 'id': return internalIdSortKey(inv.internalId)
+      case 'type': return inv.type === TYPE_OUTGOING ? 'Income' : 'Expense'
+      case 'category': return categoryMap[inv.categoryId ?? ''] ?? ''
+      case 'property': return inv.allProperties ? 'All' : propName(inv)
       case 'contact': return contactName(inv)
-      case 'base': return inv.cr9b5_baseamount ?? 0
-      case 'taxRate': return inv.cr9b5_taxismanual ? -1 : parseFloat(inv.cr9b5_taxrate ?? '') || 0
-      case 'taxAmount': return inv.cr9b5_taxamount ?? 0
-      case 'total': return inv.cr9b5_totalgross ?? 0
+      case 'base': return inv.baseAmount ?? 0
+      case 'taxRate': return inv.taxIsManual ? -1 : parseFloat(inv.taxRate ?? '') || 0
+      case 'taxAmount': return inv.taxAmount ?? 0
+      case 'total': return inv.totalGross ?? 0
     }
   }
 
   const filtered = invoices.filter(inv => {
+    if (filterType === 'income' && inv.type !== TYPE_OUTGOING) return false
+    if (filterType === 'expense' && inv.type !== TYPE_INCOMING) return false
+    if (filterPropId && inv.propertyId !== filterPropId) return false
+    if (filterFrom && (!inv.date || inv.date < new Date(filterFrom).toISOString())) return false
+    if (filterTo && (!inv.date || inv.date > new Date(filterTo + 'T23:59:59').toISOString())) return false
     if (search) {
       const q = search.toLowerCase()
-      const haystack = [inv.cr9b5_internalid, inv.cr9b5_description, propName(inv), contactName(inv), inv.cr9b5_bookingreference].join(' ').toLowerCase()
+      const haystack = [inv.internalId, inv.description, propName(inv), contactName(inv), inv.bookingReference].join(' ').toLowerCase()
       if (!haystack.includes(q)) return false
     }
     return true
@@ -185,30 +159,30 @@ export default function Invoices() {
   function exportExcel(orderedColumns: string[]) {
     const fmtD = (iso: string | undefined) => { if (!iso) return ''; const d = new Date(iso); return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}` }
     const fmtN = (n: number | undefined) => n != null ? Number(n.toFixed(2)) : ''
-    const allCols: Record<string, (inv: Cr9b5_pt_invoices) => unknown> = {
-      'Internal ID': inv => inv.cr9b5_internalid,
-      'Type': inv => (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING ? 'Income' : 'Expense',
-      'Category': inv => categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '',
-      'Property': inv => (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'All' : propName(inv),
-      'All Properties': inv => (inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? 'Yes' : 'No',
+    const allCols: Record<string, (inv: Invoice) => unknown> = {
+      'Internal ID': inv => inv.internalId,
+      'Type': inv => inv.type === TYPE_OUTGOING ? 'Income' : 'Expense',
+      'Category': inv => categoryMap[inv.categoryId ?? ''] ?? '',
+      'Property': inv => inv.allProperties ? 'All' : propName(inv),
+      'All Properties': inv => inv.allProperties ? 'Yes' : 'No',
       'Contact': inv => contactWithTax(inv),
       'Contact (TaxID)': inv => contactWithTax(inv),
-      'Date': inv => fmtD(inv.cr9b5_date),
-      'Description': inv => inv.cr9b5_description ?? '',
-      'Booking Ref': inv => inv.cr9b5_bookingreference ?? '',
-      'Check-in': inv => fmtD(inv.cr9b5_checkin),
-      'Check-out': inv => fmtD(inv.cr9b5_checkout),
-      'Nights': inv => inv.cr9b5_nights ?? '',
-      'Days': inv => (inv as unknown as Record<string,unknown>)['cr9b5_days'] ?? '',
-      'Adults': inv => inv.cr9b5_adults ?? '',
-      'Children': inv => inv.cr9b5_children ?? '',
-      'Babies': inv => inv.cr9b5_babies ?? '',
-      'Base Amount': inv => fmtN(inv.cr9b5_baseamount),
-      'Tax Rate': inv => inv.cr9b5_taxrate ?? '',
-      'Tax Amount': inv => fmtN(inv.cr9b5_taxamount),
-      'Total Gross': inv => fmtN(inv.cr9b5_totalgross),
+      'Date': inv => fmtD(inv.date),
+      'Description': inv => inv.description ?? '',
+      'Booking Ref': inv => inv.bookingReference ?? '',
+      'Check-in': inv => fmtD(inv.checkIn),
+      'Check-out': inv => fmtD(inv.checkOut),
+      'Nights': inv => inv.nights ?? '',
+      'Days': inv => inv.days ?? '',
+      'Adults': inv => inv.adults ?? '',
+      'Children': inv => inv.children ?? '',
+      'Babies': inv => inv.babies ?? '',
+      'Base Amount': inv => fmtN(inv.baseAmount),
+      'Tax Rate': inv => inv.taxRate ?? '',
+      'Tax Amount': inv => fmtN(inv.taxAmount),
+      'Total Gross': inv => fmtN(inv.totalGross),
     }
-    const rows = filtered.filter(inv => !isCancelled(inv)).map(inv => {
+    const rows = filtered.filter(inv => !inv.cancelled).map(inv => {
       const row: Record<string, unknown> = {}
       for (const col of orderedColumns) row[col] = allCols[col]?.(inv) ?? ''
       return row
@@ -217,42 +191,33 @@ export default function Invoices() {
     ws['!cols'] = orderedColumns.map(k => ({ wch: Math.max(k.length, ...rows.map(r => String(r[k] ?? '').length)) + 2 }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
-    const from = filterFrom || (filtered.length ? filtered.reduce((m, i) => i.cr9b5_date && i.cr9b5_date < m ? i.cr9b5_date : m, filtered[0].cr9b5_date ?? '').slice(0,10).replace(/-/g,'') : 'all')
-    const to = filterTo || (filtered.length ? filtered.reduce((m, i) => i.cr9b5_date && i.cr9b5_date > m ? i.cr9b5_date : m, filtered[0].cr9b5_date ?? '').slice(0,10).replace(/-/g,'') : 'all')
+    const from = filterFrom || (filtered.length ? filtered.reduce((m, i) => i.date && i.date < m ? i.date : m, filtered[0].date ?? '').slice(0,10).replace(/-/g,'') : 'all')
+    const to = filterTo || (filtered.length ? filtered.reduce((m, i) => i.date && i.date > m ? i.date : m, filtered[0].date ?? '').slice(0,10).replace(/-/g,'') : 'all')
     const filename = `invoices_${from}to${to}.xlsx`
     XLSX.writeFile(wb, filename)
     logActivity('Exported', 'Invoice', 'invoices export', filename)
     setExportOpen(false)
   }
 
-  function openEdit(inv: Cr9b5_pt_invoices) { setEditInvoice(inv); setFormOpen(true) }
+  function openEdit(inv: Invoice) { setEditInvoice(inv); setFormOpen(true) }
 
-  async function cancelInvoice(inv: Cr9b5_pt_invoices) {
-    if (!confirm(`Cancel invoice ${inv.cr9b5_internalid}? This cannot be undone.`)) return
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await Cr9b5_pt_invoicesService.update(inv.cr9b5_pt_invoiceid, { statecode: 1 as any, statuscode: 2 as any })
-    logActivity('Deleted', 'Invoice', inv.cr9b5_internalid ?? inv.cr9b5_pt_invoiceid)
-    setInvoices(list => list.map(i => i.cr9b5_pt_invoiceid === inv.cr9b5_pt_invoiceid
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ? { ...i, statecode: 1 as any, statuscode: 2 as any, statecodename: 'Inactive' } : i))
+  async function cancelInvoice(inv: Invoice) {
+    if (!confirm(`Cancel invoice ${inv.internalId}? This cannot be undone.`)) return
+    await cancelInvoiceMutation.mutateAsync(inv.id)
+    logActivity('Deleted', 'Invoice', inv.internalId ?? inv.id)
   }
 
-  function upsertInvoiceLocal(record: Cr9b5_pt_invoices) {
-    setInvoices(list => {
-      const idx = list.findIndex(i => i.cr9b5_pt_invoiceid === record.cr9b5_pt_invoiceid)
-      if (idx === -1) return [record, ...list]
-      const next = [...list]; next[idx] = record; return next
-    })
-  }
-
-  function isCancelled(inv: Cr9b5_pt_invoices): boolean {
-    return (inv.statecode as unknown as number) === 1 || (inv.statecodename as unknown as string) === 'Inactive'
+  const [localInvoice, setLocalInvoice] = useState<Invoice | null>(null)
+  function upsertInvoiceLocal(record: Invoice) {
+    // The invoices list refetches via the mutation's onSuccess invalidation; this only
+    // keeps the just-created/edited record available for the "view" dialog immediately.
+    setLocalInvoice(record)
   }
 
   function toggleSelect(id: string) {
     setSelectedIds(sel => { const next = new Set(sel); if (next.has(id)) next.delete(id); else next.add(id); return next })
   }
-  const selectableIds = filtered.filter(inv => !isCancelled(inv)).map(inv => inv.cr9b5_pt_invoiceid)
+  const selectableIds = filtered.filter(inv => !inv.cancelled).map(inv => inv.id)
   const allSelected = selectableIds.length > 0 && selectableIds.every(id => selectedIds.has(id))
   function toggleSelectAll() { setSelectedIds(allSelected ? new Set() : new Set(selectableIds)) }
 
@@ -262,16 +227,15 @@ export default function Invoices() {
     const ids = [...selectedIds]
     try {
       for (const id of ids) {
-        const payload: Record<string, unknown> = {}
-        if (bulkCategoryId) payload['cr9b5_categoryid@odata.bind'] = `/cr9b5_pt_references(${bulkCategoryId})`
-        if (bulkPropertyId) { payload['cr9b5_Property@odata.bind'] = `/cr9b5_pt_properties(${bulkPropertyId})`; payload.cr9b5_allproperties = false }
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await Cr9b5_pt_invoicesService.update(id, payload as any)
+        const patch: Record<string, unknown> = {}
+        if (bulkCategoryId) patch.categoryId = bulkCategoryId
+        if (bulkPropertyId) { patch.propertyId = bulkPropertyId; patch.allProperties = false }
+        await updateInvoiceMutation.mutateAsync({ id, patch })
       }
       const changed = [bulkCategoryId && 'category', bulkPropertyId && 'property'].filter(Boolean).join(' + ')
       logActivity('Updated', 'Invoice', `${ids.length} invoices`, `Bulk edit: ${changed}`)
       setSelectedIds(new Set()); setBulkCategoryId(''); setBulkPropertyId('')
-      await loadInvoices()
+      await refetchInvoices()
     } finally {
       setBulkApplying(false)
     }
@@ -297,7 +261,7 @@ export default function Invoices() {
           </div>
           <Select value={filterPropId} onChange={e => setFilterPropId(e.target.value)} style={{ minWidth: '160px' }}>
             <option value="">All properties</option>
-            {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+            {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </Select>
           <Input type="date" value={filterFrom} onChange={(_, d) => setFilterFrom(d.value)} title="From date" />
           <Text style={{ color: tokens.colorNeutralForeground4 }}>—</Text>
@@ -319,7 +283,7 @@ export default function Invoices() {
             </Select>
             <Select value={bulkPropertyId} onChange={e => setBulkPropertyId(e.target.value)}>
               <option value="">Set property…</option>
-              {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+              {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </Select>
             <Button appearance="primary" size="small" disabled={bulkApplying || (!bulkCategoryId && !bulkPropertyId)} onClick={applyBulkEdit}>{bulkApplying ? 'Applying…' : 'Apply'}</Button>
             <Button appearance="transparent" size="small" disabled={bulkApplying} onClick={() => { setSelectedIds(new Set()); setBulkCategoryId(''); setBulkPropertyId('') }}>Clear selection</Button>
@@ -358,24 +322,24 @@ export default function Invoices() {
             </thead>
             <tbody>
               {filtered.map(inv => {
-                const isOut = (inv.cr9b5_type as number) === TYPE_OUTGOING
-                const cancelled = isCancelled(inv)
+                const isOut = inv.type === TYPE_OUTGOING
+                const cancelled = inv.cancelled
                 return (
-                  <tr key={inv.cr9b5_pt_invoiceid} style={{ opacity: cancelled ? 0.6 : 1 }}>
-                    <td className={s.td}>{!cancelled && <Checkbox checked={selectedIds.has(inv.cr9b5_pt_invoiceid)} onChange={() => toggleSelect(inv.cr9b5_pt_invoiceid)} />}</td>
-                    <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{fmtDate(inv.cr9b5_date)}</td>
+                  <tr key={inv.id} style={{ opacity: cancelled ? 0.6 : 1 }}>
+                    <td className={s.td}>{!cancelled && <Checkbox checked={selectedIds.has(inv.id)} onChange={() => toggleSelect(inv.id)} />}</td>
+                    <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{fmtDate(inv.date)}</td>
                     <td className={s.td} style={{ fontFamily: 'monospace', fontWeight: 600, fontSize: '13px', whiteSpace: 'nowrap' }}>
-                      <a href="#" onClick={e => { e.preventDefault(); setViewInvoice(inv) }} style={{ color: cancelled ? tokens.colorNeutralForeground4 : tokens.colorBrandForegroundLink, textDecoration: cancelled ? 'line-through' : 'none' }}>{inv.cr9b5_internalid || '—'}</a>
+                      <a href="#" onClick={e => { e.preventDefault(); setViewInvoice(inv) }} style={{ color: cancelled ? tokens.colorNeutralForeground4 : tokens.colorBrandForegroundLink, textDecoration: cancelled ? 'line-through' : 'none' }}>{inv.internalId || '—'}</a>
                       {cancelled && <span style={{ marginLeft: 6, fontSize: '11px', color: tokens.colorPaletteRedForeground1, fontWeight: 400 }}>cancelled</span>}
                     </td>
                     <td className={s.td}><Badge appearance="tint" color={isOut ? 'success' : 'danger'}>{isOut ? 'Income' : 'Expense'}</Badge></td>
-                    <td className={s.td} style={{ whiteSpace: 'nowrap', color: tokens.colorNeutralForeground3, fontSize: '12px' }}>{categoryMap[(inv as unknown as Record<string,unknown>)['_cr9b5_categoryid_value'] as string] ?? '—'}</td>
-                    <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{(inv as unknown as Record<string,unknown>)['cr9b5_allproperties'] ? <Text weight="semibold" style={{ color: tokens.colorBrandForeground1, fontSize: '12px' }}>All</Text> : propName(inv)}</td>
+                    <td className={s.td} style={{ whiteSpace: 'nowrap', color: tokens.colorNeutralForeground3, fontSize: '12px' }}>{categoryMap[inv.categoryId ?? ''] ?? '—'}</td>
+                    <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{inv.allProperties ? <Text weight="semibold" style={{ color: tokens.colorBrandForeground1, fontSize: '12px' }}>All</Text> : propName(inv)}</td>
                     <td className={s.td} style={{ whiteSpace: 'nowrap' }}>{contactName(inv)}</td>
-                    <td className={s.td} style={{ textAlign: 'right' }}>{formatMoney(inv.cr9b5_baseamount)}</td>
-                    <td className={s.td} style={{ textAlign: 'right' }}>{inv.cr9b5_taxismanual ? <span style={{ color: tokens.colorPaletteMarigoldForeground1, fontSize: '12px', fontWeight: 600 }}>n/a</span> : (inv.cr9b5_taxrate ? `${inv.cr9b5_taxrate}%` : '—')}</td>
-                    <td className={s.td} style={{ textAlign: 'right' }}>{formatMoney(inv.cr9b5_taxamount)}</td>
-                    <td className={s.td} style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{formatMoney(inv.cr9b5_totalgross)}</td>
+                    <td className={s.td} style={{ textAlign: 'right' }}>{formatMoney(inv.baseAmount)}</td>
+                    <td className={s.td} style={{ textAlign: 'right' }}>{inv.taxIsManual ? <span style={{ color: tokens.colorPaletteMarigoldForeground1, fontSize: '12px', fontWeight: 600 }}>n/a</span> : (inv.taxRate ? `${inv.taxRate}%` : '—')}</td>
+                    <td className={s.td} style={{ textAlign: 'right' }}>{formatMoney(inv.taxAmount)}</td>
+                    <td className={s.td} style={{ textAlign: 'right', fontWeight: 600, whiteSpace: 'nowrap' }}>{formatMoney(inv.totalGross)}</td>
                     <td className={s.td}>
                       <div style={{ display: 'flex', gap: '6px', justifyContent: 'flex-end' }}>
                         {!cancelled && <Button size="small" appearance="subtle" onClick={() => openEdit(inv)}>Edit</Button>}
@@ -393,12 +357,12 @@ export default function Invoices() {
       {!loading && filtered.length > 0 && (
         <div className={s.summary}>
           {(() => {
-            const active = filtered.filter(i => !isCancelled(i))
+            const active = filtered.filter(i => !i.cancelled)
             const cancelledCount = filtered.length - active.length
             return (
               <>
                 <span>{active.length} invoice{active.length !== 1 ? 's' : ''}{cancelledCount > 0 ? ` (+ ${cancelledCount} cancelled)` : ''}</span>
-                <span>Total gross: <strong style={{ color: tokens.colorNeutralForeground1 }}>{formatMoney(active.reduce((sum, i) => sum + (i.cr9b5_totalgross ?? 0), 0))}</strong></span>
+                <span>Total gross: <strong style={{ color: tokens.colorNeutralForeground1 }}>{formatMoney(active.reduce((sum, i) => sum + (i.totalGross ?? 0), 0))}</strong></span>
               </>
             )
           })()}
@@ -407,15 +371,15 @@ export default function Invoices() {
 
       {formOpen && (
         <InvoiceForm
-          invoice={editInvoice} properties={properties} contacts={contacts}
-          onSaved={record => { setFormOpen(false); if (record) upsertInvoiceLocal(record); else loadInvoices() }}
+          invoice={editInvoice} properties={properties as Property[]} contacts={contacts as Contact[]}
+          onSaved={record => { setFormOpen(false); if (record) upsertInvoiceLocal(record); else refetchInvoices() }}
           onClose={() => setFormOpen(false)}
         />
       )}
       {viewInvoice && (
-        <InvoiceForm invoice={viewInvoice} properties={properties} contacts={contacts} readOnly onSaved={() => undefined} onClose={() => setViewInvoice(null)} />
+        <InvoiceForm invoice={localInvoice?.id === viewInvoice.id ? localInvoice : viewInvoice} properties={properties as Property[]} contacts={contacts as Contact[]} readOnly onSaved={() => undefined} onClose={() => { setViewInvoice(null); setLocalInvoice(null) }} />
       )}
-      {importOpen && <InvoiceImport onClose={() => setImportOpen(false)} onImported={() => loadInvoices()} />}
+      {importOpen && <InvoiceImport onClose={() => setImportOpen(false)} onImported={() => refetchInvoices()} />}
       {exportOpen && <ExportConfigModal rowCount={filtered.length} onExport={exportExcel} onClose={() => setExportOpen(false)} />}
     </div>
   )

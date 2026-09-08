@@ -1,20 +1,16 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { makeStyles, tokens, Button, Text, TabList, Tab, type SelectTabData, type SelectTabEvent } from '@fluentui/react-components'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_referencesService } from '@/generated/services/Cr9b5_pt_referencesService'
-import type { Cr9b5_pt_invoices } from '@/generated/models/Cr9b5_pt_invoicesModel'
-import type { Cr9b5_pt_properties } from '@/generated/models/Cr9b5_pt_propertiesModel'
-import type { Cr9b5_pt_contacts } from '@/generated/models/Cr9b5_pt_contactsModel'
+import { useInvoices, useProperties, useContacts, useCategories } from '@/hooks/data'
+import { InvoiceType, CategoryType } from '@/domain/types'
+import type { Invoice, Property, Contact } from '@/domain/types'
 import { logActivity } from '@/services/activitylog'
 import { formatMoney } from '@/domain/money'
 
-const TYPE_INCOMING   = 233100000 // Expense
-const TYPE_OUTGOING   = 233100001 // Income
-const REF_CAT_INCOME  = 233100005
-const REF_CAT_EXPENSE = 233100006
+const TYPE_INCOMING   = InvoiceType.Expense
+const TYPE_OUTGOING   = InvoiceType.Income
+const REF_CAT_INCOME  = CategoryType.Income
+const REF_CAT_EXPENSE = CategoryType.Expense
 const TAX_THRESHOLD   = 3000
 
 type ReportTab = 'pnl' | 'igic' | 'rental' | 'tax'
@@ -26,8 +22,8 @@ const REPORT_TABS: { id: ReportTab; label: string; title: string }[] = [
   { id: 'tax',    label: 'Tax Report',    title: 'Tax Report — Suppliers over €3,000' },
 ]
 
-function isActive(inv: Cr9b5_pt_invoices): boolean {
-  return (inv.statecode as unknown as number) !== 1 && (inv.statecodename as unknown as string) !== 'Inactive'
+function isActive(inv: Invoice): boolean {
+  return !inv.cancelled
 }
 function fmtDate(iso: string | undefined): string {
   if (!iso) return '—'
@@ -75,7 +71,7 @@ const useStyles = makeStyles({
 })
 
 interface FilterBarProps {
-  properties: Cr9b5_pt_properties[]; filterFrom: string; filterTo: string; filterPropId: string
+  properties: Property[]; filterFrom: string; filterTo: string; filterPropId: string
   onFrom: (v: string) => void; onTo: (v: string) => void; onProp: (v: string) => void
 }
 function FilterBar({ properties, filterFrom, filterTo, filterPropId, onFrom, onTo, onProp }: FilterBarProps) {
@@ -87,7 +83,7 @@ function FilterBar({ properties, filterFrom, filterTo, filterPropId, onFrom, onT
       <input type="date" value={filterTo} onChange={e => onTo(e.target.value)} title="To date" style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${tokens.colorNeutralStroke1}` }} />
       <select value={filterPropId} onChange={e => onProp(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
         <option value="">All properties</option>
-        {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+        {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
       {(filterFrom || filterTo || filterPropId) && (
         <Button appearance="transparent" size="small" onClick={() => { onFrom(''); onTo(''); onProp('') }}>Clear filters</Button>
@@ -98,11 +94,11 @@ function FilterBar({ properties, filterFrom, filterTo, filterPropId, onFrom, onT
 
 export default function Reports() {
   const s = useStyles()
-  const [invoices, setInvoices] = useState<Cr9b5_pt_invoices[]>([])
-  const [properties, setProperties] = useState<Cr9b5_pt_properties[]>([])
-  const [contacts, setContacts] = useState<Cr9b5_pt_contacts[]>([])
-  const [categoryMap, setCategoryMap] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(true)
+  const { data: invoices = [],   isLoading: loadingInvoices }   = useInvoices()
+  const { data: properties = [], isLoading: loadingProperties } = useProperties()
+  const { data: contacts = [],   isLoading: loadingContacts }   = useContacts()
+  const { data: categories = [], isLoading: loadingCategories } = useCategories()
+  const loading = loadingInvoices || loadingProperties || loadingContacts || loadingCategories
   const [tab, setTab] = useState<ReportTab>('pnl')
 
   const [filterFrom, setFilterFrom] = useState('')
@@ -120,51 +116,37 @@ export default function Reports() {
     return () => el.remove()
   }, [])
 
-  useEffect(() => {
-    async function load() {
-      setLoading(true)
-      const [invRes, propRes, conRes, catRes] = await Promise.all([
-        Cr9b5_pt_invoicesService.getAll({ orderBy: ['cr9b5_date asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_propertiesService.getAll({ orderBy: ['cr9b5_name asc'], maxPageSize: 5000 }),
-        Cr9b5_pt_contactsService.getAll({ maxPageSize: 5000 }),
-        Cr9b5_pt_referencesService.getAll({ filter: `cr9b5_referencetype eq ${REF_CAT_INCOME} or cr9b5_referencetype eq ${REF_CAT_EXPENSE}`, maxPageSize: 5000 }),
-      ])
-      setInvoices(invRes.data ?? [])
-      setProperties(propRes.data ?? [])
-      setContacts(conRes.data ?? [])
-      const map: Record<string, string> = {}
-      for (const ref of catRes.data ?? []) if (ref.cr9b5_pt_referenceid && ref.cr9b5_value) map[ref.cr9b5_pt_referenceid] = ref.cr9b5_value
-      setCategoryMap(map)
-      setLoading(false)
+  const categoryMap = useMemo(() => {
+    const map: Record<string, string> = {}
+    for (const cat of categories) {
+      if ((cat.type === REF_CAT_INCOME || cat.type === REF_CAT_EXPENSE) && cat.id && cat.value) map[cat.id] = cat.value
     }
-    load()
-  }, [])
+    return map
+  }, [categories])
 
-  const propertyById = useMemo(() => new Map(properties.map(p => [p.cr9b5_pt_propertyid, p])), [properties])
-  const contactById = useMemo(() => new Map(contacts.map(c => [c.cr9b5_pt_contactid, c])), [contacts])
+  const propertyById = useMemo(() => new Map(properties.map(p => [p.id, p])), [properties])
+  const contactById = useMemo(() => new Map(contacts.map(c => [c.id, c] as [string, Contact])), [contacts])
 
-  function propName(inv: Cr9b5_pt_invoices): string {
-    const raw = inv as unknown as Record<string, unknown>
-    if (raw['cr9b5_allproperties']) return 'All'
-    const id = raw['_cr9b5_property_value'] as string | undefined
-    return (id && propertyById.get(id)?.cr9b5_name) ?? '—'
+  function propName(inv: Invoice): string {
+    if (inv.allProperties) return 'All'
+    const id = inv.propertyId
+    return (id && propertyById.get(id)?.name) ?? '—'
   }
-  function contactName(inv: Cr9b5_pt_invoices): string {
-    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_contact_value'] as string | undefined
-    return (id && contactById.get(id)?.cr9b5_name) ?? '—'
+  function contactName(inv: Invoice): string {
+    const id = inv.contactId
+    return (id && contactById.get(id)?.name) ?? '—'
   }
-  function categoryName(inv: Cr9b5_pt_invoices): string {
-    const id = (inv as unknown as Record<string, unknown>)['_cr9b5_categoryid_value'] as string | undefined
+  function categoryName(inv: Invoice): string {
+    const id = inv.categoryId
     return (id && categoryMap[id]) || 'Uncategorized'
   }
 
   const filtered = useMemo(() => invoices.filter(inv => {
     if (!isActive(inv)) return false
-    if (filterFrom && inv.cr9b5_date && inv.cr9b5_date < new Date(filterFrom).toISOString()) return false
-    if (filterTo && inv.cr9b5_date && inv.cr9b5_date > new Date(filterTo + 'T23:59:59').toISOString()) return false
+    if (filterFrom && inv.date && inv.date < new Date(filterFrom).toISOString()) return false
+    if (filterTo && inv.date && inv.date > new Date(filterTo + 'T23:59:59').toISOString()) return false
     if (filterPropId) {
-      const raw = inv as unknown as Record<string, unknown>
-      if (!raw['cr9b5_allproperties'] && raw['_cr9b5_property_value'] !== filterPropId) return false
+      if (!inv.allProperties && inv.propertyId !== filterPropId) return false
     }
     return true
   }), [invoices, filterFrom, filterTo, filterPropId])
@@ -173,8 +155,8 @@ export default function Reports() {
     const incomeByCat = new Map<string, number>(); const expenseByCat = new Map<string, number>()
     let totalIncome = 0, totalExpense = 0, incomeTax = 0, expenseTax = 0
     for (const inv of filtered) {
-      const cat = categoryName(inv); const net = inv.cr9b5_baseamount ?? 0; const tax = inv.cr9b5_taxamount ?? 0
-      if ((inv.cr9b5_type as unknown as number) === TYPE_OUTGOING) { incomeByCat.set(cat, (incomeByCat.get(cat) ?? 0) + net); totalIncome += net; incomeTax += tax }
+      const cat = categoryName(inv); const net = inv.baseAmount ?? 0; const tax = inv.taxAmount ?? 0
+      if (inv.type === TYPE_OUTGOING) { incomeByCat.set(cat, (incomeByCat.get(cat) ?? 0) + net); totalIncome += net; incomeTax += tax }
       else { expenseByCat.set(cat, (expenseByCat.get(cat) ?? 0) + net); totalExpense += net; expenseTax += tax }
     }
     const toRows = (m: Map<string, number>) => [...m.entries()].map(([name, amount]) => ({ name, amount })).sort((a, b) => b.amount - a.amount)
@@ -183,12 +165,12 @@ export default function Reports() {
   }, [filtered, categoryMap])
 
   const igicRows = useMemo(() => filtered.map(inv => {
-    const isIncome = (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING
+    const isIncome = inv.type === TYPE_OUTGOING
     return {
-      id: inv.cr9b5_pt_invoiceid, date: inv.cr9b5_date, invoiceNo: inv.cr9b5_internalid, property: propName(inv), counterpart: contactName(inv),
-      expenseNet: isIncome ? 0 : (inv.cr9b5_baseamount ?? 0), expenseIgic: isIncome ? 0 : (inv.cr9b5_taxamount ?? 0), expenseGross: isIncome ? 0 : (inv.cr9b5_totalgross ?? 0),
-      incomeNet: isIncome ? (inv.cr9b5_baseamount ?? 0) : 0, incomeIgic: isIncome ? (inv.cr9b5_taxamount ?? 0) : 0, incomeGross: isIncome ? (inv.cr9b5_totalgross ?? 0) : 0,
-      rentStart: inv.cr9b5_checkin, rentEnd: inv.cr9b5_checkout, reservationId: inv.cr9b5_bookingreference, adults: inv.cr9b5_adults ?? 0, children: inv.cr9b5_children ?? 0,
+      id: inv.id, date: inv.date, invoiceNo: inv.internalId, property: propName(inv), counterpart: contactName(inv),
+      expenseNet: isIncome ? 0 : (inv.baseAmount ?? 0), expenseIgic: isIncome ? 0 : (inv.taxAmount ?? 0), expenseGross: isIncome ? 0 : (inv.totalGross ?? 0),
+      incomeNet: isIncome ? (inv.baseAmount ?? 0) : 0, incomeIgic: isIncome ? (inv.taxAmount ?? 0) : 0, incomeGross: isIncome ? (inv.totalGross ?? 0) : 0,
+      rentStart: inv.checkIn, rentEnd: inv.checkOut, reservationId: inv.bookingReference, adults: inv.adults ?? 0, children: inv.children ?? 0,
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [filtered, propertyById, contactById])
@@ -213,13 +195,13 @@ export default function Reports() {
     logActivity('Exported', 'Invoice', 'IGIC report', filename)
   }
 
-  const rentalRows = useMemo(() => filtered.filter(inv => (inv.cr9b5_type as unknown as number) === TYPE_OUTGOING && inv.cr9b5_checkin).map(inv => {
-    const nights = inv.cr9b5_nights ?? 0; const gross = inv.cr9b5_totalgross ?? 0
-    const adults = inv.cr9b5_adults ?? 0, children = inv.cr9b5_children ?? 0, babies = inv.cr9b5_babies ?? 0
+  const rentalRows = useMemo(() => filtered.filter(inv => inv.type === TYPE_OUTGOING && inv.checkIn).map(inv => {
+    const nights = inv.nights ?? 0; const gross = inv.totalGross ?? 0
+    const adults = inv.adults ?? 0, children = inv.children ?? 0, babies = inv.babies ?? 0
     return {
-      id: inv.cr9b5_pt_invoiceid, property: propName(inv), startDate: inv.cr9b5_checkin, endDate: inv.cr9b5_checkout, nights,
-      client: contactName(inv), avgNight: nights > 0 ? gross / nights : 0, incomeNet: inv.cr9b5_baseamount ?? 0, incomeIgic: inv.cr9b5_taxamount ?? 0,
-      incomeGross: gross, bookingId: inv.cr9b5_bookingreference, totalPeople: adults + children + babies, adults, children, babies,
+      id: inv.id, property: propName(inv), startDate: inv.checkIn, endDate: inv.checkOut, nights,
+      client: contactName(inv), avgNight: nights > 0 ? gross / nights : 0, incomeNet: inv.baseAmount ?? 0, incomeIgic: inv.taxAmount ?? 0,
+      incomeGross: gross, bookingId: inv.bookingReference, totalPeople: adults + children + babies, adults, children, babies,
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [filtered, contactById])
@@ -245,7 +227,7 @@ export default function Reports() {
 
   const taxYears = useMemo(() => {
     const set = new Set<number>()
-    invoices.forEach(inv => { if (inv.cr9b5_year) set.add(inv.cr9b5_year) })
+    invoices.forEach(inv => { if (inv.year) set.add(inv.year) })
     const arr = Array.from(set).sort((a, b) => b - a)
     return arr.length ? arr : [currentYear]
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -256,16 +238,15 @@ export default function Reports() {
     const grouped = new Map<string, { q1: number; q2: number; q3: number; q4: number }>()
     for (const inv of invoices) {
       if (!isActive(inv)) continue
-      if ((inv.cr9b5_type as unknown as number) !== TYPE_INCOMING) continue
-      if (!inv.cr9b5_date || inv.cr9b5_date < yearStart || inv.cr9b5_date > yearEnd) continue
+      if (inv.type !== TYPE_INCOMING) continue
+      if (!inv.date || inv.date < yearStart || inv.date > yearEnd) continue
       if (filterPropId) {
-        const raw = inv as unknown as Record<string, unknown>
-        if (!raw['cr9b5_allproperties'] && raw['_cr9b5_property_value'] !== filterPropId) continue
+        if (!inv.allProperties && inv.propertyId !== filterPropId) continue
       }
-      const name = contactName(inv); const q = getQuarter(inv.cr9b5_date)
+      const name = contactName(inv); const q = getQuarter(inv.date)
       if (q < 1 || q > 4) continue
       const entry = grouped.get(name) ?? { q1: 0, q2: 0, q3: 0, q4: 0 }
-      entry[`q${q}` as 'q1' | 'q2' | 'q3' | 'q4'] += inv.cr9b5_baseamount ?? 0
+      entry[`q${q}` as 'q1' | 'q2' | 'q3' | 'q4'] += inv.baseAmount ?? 0
       grouped.set(name, entry)
     }
     return [...grouped.entries()].map(([name, v]) => ({ name, ...v, total: v.q1 + v.q2 + v.q3 + v.q4 })).filter(r => r.total > TAX_THRESHOLD).sort((a, b) => b.total - a.total)
@@ -441,7 +422,7 @@ export default function Reports() {
                 </select>
                 <select value={filterPropId} onChange={e => setFilterPropId(e.target.value)} style={{ padding: '6px 10px', borderRadius: 6, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
                   <option value="">All properties</option>
-                  {properties.map(p => <option key={p.cr9b5_pt_propertyid} value={p.cr9b5_pt_propertyid}>{p.cr9b5_name}</option>)}
+                  {properties.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </div>
               <Text size={200} style={{ color: tokens.colorNeutralForeground4, display: 'block', marginBottom: 12 }}>Suppliers whose net expenses exceeded € {TAX_THRESHOLD.toLocaleString('de-DE')} in {taxYear}.</Text>

@@ -2,9 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { makeStyles, tokens, Input, Spinner, Text } from '@fluentui/react-components'
 import { SearchRegular } from '@fluentui/react-icons'
-import { Cr9b5_pt_propertiesService } from '@/generated/services/Cr9b5_pt_propertiesService'
-import { Cr9b5_pt_contactsService } from '@/generated/services/Cr9b5_pt_contactsService'
-import { Cr9b5_pt_invoicesService } from '@/generated/services/Cr9b5_pt_invoicesService'
+import { useProperties, useContacts, useInvoices } from '@/hooks/data'
 
 interface ResultItem { id: string; label: string; sub: string; kind: 'Property' | 'Contact' | 'Invoice' }
 
@@ -25,10 +23,15 @@ export function GlobalSearch() {
   const navigate = useNavigate()
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
-  const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<ResultItem[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const { data: properties = [], isLoading: loadingProps } = useProperties()
+  const { data: contacts = [], isLoading: loadingContacts } = useContacts()
+  const { data: invoices = [], isLoading: loadingInvoices } = useInvoices()
+  const dataLoading = loadingProps || loadingContacts || loadingInvoices
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -43,23 +46,29 @@ export function GlobalSearch() {
     const q = query.trim()
     if (q.length < 2) { setResults([]); setLoading(false); return }
     setLoading(true)
-    debounceRef.current = setTimeout(async () => {
-      const esc = q.replace(/'/g, "''")
-      const [propRes, conRes, invRes] = await Promise.all([
-        Cr9b5_pt_propertiesService.getAll({ filter: `contains(cr9b5_name,'${esc}') or contains(cr9b5_shortid,'${esc}')`, top: 5 }),
-        Cr9b5_pt_contactsService.getAll({ filter: `contains(cr9b5_name,'${esc}') or contains(cr9b5_taxid,'${esc}')`, top: 5 }),
-        Cr9b5_pt_invoicesService.getAll({ filter: `contains(cr9b5_internalid,'${esc}') or contains(cr9b5_description,'${esc}')`, top: 5, orderBy: ['cr9b5_date desc'] }),
-      ])
-      const items: ResultItem[] = [
-        ...(propRes.data ?? []).map(p => ({ id: p.cr9b5_pt_propertyid, label: p.cr9b5_name ?? '—', sub: p.cr9b5_shortid ?? '', kind: 'Property' as const })),
-        ...(conRes.data ?? []).map(c => ({ id: c.cr9b5_pt_contactid, label: c.cr9b5_name ?? '—', sub: c.cr9b5_taxid ?? '', kind: 'Contact' as const })),
-        ...(invRes.data ?? []).map(i => ({ id: i.cr9b5_pt_invoiceid, label: i.cr9b5_internalid ?? '—', sub: i.cr9b5_description ?? '', kind: 'Invoice' as const })),
-      ]
-      setResults(items)
+    debounceRef.current = setTimeout(() => {
+      const needle = q.toLowerCase()
+      const matches = (...vals: (string | undefined)[]) => vals.some(v => v?.toLowerCase().includes(needle))
+
+      const propItems: ResultItem[] = properties
+        .filter(p => matches(p.name, p.shortId))
+        .slice(0, 5)
+        .map(p => ({ id: p.id, label: p.name ?? '—', sub: p.shortId ?? '', kind: 'Property' as const }))
+      const conItems: ResultItem[] = contacts
+        .filter(c => matches(c.name, c.taxId))
+        .slice(0, 5)
+        .map(c => ({ id: c.id, label: c.name ?? '—', sub: c.taxId ?? '', kind: 'Contact' as const }))
+      const invItems: ResultItem[] = invoices
+        .filter(i => matches(i.internalId, i.description))
+        .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+        .slice(0, 5)
+        .map(i => ({ id: i.id, label: i.internalId ?? '—', sub: i.description ?? '', kind: 'Invoice' as const }))
+
+      setResults([...propItems, ...conItems, ...invItems])
       setLoading(false)
     }, 300)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [query])
+  }, [query, properties, contacts, invoices])
 
   function goTo(item: ResultItem) {
     setOpen(false)
@@ -85,7 +94,7 @@ export function GlobalSearch() {
       />
       {open && query.trim().length >= 2 && (
         <div className={s.panel}>
-          {loading ? (
+          {loading || dataLoading ? (
             <div className={s.loadingRow}><Spinner size="tiny" label="Searching…" /></div>
           ) : grouped.length === 0 ? (
             <div className={s.empty}>No matches.</div>
