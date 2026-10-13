@@ -19,6 +19,15 @@ export interface AttachmentRow {
   stored_filename: string | null
   mime_type: string | null
   file_size: string | null // BIGINT comes back as string from `pg`
+  // Document Management (db/008_documents_management.sql).
+  category_id: string | null
+  valid_from_date: string | null
+  expiry_date: string | null
+  description: string | null
+  tags: string[] | null
+  period_year: number | null
+  supplier_contract_id: string | null
+  comment: string | null
   created_at: string
   updated_at: string
 }
@@ -27,4 +36,6 @@ export const attachmentsRepo = makeCrudRepo<AttachmentRow>('attachments', [
   'file_name', 'google_drive_id', 'google_drive_url', 'invoice_id', 'property_id',
   'property_id_invoice', 'contact_id', 'attach_type_id', 'reference_type', 'uploaded_on',
   'storage_path', 'original_filename', 'stored_filename', 'mime_type', 'file_size',
+  'category_id', 'valid_from_date', 'expiry_date', 'description', 'tags', 'period_year',
+  'supplier_contract_id', 'comment',
 ])

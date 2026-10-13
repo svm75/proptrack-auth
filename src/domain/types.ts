@@ -112,6 +112,9 @@ export interface ReferenceData {
   value: string
   referenceType: number
   sortOrder?: number
+  /** Document Category rows (referenceType 233100007) only: the destination folder new uploads
+   *  in this category pre-fill to. Undefined for every other referenceType. */
+  defaultFolderPath?: string
 }
 
 export interface Invoice {
@@ -178,6 +181,16 @@ export interface Attachment {
   originalFilename?: string
   mimeType?: string
   fileSize?: number
+  // Document Management (Documents tab). categoryId/validFromDate are mandatory for new
+  // NAS-native uploads (enforced by the API), undefined on pre-existing rows.
+  categoryId?: string
+  validFromDate?: string
+  expiryDate?: string
+  description?: string
+  tags?: string[]
+  periodYear?: number
+  supplierContractId?: string
+  comment?: string
 }
 
 export const ForecastAmountSource = {

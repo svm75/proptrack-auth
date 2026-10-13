@@ -49,8 +49,9 @@ const EMPTY_FORM: PropForm = { id: null, name: '', shortid: '', address: '', not
 // in src/data/backend.ts. Google Drive has been fully removed (zero attachment rows referenced
 // it in production); on the legacy Power Platform/Dataverse backend the upload UI stays visible
 // but disabled, per migration.md's Google-removal addendum.
-interface AttachForm { typeRefId: string; file: File | null }
-const EMPTY_ATTACH: AttachForm = { typeRefId: '', file: null }
+interface AttachForm { typeRefId: string; file: File | null; categoryId: string; validFromDate: string }
+const EMPTY_ATTACH: AttachForm = { typeRefId: '', file: null, categoryId: '', validFromDate: new Date().toISOString().slice(0, 10) }
+const DOCUMENT_CATEGORY_REF_TYPE = 233100007
 
 interface YearSummary { year: number; income: number; expenses: number }
 
@@ -119,6 +120,10 @@ export default function Properties() {
   )
   const attachRefTypes = useMemo(
     () => referenceData.filter(r => r.referenceType === PROP_REF_TYPE),
+    [referenceData],
+  )
+  const docCategories = useMemo(
+    () => referenceData.filter(r => r.referenceType === DOCUMENT_CATEGORY_REF_TYPE),
     [referenceData],
   )
 
@@ -252,12 +257,22 @@ export default function Properties() {
     }
   }
 
+  function selectDocCategory(categoryId: string) {
+    setAttachForm(f => ({ ...f, categoryId }))
+    const cat = docCategories.find(c => c.id === categoryId)
+    if (cat?.defaultFolderPath) void refreshDocFolders(cat.defaultFolderPath)
+  }
+
   async function addAttachment(propId: string) {
     if (!attachForm.file) { setAttachError('Choose a file first.'); return }
+    if (!attachForm.categoryId) { setAttachError('Choose a category first.'); return }
+    if (!attachForm.validFromDate) { setAttachError('Valid-from date is required.'); return }
     setAttachSaving(true); setAttachError(null)
     try {
       const row = await uploadDocument(attachForm.file, {
         path: docPath,
+        categoryId: attachForm.categoryId,
+        validFromDate: attachForm.validFromDate,
         propertyId: propId,
         attachTypeId: attachForm.typeRefId || undefined,
       })
@@ -380,6 +395,13 @@ export default function Properties() {
                       </Text>
                     ) : (
                       <>
+                        <select value={attachForm.categoryId} onChange={e => selectDocCategory(e.target.value)}
+                          style={{ padding: '6px 8px', fontSize: '12px', borderRadius: 4, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
+                          <option value="">Category (required)…</option>
+                          {docCategories.map(r => <option key={r.id} value={r.id}>{r.value}</option>)}
+                        </select>
+                        <Input size="small" type="date" value={attachForm.validFromDate}
+                          onChange={(_, d) => setAttachForm(f => ({ ...f, validFromDate: d.value }))} />
                         <select value={attachForm.typeRefId} onChange={e => setAttachForm(f => ({ ...f, typeRefId: e.target.value }))}
                           style={{ padding: '6px 8px', fontSize: '12px', borderRadius: 4, border: `1px solid ${tokens.colorNeutralStroke1}` }}>
                           <option value="">Type (optional)…</option>

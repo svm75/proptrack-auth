@@ -12,6 +12,7 @@ const OwnerOccupancy     = lazy(() => import('@/screens/OwnerOccupancy'))
 const ClientOccupancy    = lazy(() => import('@/screens/ClientOccupancy'))
 const Properties         = lazy(() => import('@/screens/Properties'))
 const Contacts           = lazy(() => import('@/screens/Contacts'))
+const Documents          = lazy(() => import('@/screens/Documents'))
 const Admin              = lazy(() => import('@/screens/Admin'))
 
 function RouteFallback() {
@@ -37,6 +38,7 @@ export function AppRoutes() {
         <Route path="/invoices/client-occupancy" element={<ClientOccupancy />} />
         <Route path="/properties" element={<Properties />} />
         <Route path="/contacts" element={<Contacts />} />
+        <Route path="/documents" element={<Documents />} />
         <Route path="/admin" element={<Admin />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

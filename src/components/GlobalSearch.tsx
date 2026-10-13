@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { makeStyles, tokens, Input, Spinner, Text } from '@fluentui/react-components'
 import { SearchRegular } from '@fluentui/react-icons'
-import { useProperties, useContacts, useInvoices } from '@/hooks/data'
+import { useProperties, useContacts, useInvoices, useAttachments } from '@/hooks/data'
 
-interface ResultItem { id: string; label: string; sub: string; kind: 'Property' | 'Contact' | 'Invoice' }
+interface ResultItem { id: string; label: string; sub: string; kind: 'Property' | 'Contact' | 'Invoice' | 'Document' }
 
 const useStyles = makeStyles({
   wrap: { position: 'relative', width: '260px' },
@@ -30,7 +30,8 @@ export function GlobalSearch() {
   const { data: properties = [], isLoading: loadingProps } = useProperties()
   const { data: contacts = [], isLoading: loadingContacts } = useContacts()
   const { data: invoices = [], isLoading: loadingInvoices } = useInvoices()
-  const dataLoading = loadingProps || loadingContacts || loadingInvoices
+  const { data: attachments = [], isLoading: loadingDocs } = useAttachments()
+  const dataLoading = loadingProps || loadingContacts || loadingInvoices || loadingDocs
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -63,22 +64,27 @@ export function GlobalSearch() {
         .sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
         .slice(0, 5)
         .map(i => ({ id: i.id, label: i.internalId ?? '—', sub: i.description ?? '', kind: 'Invoice' as const }))
+      const docItems: ResultItem[] = attachments
+        .filter(a => a.storagePath && matches(a.originalFilename ?? a.fileName, a.description, a.comment, ...(a.tags ?? [])))
+        .slice(0, 5)
+        .map(a => ({ id: a.id, label: a.originalFilename ?? a.fileName, sub: a.description ?? '', kind: 'Document' as const }))
 
-      setResults([...propItems, ...conItems, ...invItems])
+      setResults([...propItems, ...conItems, ...invItems, ...docItems])
       setLoading(false)
     }, 300)
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current) }
-  }, [query, properties, contacts, invoices])
+  }, [query, properties, contacts, invoices, attachments])
 
   function goTo(item: ResultItem) {
     setOpen(false)
     setQuery('')
     if (item.kind === 'Property') navigate('/properties')
     else if (item.kind === 'Contact') navigate('/contacts')
+    else if (item.kind === 'Document') navigate('/documents')
     else navigate(`/invoices?search=${encodeURIComponent(item.label)}`)
   }
 
-  const grouped: { kind: ResultItem['kind']; items: ResultItem[] }[] = (['Property', 'Contact', 'Invoice'] as const)
+  const grouped: { kind: ResultItem['kind']; items: ResultItem[] }[] = (['Property', 'Contact', 'Invoice', 'Document'] as const)
     .map(kind => ({ kind, items: results.filter(r => r.kind === kind) }))
     .filter(g => g.items.length > 0)
 
@@ -87,7 +93,7 @@ export function GlobalSearch() {
       <Input
         className={s.input}
         contentBefore={<SearchRegular />}
-        placeholder="Search properties, contacts, invoices…"
+        placeholder="Search properties, contacts, invoices, documents…"
         value={query}
         onFocus={() => setOpen(true)}
         onChange={(_, d) => { setQuery(d.value); setOpen(true) }}

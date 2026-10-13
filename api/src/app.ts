@@ -15,7 +15,8 @@ import { invoiceCommentsRouter } from './routes/invoiceCommentsRoutes.js'
 import { activityLogsRouter } from './routes/activityLogsRoutes.js'
 import { forecastFlowsRouter } from './routes/forecastFlowsRoutes.js'
 import { documentsRouter } from './routes/documentsRoutes.js'
-import { requireToken } from './auth.js'
+import cookieParser from 'cookie-parser'
+import { requireToken, requireSession, authRouter } from './auth.js'
 import { ApiError } from './errors.js'
 import { ping } from './db.js'
 
@@ -33,6 +34,10 @@ function corsMiddleware(req: express.Request, res: express.Response, next: expre
     res.setHeader('Vary', 'Origin')
     res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+    // Real per-user login (auth.ts) rides a session cookie — needed for the rare cross-origin
+    // case (this allowlist's whole reason to exist); same-origin-via-Caddy production traffic
+    // never hits this branch at all.
+    res.setHeader('Access-Control-Allow-Credentials', 'true')
   }
   if (req.method === 'OPTIONS') {
     res.status(204).end()
@@ -45,6 +50,7 @@ export function createApp() {
   const app = express()
   app.use(corsMiddleware)
   app.use(express.json())
+  app.use(cookieParser())
 
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' })
@@ -54,6 +60,12 @@ export function createApp() {
   })
 
   app.use(requireToken)
+
+  // Real single sign-on (auth.ts) — a second layer on top of requireToken above, not instead of
+  // it. /auth/* itself needs no session (that's the whole point); every route below requires one.
+  // Managing users lives in Control Deck now, not here.
+  app.use('/auth', authRouter)
+  app.use(requireSession)
 
   // Composite / bespoke-logic resources.
   app.use('/properties', propertiesRouter)

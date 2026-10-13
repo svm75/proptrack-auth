@@ -1,9 +1,12 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useLocation } from 'react-router-dom'
-import { makeStyles, tokens, Button } from '@fluentui/react-components'
-import { WeatherMoonRegular, WeatherSunnyRegular } from '@fluentui/react-icons'
+import { makeStyles, tokens, Button, Menu, MenuTrigger, MenuPopover, MenuList, MenuItem } from '@fluentui/react-components'
+import { WeatherMoonRegular, WeatherSunnyRegular, PersonRegular, SignOutRegular, KeyRegular } from '@fluentui/react-icons'
 import { useDarkMode } from './darkMode'
 import { useGuardedNavigate } from './unsavedChangesContext'
+import { useAuth } from './auth'
+import { logout } from '@/lib/authApi'
+import { ChangePasswordDialog } from '@/screens/ChangePasswordDialog'
 import { AppErrorBoundary } from '@/components/AppErrorBoundary'
 import { QueryErrorBanner } from '@/components/QueryErrorBanner'
 import { GlobalSearch } from '@/components/GlobalSearch'
@@ -56,12 +59,15 @@ const NAV: NavItem[] = [
   { to: '/invoices/client-occupancy', label: 'Client Occupancy', parent: '/invoices' },
   { to: '/properties', label: 'Properties' },
   { to: '/contacts', label: 'Contacts' },
+  { to: '/documents', label: 'Documents' },
   { to: '/admin', label: 'Admin' },
 ]
 
 function Topbar() {
   const s = useStyles()
   const { dark, toggle } = useDarkMode()
+  const { user, authEnabled, refresh } = useAuth()
+  const [changePwOpen, setChangePwOpen] = useState(false)
   const [displayName, setDisplayName] = useState('')
 
   useEffect(() => {
@@ -85,6 +91,24 @@ function Topbar() {
         appearance="subtle" size="small" icon={dark ? <WeatherSunnyRegular /> : <WeatherMoonRegular />}
         onClick={toggle} aria-label={dark ? 'Switch to light mode' : 'Switch to dark mode'}
       />
+      {authEnabled && user && (
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
+            <Button appearance="subtle" size="small" icon={<PersonRegular />}>{user.displayName}</Button>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem icon={<KeyRegular />} onClick={() => setChangePwOpen(true)}>
+                Change password
+              </MenuItem>
+              <MenuItem icon={<SignOutRegular />} onClick={async () => { await logout(); refresh() }}>
+                Sign out
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+      )}
+      <ChangePasswordDialog open={changePwOpen} onClose={() => setChangePwOpen(false)} />
     </div>
   )
 }

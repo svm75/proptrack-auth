@@ -18,10 +18,17 @@ export function makeCrudRepo<Row extends QueryResultRow & { id: string }>(table:
 
     create(row: Partial<Row>, exec: Executor = pool) {
       return withPgErrorTranslation(async () => {
-        const values = columns.map((c) => (row as Record<string, unknown>)[c] ?? null)
-        const placeholders = columns.map((_, i) => `$${i + 1}`).join(', ')
+        // Only insert columns the caller actually supplied, so omitted ones fall back to their DB
+        // DEFAULT (e.g. contacts.regular_supplier NOT NULL DEFAULT false) instead of an explicit NULL.
+        const presentCols = columns.filter((c) => (row as Record<string, unknown>)[c] !== undefined)
+        if (presentCols.length === 0) {
+          const res = await exec.query<Row>(`INSERT INTO proptrack.${table} DEFAULT VALUES RETURNING *`)
+          return res.rows[0]
+        }
+        const values = presentCols.map((c) => (row as Record<string, unknown>)[c])
+        const placeholders = presentCols.map((_, i) => `$${i + 1}`).join(', ')
         const res = await exec.query<Row>(
-          `INSERT INTO proptrack.${table} (${columns.join(', ')}) VALUES (${placeholders}) RETURNING *`,
+          `INSERT INTO proptrack.${table} (${presentCols.join(', ')}) VALUES (${placeholders}) RETURNING *`,
           values,
         )
         return res.rows[0]

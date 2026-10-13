@@ -2,7 +2,6 @@ import express from 'express'
 import multer from 'multer'
 import { promises as fs, createReadStream } from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
 import {
   DOCUMENTS_ROOT, resolveRelativePath, assertRealPathInsideRoot, assertParentRealPathInsideRoot,
   sanitizeFilename,
@@ -88,16 +87,49 @@ documentsRouter.post('/folders', async (req, res, next) => {
   }
 })
 
+// yyyymmdd from a "YYYY-MM-DD" date string - the stored filename's date prefix, so a file is
+// identifiable at a glance even browsing the NAS filesystem directly, outside the app.
+function yyyymmdd(dateISO: string): string {
+  return dateISO.slice(0, 10).replace(/-/g, '')
+}
+
+// Finds a collision-free "<base><ext>" (then "<base>_2<ext>", "<base>_3<ext>", ...) inside
+// destAbsolute. Human-readable filenames (unlike the old UUID scheme) can genuinely collide -
+// two documents dated the same day with the same original name - so this is a real check, not
+// defensive-only.
+async function uniqueStoredFilename(destAbsolute: string, base: string, ext: string): Promise<string> {
+  let candidate = `${base}${ext}`
+  for (let n = 2; ; n++) {
+    try {
+      await fs.access(path.join(destAbsolute, candidate))
+      candidate = `${base}_${n}${ext}`
+    } catch {
+      return candidate // ENOENT - name is free
+    }
+  }
+}
+
 // ---------- POST /documents/upload ----------
 // multipart/form-data: field "file" (the file), field "path" (destination folder, relative),
-// plus optional metadata fields mirrored onto the attachments row: propertyId, invoiceId,
-// contactId, attachTypeId, referenceType.
+// field "categoryId" (mandatory - Document Category reference_data row) and "validFromDate"
+// (mandatory, YYYY-MM-DD - also drives the stored filename's yyyymmdd_ prefix), plus optional
+// metadata fields mirrored onto the attachments row: propertyId, invoiceId, contactId,
+// attachTypeId, referenceType, expiryDate, description, tags (comma-separated), periodYear,
+// supplierContractId.
 documentsRouter.post('/upload', upload.single('file'), async (req, res, next) => {
   const file = req.file
   let writtenAbsolutePath: string | null = null
   try {
     if (!file) {
       throw new ValidationError('No file uploaded (expected multipart field "file").')
+    }
+    const categoryId = typeof req.body.categoryId === 'string' ? req.body.categoryId.trim() : ''
+    if (!categoryId) {
+      throw new ValidationError('categoryId is required.')
+    }
+    const validFromDate = typeof req.body.validFromDate === 'string' ? req.body.validFromDate.trim() : ''
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(validFromDate)) {
+      throw new ValidationError('validFromDate is required, as YYYY-MM-DD.')
     }
 
     const destInput = typeof req.body.path === 'string' ? req.body.path : ''
@@ -115,14 +147,18 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res, next) =>
       throw new ValidationError('Uploaded file is empty.')
     }
 
-    const storedFilename = `${crypto.randomUUID()}${ext}` // UUID-based -> collision-safe by construction, never overwrites
+    const originalFilename = sanitizeFilename(file.originalname)
+    const baseName = `${yyyymmdd(validFromDate)}_${originalFilename.replace(ext, '')}`.slice(0, 200)
+    const storedFilename = await uniqueStoredFilename(destAbsolute, baseName, ext)
     const storedAbsolute = path.join(destAbsolute, storedFilename)
     const storedRelative = destRelative ? `${destRelative}/${storedFilename}` : storedFilename
 
-    await fs.writeFile(storedAbsolute, file.buffer, { flag: 'wx' }) // 'wx' = fail if it somehow already exists, never silently overwrite
+    await fs.writeFile(storedAbsolute, file.buffer, { flag: 'wx' }) // 'wx' = fail if it somehow already exists (uniqueStoredFilename raced), never silently overwrite
     writtenAbsolutePath = storedAbsolute
 
-    const originalFilename = sanitizeFilename(file.originalname)
+    const tags = typeof req.body.tags === 'string' && req.body.tags.trim()
+      ? req.body.tags.split(',').map((t: string) => t.trim()).filter(Boolean)
+      : null
 
     let row: AttachmentRow
     try {
@@ -139,6 +175,14 @@ documentsRouter.post('/upload', upload.single('file'), async (req, res, next) =>
         attach_type_id: req.body.attachTypeId || null,
         reference_type: req.body.referenceType ? Number(req.body.referenceType) : null,
         uploaded_on: new Date().toISOString(),
+        category_id: categoryId,
+        valid_from_date: validFromDate,
+        expiry_date: req.body.expiryDate || null,
+        description: req.body.description || null,
+        tags,
+        period_year: req.body.periodYear ? Number(req.body.periodYear) : null,
+        supplier_contract_id: req.body.supplierContractId || null,
+        comment: req.body.comment || null,
       })
     } catch (dbErr) {
       // DB write failed after the file write succeeded - delete the just-written file so the
@@ -177,10 +221,57 @@ documentsRouter.get('/:id', async (req, res, next) => {
 
     const stat = await fs.stat(real)
     const displayName = row.original_filename || row.file_name || 'download'
+    // ?inline=1: browser renders PDFs/images in-place (Documents tab preview pane) instead of
+    // triggering a save dialog. Still an explicit opt-in, not content-type-based, so an
+    // untrusted-but-allowed file type never gets inline-rendered by surprise.
+    const disposition = req.query.inline === '1' ? 'inline' : 'attachment'
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream')
     res.setHeader('Content-Length', String(stat.size))
-    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(displayName)}"`)
+    res.setHeader('Content-Disposition', `${disposition}; filename="${encodeURIComponent(displayName)}"`)
     createReadStream(real).on('error', next).pipe(res)
+  } catch (err) {
+    next(err)
+  }
+})
+
+// ---------- POST /documents/:id/move ----------
+// Body: { path: string } - the NEW destination folder (relative to DOCUMENTS_ROOT). Moves the
+// physical file and updates storage_path in one step; the stored filename itself (already
+// collision-safe, already yyyymmdd_-prefixed) is preserved as-is, re-checked for a collision at
+// the new destination only.
+documentsRouter.post('/:id/move', async (req, res, next) => {
+  try {
+    const row = await attachmentsRepo.get(req.params.id)
+    if (!row) throw new NotFoundError('Attachment not found.')
+    if (!row.storage_path || !row.stored_filename) {
+      throw new NotFoundError('This attachment has no NAS-stored file to move.')
+    }
+
+    const destInput = typeof req.body.path === 'string' ? req.body.path : ''
+    const { relative: destRelative, absolute: destAbsolute } = resolveRelativePath(destInput)
+    await assertParentRealPathInsideRoot(destAbsolute)
+    await fs.mkdir(destAbsolute, { recursive: true })
+    await assertRealPathInsideRoot(destAbsolute)
+
+    const { absolute: currentAbsolute } = resolveRelativePath(row.storage_path)
+    const currentReal = await assertRealPathInsideRoot(currentAbsolute).catch((err) => {
+      const code = (err as NodeJS.ErrnoException).code
+      if (code === 'ENOENT') throw new NotFoundError('Stored file is missing on disk.')
+      throw err
+    })
+
+    const ext = path.extname(row.stored_filename)
+    const base = row.stored_filename.slice(0, row.stored_filename.length - ext.length)
+    const newFilename = await uniqueStoredFilename(destAbsolute, base, ext)
+    const newAbsolute = path.join(destAbsolute, newFilename)
+    const newRelative = destRelative ? `${destRelative}/${newFilename}` : newFilename
+
+    await fs.rename(currentReal, newAbsolute)
+    const updated = await attachmentsRepo.update(req.params.id, {
+      storage_path: newRelative,
+      stored_filename: newFilename,
+    })
+    res.json(updated)
   } catch (err) {
     next(err)
   }

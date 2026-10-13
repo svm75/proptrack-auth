@@ -10,7 +10,6 @@ import {
   useReferenceData, useSaveReferenceData, useDeleteReferenceData, useAttachments,
 } from '@/hooks/data'
 import { CategoryType, type InvoiceTemplate, type ReferenceData } from '@/domain/types'
-
 type AdminTab = 'refdata' | 'templates' | 'activitylog'
 type RefType = number
 
@@ -28,11 +27,13 @@ const EMPTY_TEMPLATE_FORM: TemplateForm = { id: null, name: '', type: CategoryTy
 const REF_TYPE_LABELS: Record<number, string> = {
   233100000: 'Property', 233100001: 'Supplier', 233100002: 'Client',
   233100003: 'Expense', 233100004: 'Income', 233100005: 'Income Category', 233100006: 'Expense Category',
+  233100007: 'Document Category',
 }
 const REF_TYPE_OPTIONS = Object.entries(REF_TYPE_LABELS).map(([k, v]) => ({ value: Number(k) as RefType, label: v }))
 
-interface FormState { id: string | null; value: string; reftype: RefType | ''; sortorder: string }
-const EMPTY_FORM: FormState = { id: null, value: '', reftype: '', sortorder: '' }
+interface FormState { id: string | null; value: string; reftype: RefType | ''; sortorder: string; defaultfolderpath: string }
+const EMPTY_FORM: FormState = { id: null, value: '', reftype: '', sortorder: '', defaultfolderpath: '' }
+const DOCUMENT_CATEGORY_REF_TYPE = 233100007
 
 const ACTION_LABELS: Record<number, string> = { 233100000: 'Created', 233100001: 'Updated', 233100002: 'Deleted', 233100003: 'Exported' }
 const TABLE_LABELS: Record<number, string> = { 233100000: 'Invoice', 233100001: 'Contact', 233100002: 'Property', 233100003: 'Attachment' }
@@ -65,7 +66,7 @@ export default function Admin() {
 
   function openNew() { setForm(EMPTY_FORM); setError(null); setFormOpen(true) }
   function openEdit(r: ReferenceData) {
-    setForm({ id: r.id, value: r.value, reftype: r.referenceType, sortorder: r.sortOrder?.toString() ?? '' })
+    setForm({ id: r.id, value: r.value, reftype: r.referenceType, sortorder: r.sortOrder?.toString() ?? '', defaultfolderpath: r.defaultFolderPath ?? '' })
     setError(null); setFormOpen(true)
   }
   function closeForm() { setFormOpen(false); setForm(EMPTY_FORM); setError(null) }
@@ -80,6 +81,7 @@ export default function Admin() {
         ...(form.id ? { id: form.id } : {}),
         value: form.value.trim(), referenceType: form.reftype as number,
         sortOrder: form.sortorder !== '' ? Number(form.sortorder) : undefined,
+        defaultFolderPath: form.reftype === DOCUMENT_CATEGORY_REF_TYPE && form.defaultfolderpath.trim() ? form.defaultfolderpath.trim() : undefined,
       } as ReferenceData | Omit<ReferenceData, 'id'>)
       closeForm()
     } catch (e: unknown) {
@@ -223,6 +225,11 @@ export default function Admin() {
                   <Field label="Sort Order">
                     <Input type="number" value={form.sortorder} onChange={(_, d) => setForm(f => ({ ...f, sortorder: d.value }))} placeholder="Optional" />
                   </Field>
+                  {form.reftype === DOCUMENT_CATEGORY_REF_TYPE && (
+                    <Field label="Default Folder" hint="Where uploads in this category pre-fill to (still editable per upload).">
+                      <Input value={form.defaultfolderpath} onChange={(_, d) => setForm(f => ({ ...f, defaultfolderpath: d.value }))} placeholder="e.g. General/Contracts" />
+                    </Field>
+                  )}
                   {error && <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{error}</Text>}
                 </DialogContent>
                 <DialogActions>

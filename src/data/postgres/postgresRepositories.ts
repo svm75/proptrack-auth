@@ -142,6 +142,20 @@ export const postgresRepositories: Repositories = {
         contact_id: a.contactId ?? null,
         attach_type_id: a.attachTypeId ?? null,
         uploaded_on: a.uploadedOn ?? new Date().toISOString(),
+        // Document Management (Documents tab) — omitted here before, so edits to these silently
+        // never persisted despite the mutation reporting success. category_id/valid_from_date
+        // intentionally NOT forced to null when absent (a is Partial via {...selected, ...patch}
+        // in Documents.tsx, and every existing field is always present from `selected`, so `??
+        // null` here is safe and matches the other fields' convention — never accidentally clears
+        // a mandatory field, since the caller always spreads the full existing row first).
+        category_id: a.categoryId ?? null,
+        valid_from_date: a.validFromDate ?? null,
+        expiry_date: a.expiryDate ?? null,
+        description: a.description ?? null,
+        tags: a.tags ?? null,
+        period_year: a.periodYear ?? null,
+        supplier_contract_id: a.supplierContractId ?? null,
+        comment: a.comment ?? null,
       }
       if ('id' in a && a.id) return attachmentFromRow(await apiClient.put<AttachmentRow>(`/attachments/${a.id}`, row))
       return attachmentFromRow(await apiClient.post<AttachmentRow>('/attachments', row))

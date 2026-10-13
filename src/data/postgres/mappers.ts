@@ -72,7 +72,7 @@ export function contactToRow(c: Partial<Contact>): Record<string, unknown> {
 // ---------- Category (reference_data rows filtered to Income/Expense Category) ----------
 
 export interface ReferenceDataRow {
-  id: string; value: string; reference_type: number; sort_order: number | null
+  id: string; value: string; reference_type: number; sort_order: number | null; default_folder_path: string | null
 }
 
 export function categoryFromRow(r: ReferenceDataRow): Category {
@@ -82,11 +82,11 @@ export function categoryFromRow(r: ReferenceDataRow): Category {
 // ---------- ReferenceData (unfiltered reference_data rows) — added Step 8 ----------
 
 export function referenceDataFromRow(r: ReferenceDataRow): ReferenceData {
-  return { id: r.id, value: r.value, referenceType: r.reference_type, sortOrder: r.sort_order ?? undefined }
+  return { id: r.id, value: r.value, referenceType: r.reference_type, sortOrder: r.sort_order ?? undefined, defaultFolderPath: r.default_folder_path ?? undefined }
 }
 
 export function referenceDataToRow(r: ReferenceData | Omit<ReferenceData, 'id'>): Record<string, unknown> {
-  return { value: r.value, reference_type: r.referenceType, sort_order: r.sortOrder ?? null }
+  return { value: r.value, reference_type: r.referenceType, sort_order: r.sortOrder ?? null, default_folder_path: r.defaultFolderPath ?? null }
 }
 
 // ---------- Invoice ----------
@@ -243,6 +243,10 @@ export interface AttachmentRow {
   // NAS-native document storage (final migration addendum) — undefined/null for legacy rows.
   storage_path?: string | null; original_filename?: string | null; mime_type?: string | null
   file_size?: string | null
+  // Document Management (Documents tab) — undefined/null on pre-existing rows.
+  category_id?: string | null; valid_from_date?: string | null; expiry_date?: string | null
+  description?: string | null; tags?: string[] | null; period_year?: number | null
+  supplier_contract_id?: string | null; comment?: string | null
 }
 
 export function attachmentFromRow(r: AttachmentRow): Attachment {
@@ -260,6 +264,14 @@ export function attachmentFromRow(r: AttachmentRow): Attachment {
     originalFilename: r.original_filename ?? undefined,
     mimeType: r.mime_type ?? undefined,
     fileSize: r.file_size ? Number(r.file_size) : undefined,
+    categoryId: r.category_id ?? undefined,
+    validFromDate: r.valid_from_date ?? undefined,
+    expiryDate: r.expiry_date ?? undefined,
+    description: r.description ?? undefined,
+    tags: r.tags ?? undefined,
+    periodYear: r.period_year ?? undefined,
+    supplierContractId: r.supplier_contract_id ?? undefined,
+    comment: r.comment ?? undefined,
   }
 }
 

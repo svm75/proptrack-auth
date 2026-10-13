@@ -110,8 +110,9 @@ const EMPTY_NEW_CONTACT: NewContactState = { name: '', email: '', taxid: '', rol
 
 // NAS-native document storage (final migration addendum) — replaces Google Drive as the
 // upload target for NEW invoice attachments. Existing Drive-linked rows remain viewable.
-interface AttachState { typeRefId: string; file: File | null }
-const EMPTY_ATTACH: AttachState = { typeRefId: '', file: null }
+interface AttachState { typeRefId: string; file: File | null; categoryId: string; validFromDate: string }
+const EMPTY_ATTACH: AttachState = { typeRefId: '', file: null, categoryId: '', validFromDate: new Date().toISOString().slice(0, 10) }
+const DOCUMENT_CATEGORY_REF_TYPE = 233100007
 
 export default function InvoiceForm({ invoice, properties, contacts: contactsProp, onSaved, onClose, readOnly = false }: InvoiceFormProps) {
   const s = useStyles()
@@ -182,6 +183,10 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
     const refType = isOutgoing ? REF_OUTGOING : REF_INCOMING
     return allReferenceData.filter(r => r.referenceType === refType)
   }, [allReferenceData, isOutgoing])
+  const docCategories = useMemo(
+    () => allReferenceData.filter(r => r.referenceType === DOCUMENT_CATEGORY_REF_TYPE),
+    [allReferenceData],
+  )
 
   const { data: allAttachments = [] } = useAttachments()
   const attachments = useMemo(
@@ -352,6 +357,8 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
 
   async function addAttachment() {
     if (!activeInvoice || !attachForm.file) { setAttachError('Choose a file first.'); return }
+    if (!attachForm.categoryId) { setAttachError('Choose a category first.'); return }
+    if (!attachForm.validFromDate) { setAttachError('Valid-from date is required.'); return }
     setAttachSaving(true)
     setAttachError(null)
     try {
@@ -360,6 +367,8 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
       const path = prop ? `Properties/${prop.name}/Invoices/${internalId}` : `General/Invoices/${internalId}`
       const row = await uploadDocument(attachForm.file, {
         path,
+        categoryId: attachForm.categoryId,
+        validFromDate: attachForm.validFromDate,
         invoiceId: activeInvoice.id,
         attachTypeId: attachForm.typeRefId || undefined,
       })
@@ -574,6 +583,14 @@ export default function InvoiceForm({ invoice, properties, contacts: contactsPro
                 {!readOnly && isPostgresBackend && (
                   <div className={s.attachBox}>
                     <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleFileSelect(f) }} />
+                    <div className={s.grid2}>
+                      <Select value={attachForm.categoryId} onChange={e => setAttachForm(f => ({ ...f, categoryId: e.target.value }))}>
+                        <option value="">Category (required)…</option>
+                        {docCategories.map(r => <option key={r.id} value={r.id}>{r.value}</option>)}
+                      </Select>
+                      <Input type="date" value={attachForm.validFromDate}
+                        onChange={(_, d) => setAttachForm(f => ({ ...f, validFromDate: d.value }))} />
+                    </div>
                     <div className={s.grid2}>
                       <Select value={attachForm.typeRefId} onChange={e => setAttachForm(f => ({ ...f, typeRefId: e.target.value }))}>
                         <option value="">Type (optional)…</option>

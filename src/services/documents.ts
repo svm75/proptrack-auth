@@ -40,6 +40,14 @@ export interface DocumentRow {
   contact_id: string | null
   attach_type_id: string | null
   uploaded_on: string | null
+  category_id: string | null
+  valid_from_date: string | null
+  expiry_date: string | null
+  description: string | null
+  tags: string[] | null
+  period_year: number | null
+  supplier_contract_id: string | null
+  comment: string | null
 }
 
 async function handle<T>(res: Response): Promise<T> {
@@ -55,6 +63,7 @@ async function handle<T>(res: Response): Promise<T> {
 
 export async function listFolders(path = ''): Promise<FolderListing> {
   const res = await fetch(`${apiBaseUrl()}/documents/folders?path=${encodeURIComponent(path)}`, {
+    credentials: 'include',
     headers: authHeaders(),
   })
   return handle<FolderListing>(res)
@@ -63,6 +72,7 @@ export async function listFolders(path = ''): Promise<FolderListing> {
 export async function createFolder(path: string, name: string): Promise<FolderEntry> {
   const res = await fetch(`${apiBaseUrl()}/documents/folders`, {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ path, name }),
   })
@@ -71,6 +81,16 @@ export async function createFolder(path: string, name: string): Promise<FolderEn
 
 export interface UploadMeta {
   path: string
+  /** Mandatory — a Document Category reference_data id (reference_type 233100007). */
+  categoryId: string
+  /** Mandatory, YYYY-MM-DD — also drives the stored filename's yyyymmdd_ prefix. */
+  validFromDate: string
+  expiryDate?: string
+  description?: string
+  tags?: string[]
+  periodYear?: number
+  supplierContractId?: string
+  comment?: string
   propertyId?: string
   invoiceId?: string
   contactId?: string
@@ -82,6 +102,14 @@ export async function uploadDocument(file: File, meta: UploadMeta): Promise<Docu
   const form = new FormData()
   form.append('file', file)
   form.append('path', meta.path)
+  form.append('categoryId', meta.categoryId)
+  form.append('validFromDate', meta.validFromDate)
+  if (meta.expiryDate) form.append('expiryDate', meta.expiryDate)
+  if (meta.description) form.append('description', meta.description)
+  if (meta.tags?.length) form.append('tags', meta.tags.join(','))
+  if (meta.periodYear !== undefined) form.append('periodYear', String(meta.periodYear))
+  if (meta.supplierContractId) form.append('supplierContractId', meta.supplierContractId)
+  if (meta.comment) form.append('comment', meta.comment)
   if (meta.propertyId) form.append('propertyId', meta.propertyId)
   if (meta.invoiceId) form.append('invoiceId', meta.invoiceId)
   if (meta.contactId) form.append('contactId', meta.contactId)
@@ -90,8 +118,19 @@ export async function uploadDocument(file: File, meta: UploadMeta): Promise<Docu
 
   const res = await fetch(`${apiBaseUrl()}/documents/upload`, {
     method: 'POST',
+    credentials: 'include',
     headers: authHeaders(), // no Content-Type — the browser sets the multipart boundary
     body: form,
+  })
+  return handle<DocumentRow>(res)
+}
+
+export async function moveDocument(id: string, path: string): Promise<DocumentRow> {
+  const res = await fetch(`${apiBaseUrl()}/documents/${id}/move`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ path }),
   })
   return handle<DocumentRow>(res)
 }
@@ -104,8 +143,14 @@ export function documentDownloadUrl(id: string): string {
   return `${apiBaseUrl()}/documents/${id}`
 }
 
+/** Same file, but the API sets Content-Disposition: inline — for the Documents tab's preview
+ *  pane (PDF/image embeds), which should render in place, not trigger a save dialog. */
+export function documentPreviewUrl(id: string): string {
+  return `${apiBaseUrl()}/documents/${id}?inline=1`
+}
+
 export async function downloadDocumentBlob(id: string): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(`${apiBaseUrl()}/documents/${id}`, { headers: authHeaders() })
+  const res = await fetch(`${apiBaseUrl()}/documents/${id}`, { credentials: 'include', headers: authHeaders() })
   if (!res.ok) throw new Error(`Download failed (${res.status})`)
   const disposition = res.headers.get('Content-Disposition') || ''
   const match = /filename="([^"]*)"/.exec(disposition)
@@ -117,6 +162,7 @@ export async function downloadDocumentBlob(id: string): Promise<{ blob: Blob; fi
 export async function deleteDocument(id: string): Promise<{ deleted: boolean; warning?: string }> {
   const res = await fetch(`${apiBaseUrl()}/documents/${id}`, {
     method: 'DELETE',
+    credentials: 'include',
     headers: authHeaders(),
   })
   return handle<{ deleted: boolean; warning?: string }>(res)

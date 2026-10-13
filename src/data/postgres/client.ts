@@ -33,7 +33,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = authToken()
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
   if (token) headers['Authorization'] = `Bearer ${token}`
-  const res = await fetch(`${baseUrl()}${path}`, { ...init, headers: { ...headers, ...(init?.headers as Record<string, string>) } })
+  const res = await fetch(`${baseUrl()}${path}`, {
+    ...init,
+    // Carries the session cookie set by /auth/login (see api/src/auth.ts) — needed even
+    // same-origin-via-Caddy in some browsers' stricter cookie defaults, and required at all for
+    // a cross-origin baseUrl (local dev against a NAS-hosted API).
+    credentials: 'include',
+    headers: { ...headers, ...(init?.headers as Record<string, string>) },
+  })
   if (!res.ok) {
     let body: unknown
     try { body = await res.json() } catch { body = await res.text().catch(() => undefined) }

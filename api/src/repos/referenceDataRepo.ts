@@ -8,11 +8,12 @@ export interface ReferenceDataRow {
   value: string
   reference_type: number
   sort_order: number | null
+  default_folder_path: string | null
   created_at: string
   updated_at: string
 }
 
-const base = makeCrudRepo<ReferenceDataRow>('reference_data', ['value', 'reference_type', 'sort_order'], 'sort_order ASC NULLS LAST, value ASC')
+const base = makeCrudRepo<ReferenceDataRow>('reference_data', ['value', 'reference_type', 'sort_order', 'default_folder_path'], 'sort_order ASC NULLS LAST, value ASC')
 
 /** GET /reference-data/:id/usage-count — reference_data is referenced from 5 tables with a mix
  * of RESTRICT/SET NULL FKs (migration.md §Business Rule Placement), so "in use" is computed here
