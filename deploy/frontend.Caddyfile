@@ -1,0 +1,9 @@
+# Internal Caddyfile baked into the frontend image itself (root Dockerfile) — serves the Vite
+# static build with SPA fallback so react-router (BrowserRouter, src/App.tsx) client-side routes
+# resolve to index.html instead of 404ing on a hard refresh/deep link.
+:80 {
+	root * /usr/share/caddy
+	try_files {path} /index.html
+	file_server
+	encode gzip
+}

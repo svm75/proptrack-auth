@@ -1,0 +1,67 @@
+{
+  "appId": "e3db4c99-0137-45f9-a85e-5c29b20483de",
+  "appDisplayName": "PropTrack",
+  "description": " ",
+  "environmentId": "eb1f4d43-28d9-ee86-9fa8-a547502b285c",
+  "buildPath": "./dist",
+  "buildEntryPoint": "index.html",
+  "logoPath": "Default",
+  "localAppUrl": "http://localhost:3000",
+  "region": "prod",
+  "connectionReferences": {},
+  "databaseReferences": {
+    "default.cds": {
+      "databaseDetails": null,
+      "dataSources": {
+        "properties": {
+          "entitySetName": "cr9b5_pt_properties",
+          "logicalName": "cr9b5_pt_property"
+        },
+        "contacts": {
+          "entitySetName": "cr9b5_pt_contacts",
+          "logicalName": "cr9b5_pt_contact"
+        },
+        "references": {
+          "entitySetName": "cr9b5_pt_references",
+          "logicalName": "cr9b5_pt_reference",
+          "isHidden": false
+        },
+        "attachments": {
+          "entitySetName": "cr9b5_pt_attachments",
+          "logicalName": "cr9b5_pt_attachment",
+          "isHidden": false
+        },
+        "invoices": {
+          "entitySetName": "cr9b5_pt_invoices",
+          "logicalName": "cr9b5_pt_invoice"
+        },
+        "activitylogs": {
+          "entitySetName": "cr9b5_pt_activitylogs",
+          "logicalName": "cr9b5_pt_activitylog"
+        },
+        "forecastflows": {
+          "entitySetName": "cr9b5_pt_forecastflows",
+          "logicalName": "cr9b5_pt_forecastflow"
+        },
+        "forecastflowproperties": {
+          "entitySetName": "cr9b5_forecastproperties",
+          "logicalName": "cr9b5_forecastproperty"
+        },
+        "pt_suppliercontracts": {
+          "entitySetName": "svm_pt_suppliercontracts",
+          "logicalName": "svm_pt_suppliercontract"
+        },
+        "invoicecomments": {
+          "entitySetName": "svm_pt_invoicecomments",
+          "logicalName": "svm_pt_invoicecomment"
+        },
+        "invoicetemplates": {
+          "entitySetName": "svm_pt_invoicetemplates",
+          "logicalName": "svm_pt_invoicetemplate"
+        }
+      },
+      "actions": null
+    }
+  },
+  "version": "1.0"
+}

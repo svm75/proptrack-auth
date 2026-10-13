@@ -1,0 +1,19 @@
+# Single entry point: routes /api/* to the API container, everything else to the frontend
+# container (which serves its own static build via Caddy's file server, see the root Dockerfile).
+# Same-origin from the browser's point of view, so no cross-origin CORS is needed in production
+# (ALLOWED_ORIGIN in api/src/app.ts stays as a safety-net allowlist, not the primary defense).
+# Matches ~/Projects/TripOrganiser/deploy/Caddyfile exactly.
+#
+# HTTP-only inside the container — HTTPS is terminated in front of this by
+# `tailscale serve`/`funnel` (see deploy/README.md), same as wealth-ledger/TripOrganiser.
+
+:80 {
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy api:8787
+	}
+	handle {
+		reverse_proxy frontend:80
+	}
+	encode gzip
+}
