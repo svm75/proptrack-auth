@@ -92,6 +92,11 @@ services:
       # defense, in case the API is ever reached directly or from a second origin (e.g. a
       # maker-preview/staging host). Never a wildcard.
       ALLOWED_ORIGIN: "${ALLOWED_ORIGIN:?set to this deployment's actual origin(s), comma-separated}"
+      # Per-user login + shared fleet SSO (api/src/auth.ts). Real values live only in the NAS .env.
+      SESSION_SECRET: "${SESSION_SECRET:?set a long random session-signing secret}"
+      IDENTITY_DATABASE_URL: "${IDENTITY_DATABASE_URL:?set the shared identity database connection string}"
+      SSO_SESSION_SECRET: "${SSO_SESSION_SECRET:?set the shared SSO session-signing secret}"
+      NODE_ENV: "${NODE_ENV:-production}"
       # NAS-native document storage (final migration addendum) — the container-side mount point.
       # Bind-mounted below to the NAS host path /App/PropTracker/Documents/ — see deploy/README.md
       # for the exact host-side directory creation/permissions steps this requires before
