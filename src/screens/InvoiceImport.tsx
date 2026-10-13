@@ -123,13 +123,54 @@ function buildColMap(headerRow: unknown[]): { col: ColMap; isPartial: boolean } 
   return { col: map, isPartial: FULL_COLS.some(k => !(k in map)) }
 }
 
-function downloadTemplate() {
+const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)]
+const randInt = (min: number, max: number) => min + Math.floor(Math.random() * (max - min + 1))
+const fmtDdMmYyyy = (d: Date) => `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`
+
+// Builds one example template row. Names come from live reference data where
+// available (so the row imports cleanly), with generic fallbacks otherwise.
+function templateExampleRow(income: boolean, props: Property[], cats: Category[], cons: Contact[]): string[] {
+  const year = new Date().getFullYear()
+  const date = new Date(year, randInt(0, 11), randInt(1, 28))
+  const catType = income ? CategoryType.Income : CategoryType.Expense
+  const catNames = cats.filter(c => c.type === catType).map(c => c.value)
+  const category = catNames.length ? pick(catNames) : pick(income ? ['Rental Income', 'Cleaning Fee'] : ['Cleaning', 'Repairs', 'Utilities', 'Insurance'])
+  const property = props.length ? pick(props).name : 'Sunset Villa'
+  const role = income ? ContactRole.Client : ContactRole.Supplier
+  const conNames = cons.filter(c => c.role === role).map(c => c.name)
+  const contact = conNames.length ? pick(conNames) : pick(income ? ['Jane Doe', 'John Smith'] : ['Acme Cleaning', 'City Utilities'])
+  const base = income ? randInt(300, 2500) : randInt(25, 600)
+  const tax = round2(base * 0.07)
+  const amounts = [base.toFixed(2), '7', tax.toFixed(2), round2(base + tax).toFixed(2)]
+  const description = `Example ${income ? 'income' : 'expense'} — delete me`
+  if (!income) return ['', 'Yes', 'Expense', category, property, 'No', contact, fmtDdMmYyyy(date), description, '', '', '', '', '', '', '', '', ...amounts]
+  const nights = randInt(2, 14)
+  const checkOut = new Date(date); checkOut.setDate(checkOut.getDate() + nights)
+  return ['', 'Yes', 'Income', category, property, 'No', contact, fmtDdMmYyyy(date), description, `BK${randInt(100000, 999999)}`,
+    fmtDdMmYyyy(date), fmtDdMmYyyy(checkOut), String(nights), String(nights + 1), String(randInt(1, 4)), String(randInt(0, 3)), String(randInt(0, 1)), ...amounts]
+}
+
+function downloadTemplate(props: Property[], cats: Category[], cons: Contact[]) {
   const headers = TEMPLATE_COLUMNS.map(([label]) => label)
-  const example = ['', 'Yes', 'Income', 'Cleaning Fee', 'Sunset Villa', 'No', 'Jane Doe', '15.03.2026', 'Example row — delete me', 'ABC123', '15.03.2026', '18.03.2026', '3', '4', '2', '1', '0', '250.00', '7', '17.50', '267.50']
-  const ws = XLSX.utils.aoa_to_sheet([headers, example])
+  const examples = [
+    ...Array.from({ length: 5 }, () => templateExampleRow(false, props, cats, cons)),
+    ...Array.from({ length: 5 }, () => templateExampleRow(true, props, cats, cons)),
+  ]
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...examples])
   ws['!cols'] = headers.map(h => ({ wch: Math.max(h.length, 14) + 2 }))
+
+  // Second sheet: valid values to copy from. Import only reads the first sheet.
+  const catNames = cats.filter(c => c.type === CategoryType.Income || c.type === CategoryType.Expense)
+    .map(c => c.value).sort((a, b) => a.localeCompare(b))
+  const propNames = props.map(p => p.name).sort((a, b) => a.localeCompare(b))
+  const refRows: string[][] = [['Categories', 'Properties']]
+  for (let i = 0; i < Math.max(catNames.length, propNames.length); i++) refRows.push([catNames[i] ?? '', propNames[i] ?? ''])
+  const refWs = XLSX.utils.aoa_to_sheet(refRows)
+  refWs['!cols'] = [{ wch: Math.max(12, ...catNames.map(n => n.length)) + 2 }, { wch: Math.max(12, ...propNames.map(n => n.length)) + 2 }]
+
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'Invoices')
+  XLSX.utils.book_append_sheet(wb, refWs, 'Reference')
   XLSX.writeFile(wb, 'proptrack-invoice-import-template.xlsx')
 }
 
@@ -514,7 +555,7 @@ export default function InvoiceImport({ onClose, onImported }: InvoiceImportProp
           <div style={{ padding: '32px', maxWidth: '520px', margin: '0 auto' }}>
             <Text size={500} weight="semibold" style={{ display: 'block', marginBottom: 4 }}>Select Excel File</Text>
             <Text style={{ color: tokens.colorNeutralForeground3, display: 'block', marginBottom: 12 }}>Upload an .xlsx file with the standard import format.</Text>
-            <Button appearance="outline" onClick={downloadTemplate} style={{ marginBottom: 24 }}>↓ Download blank template</Button>
+            <Button appearance="outline" onClick={() => downloadTemplate(allProperties, allCategories, allContacts)} style={{ marginBottom: 24 }}>↓ Download blank template</Button>
             <div className={s.dropzone} onClick={() => fileRef.current?.click()} onDragOver={e => e.preventDefault()} onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}>
               <span style={{ fontSize: '36px' }}>📂</span>
               <Text weight="medium">Click or drag &amp; drop an Excel file here</Text>
